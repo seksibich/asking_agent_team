@@ -53,12 +53,13 @@ TREND_FACTOR_WEIGHTS: dict[str, float] = {
 # ---------------- 情绪温度指标权重（sum=1.0，0-100 温度合成） ----------------
 # 各指标均为"越高越热"，按当天之前 7 日窗口做 min-max 归一后加权
 SENTIMENT_FACTOR_WEIGHTS: dict[str, float] = {
-    "adv_dec_ratio": 0.25,   # 大盘涨跌家数比（上涨家数占比）
-    "limit_updown": 0.20,    # 涨跌停家数（涨停占比，情绪极值）
-    "sector_ratio": 0.15,    # 板块涨跌比（上涨板块占比）
-    "turnover": 0.15,        # 大盘成交额（量能）
-    "index_mom": 0.15,       # 大盘指数动量
-    "avg_price_mom": 0.10,   # 平均股价指数动量
+    "adv_dec_ratio": 0.22,   # 大盘涨跌家数比（上涨家数占比）
+    "limit_updown": 0.18,    # 涨跌停家数（涨停占比，情绪极值）
+    "index_kline": 0.14,     # 当天大盘K线形态（收盘在日内区间强弱+阳阴实体）
+    "sector_ratio": 0.13,    # 板块涨跌比（上涨板块占比）
+    "turnover": 0.13,        # 大盘成交额（量能）
+    "index_mom": 0.12,       # 大盘指数动量
+    "avg_price_mom": 0.08,   # 平均股价指数动量
 }
 
 TRADING_DAYS_YEAR = 252

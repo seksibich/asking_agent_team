@@ -105,3 +105,21 @@ tbody tr:hover{background:#f7f9ff}
 .badge small{color:var(--sub);font-size:12px}
 .badge b{font-size:20px}
 .timing-stance{color:var(--ink);font-size:14px;line-height:1.5;background:#fff7ed;border:1px solid #fde3c4;border-radius:10px;padding:10px 12px}
+
+/* 指标对比看板 */
+.ranges{display:flex;flex-direction:column;gap:12px}
+.range-legend{display:flex;gap:16px;color:var(--sub);font-size:12px;margin-bottom:2px}
+.range-legend i{display:inline-block;vertical-align:middle;margin-right:4px}
+.range-legend .lg-track{width:22px;height:6px;border-radius:4px;background:linear-gradient(90deg,#3b82f6,#f59e0b,#ef4444)}
+.range-legend .lg-mean{width:2px;height:12px;background:#1f2733}
+.range-legend .lg-dot{width:10px;height:10px;border-radius:50%;background:#1f2733;border:2px solid #fff;box-shadow:0 0 0 1px #1f2733}
+.range-row{display:grid;grid-template-columns:180px 1fr 96px;gap:12px;align-items:center}
+.range-name{font-size:13px;display:flex;flex-direction:column}
+.range-name small{color:var(--sub);font-size:11px}
+.range-track{position:relative;height:10px;border-radius:6px;background:linear-gradient(90deg,#3b82f6,#f59e0b,#ef4444);opacity:.9}
+.range-mean{position:absolute;top:-3px;width:2px;height:16px;background:#1f2733;transform:translateX(-1px)}
+.range-dot{position:absolute;top:-3px;width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #1f2733;transform:translateX(-8px)}
+.range-end{position:absolute;top:12px;font-size:10px;color:var(--sub)}
+.range-end.lo{left:0} .range-end.hi{right:0}
+.range-sub{text-align:right}
+.range-sub b{font-size:16px} .range-sub small{display:block;font-size:11px;color:var(--sub)}

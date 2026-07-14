@@ -221,9 +221,11 @@ async function runSentiment() {
     $("s-meta").textContent = `${d.date} · 窗口 ${d.window_dates?.length || 0} 日`;
     $("s-breadth").textContent = d.breadth ? `上涨 ${d.breadth.adv} 家 · 下跌 ${d.breadth.dec} 家` : "";
     const inds = d.indicators || {};
+    $("s-ranges").innerHTML = renderRanges(inds, d.weights || {});
     const rows = Object.keys(inds).map((k) => ({
-      指标: k, 权重: d.weights?.[k], 今值: inds[k].raw_today,
-      子分: inds[k].sub_score, 窗口低: inds[k].window_min, 窗口高: inds[k].window_max,
+      指标: factorLabel(k), 权重: d.weights?.[k], 今值: inds[k].raw_today,
+      窗口低: inds[k].window_min, 窗口均值: inds[k].window_mean, 窗口高: inds[k].window_max,
+      较均值: inds[k].vs_mean, 子分: inds[k].sub_score,
     }));
     $("s-result").innerHTML = rows.length ? renderTable(rows) : '<div class="empty">无数据</div>';
   } catch (e) { $("s-result").innerHTML = ""; toast("情绪读取失败：" + e.message, "bad"); }
@@ -268,6 +270,36 @@ function setGauge(temp, level) {
   $("s-arc").style.strokeDashoffset = off;
   $("s-temp").textContent = temp;
   $("s-level").textContent = level || "情绪温度";
+}
+
+// 指标对比看板：每个指标画「低—均—高」轨道 + 今值位置
+function renderRanges(inds, weights) {
+  const keys = Object.keys(inds);
+  if (!keys.length) return '<div class="empty">无数据</div>';
+  const clamp = (x) => Math.max(0, Math.min(100, x));
+  const pct = (v, lo, hi) => (hi > lo ? clamp(((v - lo) / (hi - lo)) * 100) : 50);
+  const legend = `<div class="range-legend">
+    <span><i class="lg-track"></i> 窗口低→高</span>
+    <span><i class="lg-mean"></i> 均值</span>
+    <span><i class="lg-dot"></i> 今值</span></div>`;
+  const rows = keys.map((k) => {
+    const d = inds[k];
+    const lo = d.window_min, hi = d.window_max, mean = d.window_mean, cur = d.raw_today;
+    const tp = pct(cur, lo, hi), mp = pct(mean, lo, hi);
+    const vm = d.vs_mean ?? 0;
+    const vmCls = vm > 0 ? "pos" : (vm < 0 ? "neg" : "");
+    return `<div class="range-row">
+      <div class="range-name">${factorLabel(k)}<small>权重 ${weights[k] ?? "-"}</small></div>
+      <div class="range-track" title="今值 ${cur} ｜ 低 ${lo} ｜ 均 ${mean} ｜ 高 ${hi}">
+        <div class="range-mean" style="left:${mp}%"></div>
+        <div class="range-dot" style="left:${tp}%"></div>
+        <span class="range-end lo">${lo}</span>
+        <span class="range-end hi">${hi}</span>
+      </div>
+      <div class="range-sub"><b>${d.sub_score}</b><small class="${vmCls}">较均 ${vm >= 0 ? "+" : ""}${vm}</small></div>
+    </div>`;
+  }).join("");
+  return legend + rows;
 }
 
 /* ---------- 回测复盘 ---------- */
@@ -384,6 +416,7 @@ const FACTOR_LABEL = {
   turnover: "大盘成交额（量能）",
   index_mom: "大盘指数动量",
   avg_price_mom: "平均股价指数",
+  index_kline: "大盘K线形态（收盘强弱）",
 };
 const factorLabel = (f) => FACTOR_LABEL[f] || f;
 

@@ -80,18 +80,27 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
     except Exception:
         pass
 
-    # 大盘指数动量（当日涨跌幅）
+    # 大盘指数动量（当日涨跌幅）+ 当天K线形态（收盘强弱 + 阳阴实体）
     index_mom = 0.0
+    index_kline = 0.5
     try:
         idx = pro.index_daily(ts_code=BENCH_INDEX, trade_date=date)
         if idx is not None and not idx.empty:
-            index_mom = float(idx.iloc[0]["pct_chg"])
+            row = idx.iloc[0]
+            index_mom = float(row["pct_chg"])
+            o, h, l, cl = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+            rng = h - l
+            if rng > 0:
+                pos = max(0.0, min(1.0, (cl - l) / rng))   # 收盘在日内区间位置（越高越强）
+                body = (cl - o) / rng                        # 实体方向与占比，∈[-1,1]
+                index_kline = round(0.5 * pos + 0.5 * (body + 1) / 2, 4)  # 0~1，越高越强/越阳
     except Exception:
         pass
 
     return {
         "adv_dec_ratio": round(adv_dec_ratio, 4),
         "limit_updown": round(limit_updown, 4),
+        "index_kline": index_kline,
         "sector_ratio": round(sector_ratio, 4),
         "turnover": round(turnover, 2),
         "index_mom": round(index_mom, 4),
@@ -136,8 +145,12 @@ def _temperature_for(cache: dict[str, Any], target: str, all_dates: list[str],
         if not series:
             continue
         sub = _minmax_sub(series, float(today[ind]))
-        indicators[ind] = {"raw_today": today[ind], "sub_score": sub,
-                           "window_min": round(min(series), 4), "window_max": round(max(series), 4)}
+        mean = sum(series) / len(series)
+        indicators[ind] = {"raw_today": round(float(today[ind]), 4), "sub_score": sub,
+                           "window_min": round(min(series), 4),
+                           "window_mean": round(mean, 4),
+                           "window_max": round(max(series), 4),
+                           "vs_mean": round(float(today[ind]) - mean, 4)}
         temperature += weights[ind] * sub
     temperature = round(temperature, 1)
     level = next(name for th, name in LEVELS if temperature >= th)

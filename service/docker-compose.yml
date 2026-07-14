@@ -1,0 +1,20 @@
+services:
+  stock-data-service:
+    build:
+      context: ..                 # 工程根目录（含 service/ 与 skills/）
+      dockerfile: service/Dockerfile
+    image: stock-data-service:latest
+    container_name: stock-data-service
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "18901:18901"
+    volumes:
+      - ./cache:/app/cache        # tushare 缓存持久化
+      - ./data:/app/data          # predictions.jsonl / selections.jsonl 等
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:18901/health'); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

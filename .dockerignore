@@ -1,0 +1,9 @@
+**/__pycache__/
+**/*.pyc
+service/cache/
+service/data/
+**/.DS_Store
+.git/
+memory/
+*.md
+skills/**/SKILL.md

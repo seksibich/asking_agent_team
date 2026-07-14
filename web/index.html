@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>盯盘 · 量化面板</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" class="brand-icon" aria-hidden="true"><path d="M4 19V5m0 14h16M8 15l3-4 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>盯盘 · 量化面板</span>
+    </div>
+    <button id="settingsBtn" class="icon-btn" title="设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V19a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4.6 13H4.5a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 6.3 6.3l-.1-.1A2 2 0 1 1 9 3.4l.1.1a1.6 1.6 0 0 0 2.7-1.1V2a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1H22a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+    </button>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="quant">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      量化选股
+    </button>
+    <button class="tab" data-tab="sentiment">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9M12 12l5-5M3 12h2m14 0h2M12 3v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      情绪温度
+    </button>
+    <button class="tab" data-tab="backtest">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16M8 16l3-4 3 2 4-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      回测复盘
+    </button>
+    <button class="tab" data-tab="precompute">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16M8 4v16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      预计算
+    </button>
+    <button class="tab" data-tab="weights">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h6M4 18h13M18 4v6m-6 0v8m10-14v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      权重配置
+    </button>
+  </nav>
+
+  <main class="content">
+    <!-- 量化选股 -->
+    <section id="tab-quant" class="panel active">
+      <div class="card">
+        <div class="card-title">选股参数</div>
+        <div class="form-row">
+          <label>行业/主线（可空，逗号分隔）</label>
+          <input id="q-industries" type="text" placeholder="如 光伏,半导体（留空=全市场）" />
+        </div>
+        <div class="form-row">
+          <label>返回数量 Top N</label>
+          <input id="q-topn" type="number" value="30" min="5" max="100" />
+        </div>
+        <button id="q-run" class="btn-primary">
+          <svg viewBox="0 0 24 24" class="btn-ic"><path d="M5 3l14 9-14 9V3Z" fill="currentColor"/></svg>
+          运行量化选股
+        </button>
+      </div>
+      <div class="card">
+        <div class="card-title">选股结果 <span id="q-meta" class="meta"></span></div>
+        <div id="q-result" class="table-wrap"><div class="empty">点击「运行量化选股」查看结果</div></div>
+      </div>
+    </section>
+
+    <!-- 情绪温度 -->
+    <section id="tab-sentiment" class="panel">
+      <div class="card">
+        <div class="card-title">情绪温度</div>
+        <div class="form-row inline">
+          <input id="s-date" type="text" placeholder="日期 YYYYMMDD（留空=最近交易日）" />
+          <input id="s-days" type="number" value="15" min="3" max="30" title="走势回看交易日数" style="max-width:120px" />
+          <button id="s-run" class="btn-primary">
+            <svg viewBox="0 0 24 24" class="btn-ic"><path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            读取情绪温度
+          </button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">情绪温度走势 <span id="s-trend-meta" class="meta"></span></div>
+        <div id="s-trend" class="chart-wrap"><div class="empty">读取后显示多日温度折线</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">择时判断 <span class="meta">market_timing</span></div>
+        <div id="s-timing" class="timing"><div class="empty">读取后显示连续冰点/高热与出手权重</div></div>
+      </div>
+      <div class="card gauge-card">
+        <div id="s-gauge" class="gauge">
+          <svg viewBox="0 0 200 120" class="gauge-svg">
+            <path d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="#e8ecf3" stroke-width="16" stroke-linecap="round"/>
+            <path id="s-arc" d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="url(#g)" stroke-width="16" stroke-linecap="round" stroke-dasharray="251" stroke-dashoffset="251"/>
+            <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3b82f6"/><stop offset="0.5" stop-color="#f59e0b"/><stop offset="1" stop-color="#ef4444"/></linearGradient></defs>
+          </svg>
+          <div class="gauge-center"><span id="s-temp">--</span><small id="s-level">情绪温度</small></div>
+        </div>
+        <div id="s-breadth" class="breadth"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">指标分解 <span id="s-meta" class="meta"></span></div>
+        <div id="s-result" class="table-wrap"><div class="empty">点击「读取情绪温度」查看分解</div></div>
+      </div>
+    </section>
+
+    <!-- 回测复盘 -->
+    <section id="tab-backtest" class="panel">
+      <div class="card">
+        <div class="card-title">回测复盘</div>
+        <div class="form-row inline">
+          <button id="b-run" class="btn-primary">
+            <svg viewBox="0 0 24 24" class="btn-ic"><path d="M4 4v16h16M8 16l3-4 3 2 4-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            加载回测数据
+          </button>
+          <span id="b-meta" class="meta"></span>
+        </div>
+        <p class="hint">数据源：服务端 selection_backtest（自动选股跟踪）与 predictions_backtest（预判命中）。持久化于 DATA_DIR 的 selections.jsonl / predictions.jsonl。</p>
+      </div>
+
+      <!-- 自动选股回测 -->
+      <div class="card">
+        <div class="card-title">自动选股 · 各持有期平均收益 (%)</div>
+        <div id="b-auto-ret" class="chart-wrap"><div class="empty">点击「加载回测数据」</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">自动选股 · 各持有期胜率 (%)</div>
+        <div id="b-auto-win" class="chart-wrap"><div class="empty">—</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">自动选股 · 分驱动 30 日相对沪深300超额 (%)</div>
+        <div id="b-driver" class="chart-wrap"><div class="empty">—</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">调参建议</div>
+        <div id="b-hints" class="hints"><div class="empty">—</div></div>
+      </div>
+
+      <!-- 预判回测 -->
+      <div class="card">
+        <div class="card-title">预判回测 <span id="b-pred-meta" class="meta"></span></div>
+        <div id="b-pred-acc" class="chart-wrap"><div class="empty">—</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">选股明细 <span id="b-detail-meta" class="meta"></span></div>
+        <div id="b-detail" class="table-wrap"><div class="empty">—</div></div>
+      </div>
+    </section>
+
+    <!-- 预计算状态 -->
+    <section id="tab-precompute" class="panel">
+      <div class="card">
+        <div class="card-title">全市场因子预计算 <span id="pc-meta" class="meta"></span></div>
+        <p class="hint">选股（screen_quant/screen_trend）优先读 daily_factors；若最新交易日缺失，点下方按钮做增量预计算（盘后自动跑，手动仅用于补算/验证）。</p>
+        <div class="form-row inline">
+          <button id="pc-refresh" class="btn-ghost">刷新状态</button>
+          <button id="pc-run" class="btn-primary">
+            <svg viewBox="0 0 24 24" class="btn-ic"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            运行增量预计算
+          </button>
+          <span id="pc-status" class="status"></span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">各交易日覆盖股票数</div>
+        <div id="pc-chart" class="chart-wrap"><div class="empty">点击「刷新状态」</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">覆盖明细</div>
+        <div id="pc-table" class="table-wrap"><div class="empty">—</div></div>
+      </div>
+    </section>
+
+    <!-- 权重配置 -->
+    <section id="tab-weights" class="panel">
+      <div class="card">
+        <div class="card-title">因子 / 指标权重配置</div>
+        <p class="hint">每个模型的权重之和须为 1.0；保存时若因子列表不匹配（服务端已增改因子），会提示并自动刷新。</p>
+        <div id="w-models" class="models"><div class="empty">加载中…</div></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 设置弹层 -->
+  <div id="settings" class="modal hidden">
+    <div class="modal-card">
+      <div class="card-title">服务设置</div>
+      <div class="form-row"><label>服务基址 Base URL</label><input id="cfg-base" type="text" /></div>
+      <div class="form-row"><label>X-API-Key</label><input id="cfg-key" type="password" /></div>
+      <div id="cfg-status" class="status"></div>
+      <div class="modal-actions">
+        <button id="cfg-test" class="btn-ghost">测试连接</button>
+        <button id="cfg-save" class="btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

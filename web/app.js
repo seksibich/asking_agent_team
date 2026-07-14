@@ -203,8 +203,30 @@ let _sentLoaded = false;
 function loadSentiment() {
   if (_sentLoaded || !cfg.key) return;
   _sentLoaded = true;
+  syncSentimentWindow();
   runSentiment();
 }
+
+async function syncSentimentWindow() {
+  try {
+    const c = await call("get_sentiment_config", {});
+    $("s-window").value = c.window;
+    $("s-window").min = c.range?.[0] ?? 3;
+    $("s-window").max = c.range?.[1] ?? 30;
+  } catch (e) { /* 忽略 */ }
+}
+
+$("s-window-save").onclick = async () => {
+  const w = Number($("s-window").value);
+  const st = $("s-window-status");
+  if (!(w >= 3 && w <= 30)) { st.textContent = "窗口须 3-30"; return; }
+  st.textContent = "保存中…";
+  try {
+    const r = await call("set_sentiment_config", { window: w });
+    if (r.applied) { st.textContent = `已应用窗口 ${r.window}`; runSentiment(); }
+    else st.textContent = r.error || "保存失败";
+  } catch (e) { st.textContent = "保存失败：" + e.message; }
+};
 
 $("s-run").onclick = runSentiment;
 async function runSentiment() {

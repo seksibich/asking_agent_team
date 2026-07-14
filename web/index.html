@@ -76,6 +76,12 @@
             读取情绪温度
           </button>
         </div>
+        <div class="form-row inline">
+          <label style="min-width:auto">情绪归一窗口（3-30 交易日，服务端持久化）</label>
+          <input id="s-window" type="number" min="3" max="30" style="max-width:100px" />
+          <button id="s-window-save" class="btn-ghost">应用窗口</button>
+          <span id="s-window-status" class="meta"></span>
+        </div>
       </div>
       <div class="card">
         <div class="card-title">情绪温度走势 <span id="s-trend-meta" class="meta"></span></div>

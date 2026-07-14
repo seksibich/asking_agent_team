@@ -20,20 +20,23 @@ POST /call
 返回 `temperature`(0-100)、`level`(档位)、`indicators`(每项 raw+子分)、`weights`。
 
 ### 计算口径（服务端实现）
-综合六项指标，各"越高越热"，按**当天之前 7 个交易日**窗口做 min-max 归一为 0-100 子分，再加权合成：
+综合**七项**指标，各"越高越热"，按**当天之前 N 个交易日**窗口（N 可配置，默认 7，范围 3-30）做 min-max 归一为 0-100 子分，再加权合成：
 
 | 指标 | 含义 | 默认权重 |
 |---|---|---|
-| `adv_dec_ratio` | 大盘涨跌家数比（上涨家数占比） | 0.25 |
-| `limit_updown` | 涨跌停家数（涨停占比） | 0.20 |
-| `sector_ratio` | 板块涨跌比（上涨板块占比） | 0.15 |
-| `turnover` | 大盘成交额（量能） | 0.15 |
-| `index_mom` | 大盘指数动量 | 0.15 |
-| `avg_price_mom` | 平均股价指数（窗口内相对位置） | 0.10 |
+| `adv_dec_ratio` | 大盘涨跌家数比（上涨家数占比） | 0.22 |
+| `limit_updown` | 涨跌停家数（涨停占比） | 0.18 |
+| `index_kline` | **当天大盘K线形态**（收盘在日内区间强弱 + 阳阴实体，0~1） | 0.14 |
+| `sector_ratio` | 板块涨跌比（上涨板块占比） | 0.13 |
+| `turnover` | 大盘成交额（量能） | 0.13 |
+| `index_mom` | 大盘指数动量（当日涨跌幅） | 0.12 |
+| `avg_price_mom` | 平均股价指数（**全市场平均涨跌幅**，涨幅锚定，非绝对均价） | 0.08 |
 
+- 每个指标输出含 `raw_today / window_min / window_mean / window_max / vs_mean / sub_score`，便于对比今值在窗口中的相对高低与离均值程度（Web 看板可视化）。
 - 温度分档：≥80 高潮 / 60-80 回暖 / 40-60 分歧 / 20-40 退潮 / <20 冰点。
-- **权重可配置**：`get_factor_config(model=sentiment)` 查看，`set_factor_weights(model=sentiment,...)` 调整（须传全部指标且和=1）。用户也可在 Web 面板微调。
-- 原始指标按交易日缓存（滚动 30 日），避免重复全市场取数。
+- **权重可配置**：`get_factor_config(model=sentiment)` 查看，`set_factor_weights(model=sentiment,...)` 调整（须传全部 7 项且和=1）。
+- **归一窗口可配置**：`get_sentiment_config` / `set_sentiment_config`（3-30 天，落库持久化）。改口径或改窗口后，窗口内历史需重采（清 `daily_sentiment` 或等自然滚动）。
+- 原始指标按交易日落库 `daily_sentiment`，避免重复全市场取数。
 
 ## 辅助数据（可补充定性判断）
 - `hot_dc` `hot_ths` `hot_kpl_concept`（热度/题材强度）

@@ -59,7 +59,7 @@ POST /call
 | sector | sector_dc, sector_index_classify, sector_sw_daily, sector_ths_daily |
 | meta | meta_stock_basic, meta_trade_cal |
 | screening | screen_trend, screen_quant, screen_sector, watch_intraday, get_factor_config, set_factor_weights, precompute_daily_factors |
-| sentiment | sentiment_temperature（0-100 情绪温度）, market_timing（择时：连续冰点/高热+出手权重）, bidding_analysis（09:25 竞价分析数据） |
+| sentiment | sentiment_temperature（0-100 情绪温度，含大盘K线形态、平均涨幅等六项+窗口低/均/高）, market_timing（择时：连续冰点/高热+出手权重）, get_sentiment_config / set_sentiment_config（归一窗口 3-30 天，落库）, bidding_analysis（09:25 竞价分析数据） |
 | research | research_build |
 | review | log_selection（category=auto/watch/holding，DB 幂等去重）, log_prediction（DB 幂等）, selection_backtest（成熟样本固化）, predictions_backtest |
 

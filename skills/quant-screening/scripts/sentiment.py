@@ -26,10 +26,22 @@ import db
 import factor_config
 from registry import register
 
-WINDOW = 7                # 当天之前 7 个交易日
+WINDOW_DEFAULT = 7        # 默认：当天之前 7 个交易日
+WINDOW_MIN, WINDOW_MAX = 3, 30
+WINDOW_CONFIG_KEY = "sentiment_window"
 BENCH_INDEX = "000300.SH"
 
 LEVELS = [(80, "高潮"), (60, "回暖"), (40, "分歧"), (20, "退潮"), (0, "冰点")]
+
+
+def _window() -> int:
+    """情绪归一窗口（当天之前 N 个交易日），可配置，范围 3-30，默认 7。"""
+    try:
+        v = db.get_config(WINDOW_CONFIG_KEY)
+        n = int(v.get("window")) if isinstance(v, dict) else int(v)
+    except Exception:
+        return WINDOW_DEFAULT
+    return max(WINDOW_MIN, min(WINDOW_MAX, n))
 
 
 def _trade_dates(pro, end: str, n: int) -> list[str]:
@@ -129,12 +141,12 @@ def _ensure_raw(pro, dates: list[str]) -> dict[str, Any]:
 
 
 def _temperature_for(cache: dict[str, Any], target: str, all_dates: list[str],
-                     weights: dict[str, float]) -> Optional[dict[str, Any]]:
-    """用 target 及其之前 7 个交易日窗口，计算 target 当日的情绪温度。"""
+                     weights: dict[str, float], window_size: int = WINDOW_DEFAULT) -> Optional[dict[str, Any]]:
+    """用 target 及其之前 window_size 个交易日窗口，计算 target 当日的情绪温度。"""
     idx = all_dates.index(target) if target in all_dates else -1
     if idx < 0:
         return None
-    window = [d for d in all_dates[max(0, idx - WINDOW):idx + 1] if d in cache]
+    window = [d for d in all_dates[max(0, idx - window_size):idx + 1] if d in cache]
     if target not in cache or len(window) < 2:
         return None
     today = cache[target]
@@ -167,7 +179,8 @@ def _temperature_for(cache: dict[str, Any], target: str, all_dates: list[str],
 def sentiment_temperature(p: dict) -> dict:
     pro = common.get_pro()
     end = p.get("date") or common.last_trade_date()
-    dates = _trade_dates(pro, end, WINDOW + 1)
+    win = _window()
+    dates = _trade_dates(pro, end, win + 1)
     if not dates:
         return {"source": "sentiment_temperature", "fetched_at": common.now_str(),
                 "error": "无法获取交易日窗口"}
@@ -176,12 +189,13 @@ def sentiment_temperature(p: dict) -> dict:
     # 当天 EOD 行情可能未出：回退到窗口内最近一个有数据的交易日
     avail = [d for d in dates if d in cache]
     eff_end = end if end in cache else (avail[-1] if avail else end)
-    r = _temperature_for(cache, eff_end, dates, weights)
+    r = _temperature_for(cache, eff_end, dates, weights, win)
     if r is None:
         return {"source": "sentiment_temperature", "fetched_at": common.now_str(),
                 "error": "数据不足（窗口内有效交易日不足）"}
     return {"source": "sentiment_temperature", "fetched_at": common.now_str(),
-            "weights": weights, "note": "0-100，越高越热；子分按当天之前7个交易日窗口 min-max 归一", **r}
+            "weights": weights, "window_size": win,
+            "note": f"0-100，越高越热；子分按当天之前 {win} 个交易日窗口 min-max 归一", **r}
 
 
 @register("market_timing", "sentiment",
@@ -193,7 +207,8 @@ def market_timing(p: dict) -> dict:
     pro = common.get_pro()
     end = p.get("date") or common.last_trade_date()
     k = int(p.get("days", 5))
-    dates = _trade_dates(pro, end, k + WINDOW)
+    win = _window()
+    dates = _trade_dates(pro, end, k + win)
     if not dates:
         return {"source": "market_timing", "fetched_at": common.now_str(), "error": "无法获取交易日窗口"}
     cache = _ensure_raw(pro, dates)
@@ -201,7 +216,7 @@ def market_timing(p: dict) -> dict:
 
     recent = []
     for d in dates[-k:]:
-        r = _temperature_for(cache, d, dates, weights)
+        r = _temperature_for(cache, d, dates, weights, win)
         if r:
             recent.append({"date": d, "temperature": r["temperature"], "level": r["level"]})
     if not recent:
@@ -250,6 +265,27 @@ def market_timing(p: dict) -> dict:
         "buy_weight_hint": buy_weight_hint,
         "note": "择时结论用于调节选股出手权重与仓位；冰点连续→提高买入权重，高热连续→警惕退潮",
     }
+
+
+@register("get_sentiment_config", "sentiment",
+          "获取情绪配置：归一窗口天数（当天之前 N 个交易日）及允许范围",
+          params=[], returns="window / range")
+def get_sentiment_config(p: dict) -> dict:
+    return {"source": "sentiment_config", "fetched_at": common.now_str(),
+            "window": _window(), "range": [WINDOW_MIN, WINDOW_MAX], "default": WINDOW_DEFAULT}
+
+
+@register("set_sentiment_config", "sentiment",
+          "设置情绪归一窗口天数（3-30，落库持久化）。影响 sentiment_temperature / market_timing",
+          params=[{"name": "window", "type": "int", "required": True, "desc": "3-30 之间的交易日数"}],
+          returns="applied / window")
+def set_sentiment_config(p: dict) -> dict:
+    w = int(p["window"])
+    if not (WINDOW_MIN <= w <= WINDOW_MAX):
+        return {"applied": False, "error": f"window 须在 {WINDOW_MIN}-{WINDOW_MAX} 之间", "given": w}
+    db.set_config(WINDOW_CONFIG_KEY, {"window": w})
+    return {"applied": True, "window": w,
+            "note": "已保存；后续情绪温度/择时按新窗口归一（可能需重采窗口内数据）"}
 
 
 if __name__ == "__main__":

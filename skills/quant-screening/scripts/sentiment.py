@@ -33,6 +33,9 @@ BENCH_INDEX = "000300.SH"
 
 LEVELS = [(80, "高潮"), (60, "回暖"), (40, "分歧"), (20, "退潮"), (0, "冰点")]
 
+# 反向指标：原始值越大越"冷"，子分取反（100 - minmax），从而拉低温度
+INVERSE_INDICATORS = {"limit_down"}
+
 
 def _window() -> int:
     """情绪归一窗口（当天之前 N 个交易日），可配置，范围 3-30，默认 7。"""
@@ -81,14 +84,13 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
     except Exception:
         pass
 
-    # 涨跌停家数（涨停占比）
-    limit_updown = 0.5
+    # 涨停 / 跌停家数（独立计分：涨停正向、跌停反向）
+    limit_up, limit_down = 0, 0
     try:
         lim = pro.limit_list_d(trade_date=date)
         if lim is not None and not lim.empty and "limit" in lim.columns:
-            u = int((lim["limit"] == "U").sum())
-            d = int((lim["limit"] == "D").sum())
-            limit_updown = u / (u + d) if (u + d) else 1.0
+            limit_up = int((lim["limit"] == "U").sum())
+            limit_down = int((lim["limit"] == "D").sum())
     except Exception:
         pass
 
@@ -111,7 +113,8 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
 
     return {
         "adv_dec_ratio": round(adv_dec_ratio, 4),
-        "limit_updown": round(limit_updown, 4),
+        "limit_up": limit_up,
+        "limit_down": limit_down,
         "index_kline": index_kline,
         "sector_ratio": round(sector_ratio, 4),
         "turnover": round(turnover, 2),
@@ -157,6 +160,8 @@ def _temperature_for(cache: dict[str, Any], target: str, all_dates: list[str],
         if not series:
             continue
         sub = _minmax_sub(series, float(today[ind]))
+        if ind in INVERSE_INDICATORS:
+            sub = round(100.0 - sub, 1)   # 跌停越多 → 子分越低 → 拉低温度
         mean = sum(series) / len(series)
         indicators[ind] = {"raw_today": round(float(today[ind]), 4), "sub_score": sub,
                            "window_min": round(min(series), 4),

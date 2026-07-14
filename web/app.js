@@ -124,22 +124,70 @@ function renderTable(rows) {
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-// 量化选股候选 → 中文列 + 标的(名称/代码) 单元格
-const QUANT_COLMAP = [
-  ["mom_12_1", "12-1动量"], ["reversal_1m", "1月反转"], ["trend_ma", "均线多头"],
-  ["high_52w", "距52周高"], ["low_ivol", "低波动"], ["low_turnover", "低换手"],
-  ["vol_confirm", "量能"],
+// 量化选股候选：中文列 + 标的(名称/代码) + 最新行情 + 可排序
+let _quantRows = [];
+let _quantSort = { key: "score", dir: "desc" };
+const QUANT_COLS = [
+  { key: "__ticker", label: "标的", sort: "code" },
+  { key: "last", label: "最新价" },
+  { key: "chg", label: "当日涨幅", pct: true },
+  { key: "ret5", label: "近5日", pct: true },
+  { key: "mom_12_1", label: "12-1动量" },
+  { key: "reversal_1m", label: "1月反转" },
+  { key: "trend_ma", label: "均线多头" },
+  { key: "high_52w", label: "距52周高" },
+  { key: "low_ivol", label: "低波动" },
+  { key: "low_turnover", label: "低换手" },
+  { key: "vol_confirm", label: "量能" },
+  { key: "score", label: "综合分" },
 ];
+const QUANT_ALWAYS = ["__ticker", "last", "chg", "ret5", "score"];
+
 function renderCandidates(cands) {
-  if (!cands || !cands.length) return '<div class="empty">无候选</div>';
-  const rows = cands.map((r) => {
-    const row = { 标的: { name: r.name, code: r.code }, 现价: r.price };
-    QUANT_COLMAP.forEach(([k, cn]) => { if (k in r) row[cn] = r[k]; });
-    row["综合分"] = r.score;
-    return row;
-  });
-  return renderTable(rows);
+  _quantRows = cands || [];
+  _quantSort = { key: "score", dir: "desc" };
+  drawQuant();
 }
+
+function drawQuant() {
+  const box = $("q-result");
+  if (!_quantRows.length) { box.innerHTML = '<div class="empty">无候选</div>'; return; }
+  const cols = QUANT_COLS.filter((c) => QUANT_ALWAYS.includes(c.key) || _quantRows.some((r) => c.key in r));
+  const { key, dir } = _quantSort;
+  const val = (r) => (key === "code" ? (r.code || "") : r[key]);
+  const sorted = [..._quantRows].sort((a, b) => {
+    let va = val(a), vb = val(b);
+    if (va == null) va = -Infinity;
+    if (vb == null) vb = -Infinity;
+    if (va < vb) return dir === "asc" ? -1 : 1;
+    if (va > vb) return dir === "asc" ? 1 : -1;
+    return 0;
+  });
+  const head = cols.map((c) => {
+    const sk = c.sort || c.key;
+    const arrow = sk === key ? (dir === "asc" ? " ▲" : " ▼") : "";
+    return `<th class="sortable" data-sort="${sk}" title="点击排序">${c.label}${arrow}</th>`;
+  }).join("");
+  const body = sorted.map((r) => "<tr>" + cols.map((c) => {
+    if (c.key === "__ticker") return `<td class="cell-ticker"><b>${r.name || "-"}</b><span>${r.code || ""}</span></td>`;
+    let v = r[c.key], cls = "";
+    if (typeof v === "number") {
+      if (c.pct || c.key === "score") cls = v >= 0 ? "pos" : "neg";
+      v = c.pct ? (v >= 0 ? "+" : "") + v.toFixed(2) + "%" : (Number.isInteger(v) ? v : v.toFixed(3));
+    }
+    return `<td class="${cls}">${v == null ? "-" : v}</td>`;
+  }).join("") + "</tr>").join("");
+  box.innerHTML = `<table class="sortable-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+$("q-result").addEventListener("click", (e) => {
+  const th = e.target.closest("th[data-sort]");
+  if (!th) return;
+  const k = th.getAttribute("data-sort");
+  if (_quantSort.key === k) _quantSort.dir = _quantSort.dir === "asc" ? "desc" : "asc";
+  else _quantSort = { key: k, dir: k === "code" ? "asc" : "desc" };
+  drawQuant();
+});
 
 /* ---------- 轻量 SVG 图表（无外部依赖） ---------- */
 // 折线图：points = [{label, value}]；opts = {min, max, color, unit}
@@ -457,7 +505,8 @@ const FACTOR_LABEL = {
   sec_low_vol: "板块低波动",
   // 情绪温度
   adv_dec_ratio: "涨跌家数比（上涨占比）",
-  limit_updown: "涨跌停家数（涨停占比）",
+  limit_up: "涨停家数（越多越热）",
+  limit_down: "跌停家数（越多越冷，反向计分）",
   sector_ratio: "板块涨跌比（上涨板块占比）",
   turnover: "大盘成交额（量能）",
   index_mom: "大盘指数动量",
@@ -481,7 +530,8 @@ const FACTOR_DESC = {
   sec_vol_confirm: "板块量能确认（近 5 日 / 前 20 日均量），放量上行更可信。正向。",
   sec_low_vol: "板块近 60 日波动取负，稳健趋势优于暴涨暴跌。正向。",
   adv_dec_ratio: "全市场上涨家数 /（上涨+下跌家数），衡量赚钱效应广度。越高情绪越热。",
-  limit_updown: "涨停家数 /（涨停+跌停家数），情绪极值指标。越高越亢奋。",
+  limit_up: "全市场涨停家数，情绪亢奋度的正向指标。越多越热，正向计分。",
+  limit_down: "全市场跌停家数，恐慌度指标。越多越冷，**反向计分**（跌停越多，子分越低，拉低温度）。",
   index_kline: "当天大盘（沪深300）K 线形态：0.5×收盘在日内高低区间的位置 + 0.5×阳阴实体占比，0~1。收在高位、大阳线得分高；收在低位、阴线得分低。反映当日多空强弱。",
   sector_ratio: "上涨板块数 /（上涨+下跌板块数），衡量热点扩散广度。越高越热。",
   turnover: "全市场成交额（量能）。放量代表资金活跃、情绪升温。",
@@ -509,7 +559,7 @@ function modelBlock(model, info) {
   const grid = factors.map((f) => {
     const v = info.weights?.[f] ?? 0;
     return `<div class="weight-item"><label title="点击查看因子说明">
-      <span class="factor-link" data-fkey="${f}">${factorLabel(f)} <span class="fkey">${f}</span> ⓘ</span></label>
+      <span class="factor-link fl-stack" data-fkey="${f}"><span class="fl-cn">${factorLabel(f)} ⓘ</span><span class="fkey">${f}</span></span></label>
       <input type="number" step="0.01" min="0" max="1" data-f="${f}" value="${v}" /></div>`;
   }).join("");
   wrap.innerHTML = `

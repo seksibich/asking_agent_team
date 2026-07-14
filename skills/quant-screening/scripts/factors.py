@@ -54,7 +54,8 @@ TREND_FACTOR_WEIGHTS: dict[str, float] = {
 # 各指标均为"越高越热"，按当天之前 7 日窗口做 min-max 归一后加权
 SENTIMENT_FACTOR_WEIGHTS: dict[str, float] = {
     "adv_dec_ratio": 0.22,   # 大盘涨跌家数比（上涨家数占比）
-    "limit_updown": 0.18,    # 涨跌停家数（涨停占比，情绪极值）
+    "limit_up": 0.12,        # 涨停家数（越多越热，正向）
+    "limit_down": 0.06,      # 跌停家数（越多越冷，反向计分）
     "index_kline": 0.14,     # 当天大盘K线形态（收盘在日内区间强弱+阳阴实体）
     "sector_ratio": 0.13,    # 板块涨跌比（上涨板块占比）
     "turnover": 0.13,        # 大盘成交额（量能）

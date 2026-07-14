@@ -41,6 +41,70 @@ def _table_from_db(end: str, code_filter: Optional[set]) -> Optional[pd.DataFram
     return pd.DataFrame(recs) if recs else None
 
 
+def _attach_quotes(rows: list[dict]) -> None:
+    """给候选补最新行情：最新价(最近收盘)、当日涨幅、近3日/近5日涨幅。
+
+    用 daily(historical=True) 永久缓存，同日重复选股命中缓存、不重复打 tushare。
+    """
+    if not rows:
+        return
+    end = common.last_trade_date()
+    start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=15)).strftime("%Y%m%d")
+    for r in rows:
+        code = r.get("code")
+        try:
+            payload = common.cached_call(
+                "daily", {"c": code, "s": start, "e": end},
+                lambda c=code: common.get_pro().daily(ts_code=c, start_date=start, end_date=end),
+                historical=True)
+            df = pd.DataFrame(payload.get("rows", []))
+            if df.empty:
+                continue
+            df = df.sort_values("trade_date")
+            cl = df["close"].astype(float).tolist()
+            r["last"] = round(cl[-1], 2)
+            if "pct_chg" in df.columns:
+                r["chg"] = round(float(df.iloc[-1]["pct_chg"]), 2)
+            if len(cl) >= 4:
+                r["ret3"] = round((cl[-1] / cl[-4] - 1) * 100, 2)
+            if len(cl) >= 6:
+                r["ret5"] = round((cl[-1] / cl[-6] - 1) * 100, 2)
+        except Exception:
+            continue
+
+
+def _attach_quotes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """为候选补最新行情：最新价 last / 当日涨幅 chg / 近5日涨幅 ret5。
+
+    用日线（永久缓存，end=最近交易日不可变、跨次复用），不逐次打实时接口。
+    """
+    if not rows:
+        return rows
+    end = common.last_trade_date()
+    start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=15)).strftime("%Y%m%d")
+    pro = common.get_pro()
+    for r in rows:
+        code = r.get("code")
+        try:
+            payload = common.cached_call(
+                "daily", {"c": code, "s": start, "e": end},
+                lambda c=code: pro.daily(ts_code=c, start_date=start, end_date=end),
+                historical=True)
+            df = pd.DataFrame(payload.get("rows", []))
+            if df.empty:
+                continue
+            df = df.sort_values("trade_date")
+            cl = df["close"].astype(float).tolist()
+            r["last"] = round(cl[-1], 2)
+            if "pct_chg" in df.columns:
+                r["chg"] = round(float(df.iloc[-1]["pct_chg"]), 2)
+            if len(cl) >= 6:
+                r["ret5"] = round((cl[-1] / cl[-6] - 1) * 100, 2)
+        except Exception:
+            continue
+    return rows
+
+
 def _build_factor_table(pro, codes: list[str], end: str) -> pd.DataFrame:
     """为候选股构建因子原始值表。"""
     start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=420)).strftime("%Y%m%d")
@@ -124,6 +188,7 @@ def run(industries: Optional[list[str]] = None,
             r["name"] = nm.get(r.get("code"), "")
     except Exception:
         pass
+    _attach_quotes(out)
     return {
         "source": "screen/quant",
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

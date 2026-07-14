@@ -134,4 +134,11 @@ tbody tr:hover{background:#f7f9ff}
 /* 可点击因子 */
 .factor-link{cursor:pointer;color:var(--brand)}
 .factor-link:hover{text-decoration:underline}
+.fl-stack{display:inline-flex;flex-direction:column;gap:2px}
+.fl-stack .fl-cn{font-size:12px}
+.fl-stack .fkey{color:var(--sub)}
 .factor-desc{font-size:14px;line-height:1.7;color:var(--ink);background:#f7f9ff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-height:50vh;overflow:auto}
+
+/* 可排序表头 */
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--brand)}

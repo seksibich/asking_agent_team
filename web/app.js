@@ -288,8 +288,11 @@ function renderRanges(inds, weights) {
     const tp = pct(cur, lo, hi), mp = pct(mean, lo, hi);
     const vm = d.vs_mean ?? 0;
     const vmCls = vm > 0 ? "pos" : (vm < 0 ? "neg" : "");
+    const icon = k === "index_kline"
+      ? '<svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><line x1="8" y1="2" x2="8" y2="22" stroke="currentColor" stroke-width="1.5"/><rect x="4.5" y="7" width="7" height="9" rx="1" fill="currentColor"/><line x1="17" y1="4" x2="17" y2="20" stroke="currentColor" stroke-width="1.5"/><rect x="13.5" y="9" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'
+      : "";
     return `<div class="range-row">
-      <div class="range-name">${factorLabel(k)}<small>权重 ${weights[k] ?? "-"}</small></div>
+      <div class="range-name"><span class="rn-txt">${icon}${factorLabel(k)}</span><small>权重 ${weights[k] ?? "-"}</small></div>
       <div class="range-track" title="今值 ${cur} ｜ 低 ${lo} ｜ 均 ${mean} ｜ 高 ${hi}">
         <div class="range-mean" style="left:${mp}%"></div>
         <div class="range-dot" style="left:${tp}%"></div>
@@ -415,7 +418,7 @@ const FACTOR_LABEL = {
   sector_ratio: "板块涨跌比（上涨板块占比）",
   turnover: "大盘成交额（量能）",
   index_mom: "大盘指数动量",
-  avg_price_mom: "平均股价指数",
+  avg_price_mom: "平均股价指数（全市场平均涨幅）",
   index_kline: "大盘K线形态（收盘强弱）",
 };
 const factorLabel = (f) => FACTOR_LABEL[f] || f;

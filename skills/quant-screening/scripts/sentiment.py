@@ -54,7 +54,7 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
     adv = int((pct > 0).sum())
     dec = int((pct < 0).sum())
     adv_dec_ratio = adv / (adv + dec) if (adv + dec) else 0.5
-    avg_price = float(daily["close"].astype(float).mean())
+    avg_chg = float(pct.mean())  # 全市场平均涨跌幅（以涨幅锚定，越高越热）
     turnover = float(daily["amount"].astype(float).sum())  # 千元
 
     # 板块涨跌比
@@ -104,7 +104,7 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
         "sector_ratio": round(sector_ratio, 4),
         "turnover": round(turnover, 2),
         "index_mom": round(index_mom, 4),
-        "avg_price_mom": round(avg_price, 4),  # 存平均股价绝对值，动量在打分时按窗口相对
+        "avg_price_mom": round(avg_chg, 4),  # 全市场平均涨跌幅（涨幅锚定）
         "adv": adv, "dec": dec,
     }
 

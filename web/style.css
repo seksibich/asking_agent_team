@@ -116,6 +116,8 @@ tbody tr:hover{background:#f7f9ff}
 .range-row{display:grid;grid-template-columns:180px 1fr 96px;gap:12px;align-items:center}
 .range-name{font-size:13px;display:flex;flex-direction:column}
 .range-name small{color:var(--sub);font-size:11px}
+.range-name .rn-txt{display:inline-flex;align-items:center;gap:5px}
+.range-name .k-ic{width:15px;height:15px;color:var(--brand);flex:none}
 .range-track{position:relative;height:10px;border-radius:6px;background:linear-gradient(90deg,#3b82f6,#f59e0b,#ef4444);opacity:.9}
 .range-mean{position:absolute;top:-3px;width:2px;height:16px;background:#1f2733;transform:translateX(-1px)}
 .range-dot{position:absolute;top:-3px;width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #1f2733;transform:translateX(-8px)}

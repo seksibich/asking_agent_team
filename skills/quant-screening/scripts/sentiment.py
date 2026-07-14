@@ -160,7 +160,10 @@ def sentiment_temperature(p: dict) -> dict:
                 "error": "无法获取交易日窗口"}
     cache = _ensure_raw(pro, dates)
     weights = factor_config.effective_weights("sentiment")
-    r = _temperature_for(cache, end, dates, weights)
+    # 当天 EOD 行情可能未出：回退到窗口内最近一个有数据的交易日
+    avail = [d for d in dates if d in cache]
+    eff_end = end if end in cache else (avail[-1] if avail else end)
+    r = _temperature_for(cache, eff_end, dates, weights)
     if r is None:
         return {"source": "sentiment_temperature", "fetched_at": common.now_str(),
                 "error": "数据不足（窗口内有效交易日不足）"}

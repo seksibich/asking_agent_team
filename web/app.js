@@ -42,6 +42,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "weights") loadWeights();
     if (btn.dataset.tab === "backtest") loadBacktest();
     if (btn.dataset.tab === "precompute") loadPrecompute();
+    if (btn.dataset.tab === "sentiment") loadSentiment();
   });
 });
 
@@ -53,13 +54,31 @@ $("settingsBtn").onclick = () => {
   $("settings").classList.remove("hidden");
 };
 $("settings").addEventListener("click", (e) => { if (e.target.id === "settings") $("settings").classList.add("hidden"); });
-$("cfg-save").onclick = () => {
+function reloadActiveTab() {
+  const active = document.querySelector(".tab.active");
+  const t = active && active.dataset.tab;
+  if (t === "weights") loadWeights();
+  else if (t === "backtest") loadBacktest(true);
+  else if (t === "precompute") loadPrecompute(true);
+  else if (t === "sentiment") { _sentLoaded = false; loadSentiment(); }
+}
+
+$("cfg-save").onclick = async () => {
   cfg.base = $("cfg-base").value.trim() || window.location.origin;
   cfg.key = $("cfg-key").value.trim();
   localStorage.setItem(LS.base, cfg.base);
   localStorage.setItem(LS.key, cfg.key);
-  $("settings").classList.add("hidden");
-  toast("已保存设置", "ok");
+  // 保存后校验一次连通
+  try {
+    const h = await health();
+    if (h.status === "ok") {
+      $("settings").classList.add("hidden");
+      toast("已连接：功能数 " + h.functions, "ok");
+      reloadActiveTab();
+      return;
+    }
+  } catch (e) { /* fallthrough */ }
+  toast("已保存，但连接校验失败，请检查基址/Key", "bad");
 };
 $("cfg-test").onclick = async () => {
   cfg.base = $("cfg-base").value.trim() || window.location.origin;
@@ -180,7 +199,15 @@ function svgBars(items, opts = {}) {
 }
 
 /* ---------- 情绪温度 ---------- */
-$("s-run").onclick = async () => {
+let _sentLoaded = false;
+function loadSentiment() {
+  if (_sentLoaded || !cfg.key) return;
+  _sentLoaded = true;
+  runSentiment();
+}
+
+$("s-run").onclick = runSentiment;
+async function runSentiment() {
   const btn = $("s-run"); btn.disabled = true;
   const date = $("s-date").value.trim();
   const days = Number($("s-days").value) || 15;
@@ -416,5 +443,13 @@ $("pc-run").onclick = async () => {
   btn.disabled = false;
 };
 
-/* 首屏：若未配置 key 提示设置 */
-if (!cfg.key) setTimeout(() => toast("请先点右上角设置填入 X-API-Key", ""), 500);
+/* 首屏：未配置 key 时自动弹出设置框，引导填写 */
+if (!cfg.key) {
+  setTimeout(() => {
+    $("cfg-base").value = cfg.base;
+    $("cfg-key").value = "";
+    $("cfg-status").textContent = "请填入 service/.env 里的 API_KEY 后保存";
+    $("cfg-status").className = "status";
+    $("settings").classList.remove("hidden");
+  }, 300);
+}

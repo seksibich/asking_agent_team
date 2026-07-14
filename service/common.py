@@ -8,7 +8,7 @@ import json
 import os
 import time
 import hashlib
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -141,12 +141,16 @@ def is_trade_open(day: Optional[str] = None) -> bool:
 
 
 def last_trade_date(day: Optional[str] = None) -> str:
-    """返回最近一个交易日（含今日）。"""
+    """返回最近一个交易日（含今日）。
+
+    注意：tushare trade_cal 返回顺序不保证升序，必须显式排序取最大交易日，
+    否则会误取区间内最早的交易日。回看 30 天避免月初边界问题。
+    """
     day = day or today_str()
     pro = get_pro()
-    start = (date.today().replace(day=1)).strftime("%Y%m%d")
+    start = (datetime.strptime(day, "%Y%m%d") - timedelta(days=30)).strftime("%Y%m%d")
     df = pro.trade_cal(exchange="SSE", start_date=start, end_date=day)
-    open_days = df[df["is_open"] == 1]["cal_date"].tolist()
+    open_days = sorted(df[df["is_open"] == 1]["cal_date"].astype(str).tolist())
     return open_days[-1] if open_days else day
 
 

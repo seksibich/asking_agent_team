@@ -1,0 +1,10 @@
+# 开发覆盖（docker compose 自动合并）：源码热挂载 + uvicorn --reload。
+# 改前端(web)/后端(service)/技能(skills)无需重建镜像，保存后自动生效（依赖已在镜像内）。
+# 生产部署请勿使用本文件：用 `docker compose -f docker-compose.yml up -d`。
+services:
+  stock-data-service:
+    command: uvicorn app:app --host 0.0.0.0 --port 18901 --reload --reload-dir /app/service --reload-dir /app/skills
+    volumes:
+      - ../web:/app/web:ro        # Web 前端热挂载
+      - .:/app/service:ro         # 后端代码热挂载（--reload 生效）
+      - ../skills:/app/skills:ro  # 技能脚本热挂载

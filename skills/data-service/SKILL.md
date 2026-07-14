@@ -16,7 +16,7 @@ disable-model-invocation: false
 
 - **当前：本地 Mac Docker**，基址 `http://localhost:18901`
 - **后续上云**：部署云服务器后改为公网 API 基址（协议/鉴权/功能不变），同步更新记忆 `service_state.json` 的 `base_url`
-- 鉴权：请求头 `X-API-Key: {service_api_key}`（值见 `init.md` / `service/.env`）
+- 鉴权：请求头 `X-API-Key: {service_api_key}`（值见 `init.md` / `.env`）
 - 详细服务文档见 `service/AGENT_SERVICE_GUIDE.md`
 
 ## 三个核心端点

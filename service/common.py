@@ -115,6 +115,17 @@ def cached_call(
     return payload
 
 
+def stock_names_map() -> dict:
+    """返回 {ts_code: name} 映射（当日缓存，用于给选股结果补名称）。"""
+    pro = get_pro()
+    payload = cached_call("stock_basic_names", {"d": today_str()},
+                          lambda: pro.stock_basic(list_status="L", fields="ts_code,name"))
+    out = {}
+    for r in payload.get("rows", []):
+        out[r.get("ts_code")] = r.get("name", "")
+    return out
+
+
 def clean_expired_cache() -> None:
     """清理超过 CACHE_TTL_DAYS 天的当日缓存目录（永久缓存目录跳过）。每日首个任务调用。"""
     if not CACHE_DIR.exists():

@@ -96,12 +96,13 @@
 ## 6. 本地运行 / 调试
 
 ```bash
-cd service
+# 在仓库根目录（部署入口已移到根，详见 DEPLOY.md）
 docker compose up -d --build
 curl -H "X-API-Key: <key>" http://localhost:18901/health
 curl -H "X-API-Key: <key>" http://localhost:18901/functions
 
-# 不启服务直接调试
+# 不启服务直接调试（在容器内或本机 service/ 目录下）
+cd service
 python cli.py functions
 python cli.py call screen_sector '{"top_n":10}'
 ```

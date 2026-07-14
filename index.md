@@ -67,7 +67,7 @@
 
 ## 2. 数据服务
 
-- **当前形态：本地 Mac Docker**。基址 `http://localhost:18901`，统一 `POST /call {function, params}`，鉴权头 `X-API-Key`（值见 `init.md` / `service/.env`）。
+- **当前形态：本地 Mac Docker**。基址 `http://localhost:18901`，统一 `POST /call {function, params}`，鉴权头 `X-API-Key`（值见 `init.md` / `.env`）。
 - **后续上云**：部署到云服务器后改为公网 API，届时只需把基址换成公网地址（协议、鉴权、功能不变），并同步更新 `service_state.json` 的 `base_url`。
 - **版本机制**：每次调用后对比返回 `data_version` 与记忆版本，不一致则 `GET /functions` 刷新索引并更新记忆。
 - 详见 `skills/data-service/SKILL.md` 与 `service/AGENT_SERVICE_GUIDE.md`。

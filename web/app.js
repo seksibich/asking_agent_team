@@ -103,7 +103,7 @@ $("q-run").onclick = async () => {
     const d = await call("screen_quant", params);
     const rows = d.candidates || [];
     $("q-meta").textContent = `${d.trade_date || ""} · ${rows.length} 只`;
-    $("q-result").innerHTML = rows.length ? renderTable(rows) : '<div class="empty">无候选</div>';
+    $("q-result").innerHTML = renderCandidates(rows);
   } catch (e) { $("q-result").innerHTML = ""; toast("选股失败：" + e.message, "bad"); }
   btn.disabled = false;
 };
@@ -113,11 +113,32 @@ function renderTable(rows) {
   const head = cols.map((c) => `<th>${c}</th>`).join("");
   const body = rows.map((r) => "<tr>" + cols.map((c) => {
     let v = r[c];
+    // 标的单元格：名称在上、代码在下
+    if (v && typeof v === "object" && "code" in v) {
+      return `<td class="cell-ticker"><b>${v.name || "-"}</b><span>${v.code || ""}</span></td>`;
+    }
     let cls = "";
-    if (typeof v === "number") { if (c === "score") cls = v >= 0 ? "pos" : "neg"; v = Number.isInteger(v) ? v : v.toFixed(3); }
+    if (typeof v === "number") { if (c === "综合分" || c === "score") cls = v >= 0 ? "pos" : "neg"; v = Number.isInteger(v) ? v : v.toFixed(3); }
     return `<td class="${cls}">${v ?? ""}</td>`;
   }).join("") + "</tr>").join("");
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// 量化选股候选 → 中文列 + 标的(名称/代码) 单元格
+const QUANT_COLMAP = [
+  ["mom_12_1", "12-1动量"], ["reversal_1m", "1月反转"], ["trend_ma", "均线多头"],
+  ["high_52w", "距52周高"], ["low_ivol", "低波动"], ["low_turnover", "低换手"],
+  ["vol_confirm", "量能"],
+];
+function renderCandidates(cands) {
+  if (!cands || !cands.length) return '<div class="empty">无候选</div>';
+  const rows = cands.map((r) => {
+    const row = { 标的: { name: r.name, code: r.code }, 现价: r.price };
+    QUANT_COLMAP.forEach(([k, cn]) => { if (k in r) row[cn] = r[k]; });
+    row["综合分"] = r.score;
+    return row;
+  });
+  return renderTable(rows);
 }
 
 /* ---------- 轻量 SVG 图表（无外部依赖） ---------- */
@@ -314,7 +335,7 @@ function renderRanges(inds, weights) {
       ? '<svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><line x1="8" y1="2" x2="8" y2="22" stroke="currentColor" stroke-width="1.5"/><rect x="4.5" y="7" width="7" height="9" rx="1" fill="currentColor"/><line x1="17" y1="4" x2="17" y2="20" stroke="currentColor" stroke-width="1.5"/><rect x="13.5" y="9" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'
       : "";
     return `<div class="range-row">
-      <div class="range-name"><span class="rn-txt">${icon}${factorLabel(k)}</span><small>权重 ${weights[k] ?? "-"}</small></div>
+      <div class="range-name"><span class="rn-txt factor-link" data-fkey="${k}">${icon}${factorLabel(k)} ⓘ</span><small>权重 ${weights[k] ?? "-"}</small></div>
       <div class="range-track" title="今值 ${cur} ｜ 低 ${lo} ｜ 均 ${mean} ｜ 高 ${hi}">
         <div class="range-mean" style="left:${mp}%"></div>
         <div class="range-dot" style="left:${tp}%"></div>
@@ -445,13 +466,50 @@ const FACTOR_LABEL = {
 };
 const factorLabel = (f) => FACTOR_LABEL[f] || f;
 
+// 因子/指标 详细介绍
+const FACTOR_DESC = {
+  mom_12_1: "过去约 252 个交易日、剔除最近 21 日的累计收益（12-1 动量）。剔除最近 1 个月是为避开短期反转干扰。值越大代表中期趋势越强。属趋势因子，正向。",
+  reversal_1m: "最近 21 个交易日收益取负。A 股短期常呈反转：近月跌得多的，未来一段时间反弹概率更高。值越大（近月越弱）越有反弹预期。属情绪/反转因子，正向。",
+  trend_ma: "均线多头排列强度：价格>MA20、MA20>MA60 各计 1 分，再叠加相对 MA60 的乖离。值越大趋势越确认。属趋势因子，正向。",
+  high_52w: "当前价 / 过去 252 日最高价，衡量距 52 周高点的接近度（52 周高点因子）。越接近新高，强者恒强概率越高。正向。",
+  low_ivol: "近 60 日日收益标准差取负（低特质波动）。低波动异象：波动越低、风险调整后收益越优。值越大（波动越低）越好。正向。",
+  low_turnover: "换手率取负。高换手往往对应过度交易/情绪过热，未来收益偏低；低换手更稳健。值越大（换手越低）越好。正向。",
+  vol_confirm: "近 5 日均量 / 前 20 日均量，衡量温和放量（已截断防爆量）。适度放量确认趋势。正向。",
+  sec_mom_12_1: "板块指数的 12-1 中期动量。A 股行业层面动量为正（板块轮动有延续性）。正向。",
+  sec_mom_20d: "板块指数近 20 个交易日动量，捕捉近端趋势延续。正向。",
+  sec_mom_5d: "板块指数近 5 个交易日动量，反映短期情绪热度延续。正向。",
+  sec_vol_confirm: "板块量能确认（近 5 日 / 前 20 日均量），放量上行更可信。正向。",
+  sec_low_vol: "板块近 60 日波动取负，稳健趋势优于暴涨暴跌。正向。",
+  adv_dec_ratio: "全市场上涨家数 /（上涨+下跌家数），衡量赚钱效应广度。越高情绪越热。",
+  limit_updown: "涨停家数 /（涨停+跌停家数），情绪极值指标。越高越亢奋。",
+  index_kline: "当天大盘（沪深300）K 线形态：0.5×收盘在日内高低区间的位置 + 0.5×阳阴实体占比，0~1。收在高位、大阳线得分高；收在低位、阴线得分低。反映当日多空强弱。",
+  sector_ratio: "上涨板块数 /（上涨+下跌板块数），衡量热点扩散广度。越高越热。",
+  turnover: "全市场成交额（量能）。放量代表资金活跃、情绪升温。",
+  index_mom: "大盘指数当日涨跌幅（动量）。正向反映当日强弱。",
+  avg_price_mom: "全市场个股平均涨跌幅（以涨幅锚定，非绝对均价）。反映“平均一只票”的当日表现。越高越热。",
+};
+
+function showFactorInfo(key) {
+  $("fm-title").textContent = factorLabel(key);
+  $("fm-key").textContent = key;
+  $("fm-body").textContent = FACTOR_DESC[key] || "暂无该因子的详细说明。";
+  $("factor-modal").classList.remove("hidden");
+}
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-fkey]");
+  if (el) showFactorInfo(el.getAttribute("data-fkey"));
+});
+$("fm-close").onclick = () => $("factor-modal").classList.add("hidden");
+$("factor-modal").addEventListener("click", (e) => { if (e.target.id === "factor-modal") $("factor-modal").classList.add("hidden"); });
+
 function modelBlock(model, info) {
   const wrap = document.createElement("div");
   wrap.className = "model-block";
   const factors = info.canonical_factors || Object.keys(info.weights || {});
   const grid = factors.map((f) => {
     const v = info.weights?.[f] ?? 0;
-    return `<div class="weight-item"><label title="${f}">${factorLabel(f)} <span class="fkey">${f}</span></label>
+    return `<div class="weight-item"><label title="点击查看因子说明">
+      <span class="factor-link" data-fkey="${f}">${factorLabel(f)} <span class="fkey">${f}</span> ⓘ</span></label>
       <input type="number" step="0.01" min="0" max="1" data-f="${f}" value="${v}" /></div>`;
   }).join("");
   wrap.innerHTML = `

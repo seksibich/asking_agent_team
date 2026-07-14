@@ -40,14 +40,17 @@ stock_agent_kit/
 ├── skills/                 # 所有技能 + 对应脚本
 │   ├── <skill>/SKILL.md
 │   └── <skill>/scripts/*.py   （服务端功能模块，随镜像加载）
-├── service/                # 数据服务工程（Docker）
-│   ├── app.py registry.py loader.py common.py cli.py
+├── Dockerfile docker-compose.yml docker-compose.override.yml   # 部署入口（根目录）
+├── requirements.txt .env.example                               # 依赖 / 配置模板
+├── DEPLOY.md                # 部署说明（Docker / 直接部署）
+├── service/                # 后端服务
+│   ├── app.py registry.py loader.py common.py db.py cli.py
 │   ├── AGENT_SERVICE_GUIDE.md
-│   ├── Dockerfile docker-compose.yml requirements.txt
-│   └── .env / .env.example
+│   └── db/                 # schema.sql / PERSISTENCE.md / PRECOMPUTE_PLAN.md
 └── web/                    # Web 面板（与服务同源，/ui/）
     ├── index.html style.css app.js
 ```
+> 运行数据 `data/`（DB/SQLite）与缓存 `cache/` 在根目录生成（已 gitignore）。
 
 ## 架构
 
@@ -67,25 +70,24 @@ stock_agent_kit/
                 ▼  tushare pro（15000 积分档）
 ```
 
-## 快速开始
+## 快速开始（详见 [DEPLOY.md](DEPLOY.md)，支持 Docker / 直接部署）
 
-1. 克隆后配置密钥（`.env` 不入库，需从模板复制）：
-   ```bash
-   cd service
-   cp .env.example .env
-   # 编辑 .env，至少填写：
-   #   TUSHARE_TOKEN=<你的 tushare token>
-   #   API_KEY=<强随机字符串，用作 X-API-Key>
-   #   DB_URL=            # 留空=本地 SQLite；上云填 RDS MySQL 连接串
-   ```
-2. 启动本地数据服务（含 Web 面板）：
-   ```bash
-   docker compose up -d --build
-   curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
-   curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/functions
-   ```
-   `/health` 返回 `tushare_ready` / `db_ready` / `trade_open` 可用于自检。
-   首次可选：补算历史因子 `curl -XPOST http://localhost:18901/call -H "X-API-Key: <key>" -H "Content-Type: application/json" -d '{"function":"precompute_daily_factors","params":{"full":true}}'`。
+前后端与数据库一体，**仓库根目录即单一部署目录**。
+
+```bash
+# 1) 配置密钥（.env 不入库，从模板复制）
+cp .env.example .env
+#   TUSHARE_TOKEN=<你的 tushare token>
+#   API_KEY=<强随机字符串，用作 X-API-Key>
+#   DB_URL=            # 留空=本地 SQLite；上云填 RDS MySQL 连接串
+
+# 2) 一键启动（在仓库根目录，含 Web 面板）
+docker compose up -d --build
+curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
+
+# 3) Web 面板：浏览器打开 http://localhost:18901/ui/ ，右上角设置填入 API_KEY
+```
+`/health` 返回 `tushare_ready` / `db_ready` / `trade_open` 供自检。直接部署（无 Docker）见 DEPLOY.md。
 3. 把 `init.md` 作为初始化指令交给智能体，它会按索引完成自我初始化。
 4. **Web 面板**（与服务同源部署）：浏览器打开 `http://localhost:18901/ui/`，右上角设置里填入 `X-API-Key`。
    - 量化选股：调 `screen_quant` 看结果
@@ -105,5 +107,5 @@ stock_agent_kit/
 
 ## 安全
 
-- `service/.env` 含真实 token，已 gitignore；务必设置强随机 `API_KEY`。
+- `.env` 含真实 token，已 gitignore；务必设置强随机 `API_KEY`。
 - 本地/内网使用；迁移公网（ECS）时建议加防火墙白名单或反向代理鉴权。

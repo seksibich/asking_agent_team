@@ -97,13 +97,20 @@ def run(industries: Optional[list[str]] = None, top_n: int = 30) -> dict[str, An
     tbl = tbl.sort_values("score", ascending=False)
     cols = ["code", "price", "mom_12_1", "trend_ma", "high_52w", "vol_confirm", "score"]
     cols = [c for c in cols if c in tbl.columns]
+    _cands = tbl[cols].head(top_n).round(4).to_dict(orient="records")
+    try:
+        nm = common.stock_names_map()
+        for r in _cands:
+            r["name"] = nm.get(r.get("code"), "")
+    except Exception:
+        pass
     return {
         "source": "screen/trend",
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "industries": industries,
         "trade_date": end,
         "data_source": data_source,
-        "candidates": tbl[cols].head(top_n).round(4).to_dict(orient="records"),
+        "candidates": _cands,
         "note": "趋势初筛候选，需 Agent 按 涨价>逻辑>预期>情绪 四维复核",
     }
 

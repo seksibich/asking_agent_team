@@ -7,8 +7,8 @@
 ## 数据服务接入信息（固定配置）
 
 - **当前形态：本地 Mac Docker**。基址：`http://localhost:18901`
-- 鉴权请求头：`X-API-Key: <在 service/.env 的 API_KEY 中设置的值>`
-  （与 `service/.env` 的 `API_KEY` 一致；调用 `/health` `/functions` `/call` 都要带此头。真实密钥只放本地 .env，勿提交仓库）
+- 鉴权请求头：`X-API-Key: <在 .env 的 API_KEY 中设置的值>`
+  （与 `.env` 的 `API_KEY` 一致；调用 `/health` `/functions` `/call` 都要带此头。真实密钥只放本地 .env，勿提交仓库）
 - **后续上云**：部署到云服务器后，把基址换成公网 API 地址（协议/鉴权/功能不变），并更新记忆 `service_state.json` 的 `base_url`；如更换 API_KEY，同步更新本文件与 `.env`。
 
 ## 初始化步骤

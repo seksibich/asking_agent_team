@@ -118,6 +118,12 @@ def run(industries: Optional[list[str]] = None,
             "low_ivol", "low_turnover", "vol_confirm", "score"]
     cols = [c for c in cols if c in tbl.columns]
     out = tbl[cols].head(top_n).round(4).to_dict(orient="records")
+    try:
+        nm = common.stock_names_map()
+        for r in out:
+            r["name"] = nm.get(r.get("code"), "")
+    except Exception:
+        pass
     return {
         "source": "screen/quant",
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

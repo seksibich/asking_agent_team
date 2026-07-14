@@ -125,3 +125,13 @@ tbody tr:hover{background:#f7f9ff}
 .range-end.lo{left:0} .range-end.hi{right:0}
 .range-sub{text-align:right}
 .range-sub b{font-size:16px} .range-sub small{display:block;font-size:11px;color:var(--sub)}
+
+/* 标的单元格：名称在上、代码在下 */
+.cell-ticker{text-align:left}
+.cell-ticker b{display:block;font-size:13px;color:var(--ink)}
+.cell-ticker span{display:block;font-size:11px;color:var(--sub);font-family:ui-monospace,Menlo,monospace}
+
+/* 可点击因子 */
+.factor-link{cursor:pointer;color:var(--brand)}
+.factor-link:hover{text-decoration:underline}
+.factor-desc{font-size:14px;line-height:1.7;color:var(--ink);background:#f7f9ff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-height:50vh;overflow:auto}

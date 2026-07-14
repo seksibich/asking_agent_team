@@ -22,11 +22,11 @@ JSONL 适合单机小规模，但上云后有三个痛点：
    USE stock_agent;
    SOURCE schema.sql;
    ```
-2. 在 `service/.env` 增加连接串（示例）：
+2. 在 `.env` 增加连接串（示例）：
    ```dotenv
    DB_URL=mysql+pymysql://user:password@rm-xxxx.mysql.rds.aliyuncs.com:3306/stock_agent
    ```
-3. `service/requirements.txt` 增加驱动：`SQLAlchemy` + `PyMySQL`。
+3. `requirements.txt` 增加驱动：`SQLAlchemy` + `PyMySQL`。
 4. 把 `log_selection` 的落盘从写 JSONL 改为写 `selections` 表；`selection_backtest` 优先读
    `selection_forward_returns`，miss 时再拉 tushare 计算并回写（幂等 upsert，见 `schema.sql` 示例）。
 

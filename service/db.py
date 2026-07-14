@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import os
 from datetime import datetime
 from typing import Any, Optional
@@ -79,6 +81,20 @@ config_kv = Table(
     Column("k", String(64), primary_key=True),
     Column("v", JSON, nullable=False),
     Column("updated_at", DateTime, nullable=False, default=datetime.now),
+)
+
+# 配置变更留痕（因子/情绪权重、归一窗口等每次修改的版本历史，类 commit）
+# 每条 = 一次生效的完整配置快照，可按 version_id 随时定位/回滚。
+config_versions = Table(
+    "config_versions", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("version_id", String(16), nullable=False, unique=True),  # 类 commit id（短哈希）
+    Column("config_key", String(64), nullable=False, index=True),   # 如 factor_weights:stock / sentiment_window
+    Column("actor", String(64), nullable=False, default="unknown"), # 修改者身份（agent 署名）
+    Column("reason", Text),                                         # 修改原因（回测证据等）
+    Column("payload", JSON, nullable=False),                        # 该版本的完整配置内容
+    Column("parent_version", String(16)),                          # 上一版本 version_id（可为空）
+    Column("created_at", DateTime, nullable=False, default=datetime.now),
 )
 
 # 每日情绪原始指标（0-100 情绪温度 / 择时的底层数据，落库持久）
@@ -292,6 +308,71 @@ def set_config(key: str, value: Any) -> None:
                          .values(v=value, updated_at=datetime.now()))
         else:
             conn.execute(config_kv.insert().values(k=key, v=value, updated_at=datetime.now()))
+
+
+# ---------- config_versions（配置变更留痕 / 类 commit 版本） ----------
+def _gen_version_id(config_key: str, payload: Any, parent: Optional[str]) -> str:
+    """生成类 commit 的短哈希版本号（含微秒时间戳，避免碰撞）。"""
+    base = "|".join([
+        config_key,
+        _json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str),
+        parent or "",
+        datetime.now().isoformat(),
+    ])
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:12]
+
+
+def latest_config_version(config_key: str) -> Optional[str]:
+    eng = get_engine()
+    with eng.connect() as conn:
+        row = conn.execute(
+            select(config_versions.c.version_id)
+            .where(config_versions.c.config_key == config_key)
+            .order_by(config_versions.c.id.desc()).limit(1)).first()
+    return row[0] if row else None
+
+
+def record_config_version(config_key: str, payload: Any, actor: str,
+                          reason: str = "") -> dict[str, Any]:
+    """把一次配置变更留痕为新版本，返回 {version_id, parent_version, created_at}。"""
+    eng = get_engine()
+    parent = latest_config_version(config_key)
+    now = datetime.now()
+    vid = _gen_version_id(config_key, payload, parent)
+    with eng.begin() as conn:
+        conn.execute(config_versions.insert().values(
+            version_id=vid, config_key=config_key, actor=(actor or "unknown"),
+            reason=(reason or ""), payload=payload, parent_version=parent, created_at=now))
+    return {"version_id": vid, "parent_version": parent,
+            "created_at": now.strftime("%Y-%m-%d %H:%M:%S")}
+
+
+def list_config_versions(config_key: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
+    eng = get_engine()
+    stmt = select(config_versions)
+    if config_key:
+        stmt = stmt.where(config_versions.c.config_key == config_key)
+    stmt = stmt.order_by(config_versions.c.id.desc()).limit(limit)
+    with eng.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["created_at"] = d["created_at"].strftime("%Y-%m-%d %H:%M:%S") if d.get("created_at") else None
+        out.append(d)
+    return out
+
+
+def get_config_version(version_id: str) -> Optional[dict[str, Any]]:
+    eng = get_engine()
+    with eng.connect() as conn:
+        row = conn.execute(select(config_versions)
+                           .where(config_versions.c.version_id == version_id)).mappings().first()
+    if not row:
+        return None
+    d = dict(row)
+    d["created_at"] = d["created_at"].strftime("%Y-%m-%d %H:%M:%S") if d.get("created_at") else None
+    return d
 
 
 # ---------- daily_sentiment ----------

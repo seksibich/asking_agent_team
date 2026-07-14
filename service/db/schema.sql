@@ -97,10 +97,25 @@ CREATE TABLE IF NOT EXISTS config_kv (
   PRIMARY KEY (k)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可变配置键值（落库以便上云/多实例一致）';
 
+-- ---------- 6之二. 配置变更留痕（类 commit 版本历史） ----------
+CREATE TABLE IF NOT EXISTS config_versions (
+  id             BIGINT       NOT NULL AUTO_INCREMENT,
+  version_id     VARCHAR(16)  NOT NULL COMMENT '类 commit id（短哈希），全局唯一',
+  config_key     VARCHAR(64)  NOT NULL COMMENT '配置键，如 factor_weights:stock / sentiment_window',
+  actor          VARCHAR(64)  NOT NULL DEFAULT 'unknown' COMMENT '修改者身份（agent 署名）',
+  reason         TEXT         COMMENT '修改原因（回测证据/背离说明等）',
+  payload        JSON         NOT NULL COMMENT '该版本的完整配置内容（可据此回滚定位）',
+  parent_version VARCHAR(16)  COMMENT '上一版本 version_id（可空）',
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_cfgver_vid (version_id),
+  KEY idx_cfgver_key (config_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='因子/情绪权重等配置每次变更的版本留痕，可按 version_id 定位/回滚';
+
 -- ---------- 7. 每日情绪原始指标（情绪温度/择时底层数据） ----------
 CREATE TABLE IF NOT EXISTS daily_sentiment (
   trade_date  CHAR(8)   NOT NULL COMMENT '交易日 YYYYMMDD',
-  indicators  JSON      NOT NULL COMMENT '六项原始指标 {adv_dec_ratio,limit_updown,...}',
+  indicators  JSON      NOT NULL COMMENT '情绪原始指标 {adv_dec_ratio,limit_up/down,index_mom/body/amp,avg_price_mom/body/amp,sector_ratio,turnover,...}',
   computed_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (trade_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='每日情绪原始指标（供温度与择时计算）';

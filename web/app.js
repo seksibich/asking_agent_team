@@ -32,6 +32,54 @@ async function health() {
   return res.json();
 }
 
+/* ---------- 角色 / 权限（管理员 vs 用户） ---------- */
+// 未知/未连接时默认按管理员对待（本地开发或旧服务无 /whoami 时不误伤）
+let _role = "admin";
+const isAdmin = () => _role === "admin";
+
+async function refreshRole() {
+  try {
+    const res = await fetch(cfg.base.replace(/\/$/, "") + "/whoami", {
+      headers: { "X-API-Key": cfg.key },
+    });
+    if (res.ok) {
+      const body = await res.json();
+      _role = (body.data && body.data.role) || "admin";
+    } else {
+      _role = "admin"; // 老服务无 /whoami：不降级，保持原行为
+    }
+  } catch (e) {
+    _role = "admin";
+  }
+  applyRoleUI();
+  return _role;
+}
+
+// 依据角色控制页面：用户 Key 禁止改权重/归一窗口、禁止触发回测
+function applyRoleUI() {
+  const admin = isAdmin();
+  // 情绪归一窗口
+  const sw = $("s-window"), sws = $("s-window-save");
+  if (sw) sw.disabled = !admin;
+  if (sws) { sws.disabled = !admin; sws.title = admin ? "" : "用户 Key 不可修改归一化窗口"; }
+  // 回测按钮
+  const br = $("b-run");
+  if (br) { br.disabled = !admin; br.title = admin ? "" : "用户 Key 不可触发回测"; }
+  // 顶部角色徽标
+  const badge = $("role-badge");
+  if (badge) {
+    badge.textContent = admin ? "管理员" : "只读用户";
+    badge.className = "role-badge " + (admin ? "admin" : "user");
+  }
+  // 权重配置页若已渲染，禁用其输入与保存
+  document.querySelectorAll("#w-models input[data-f]").forEach((i) => (i.disabled = !admin));
+  document.querySelectorAll("#w-models [data-save]").forEach((b) => {
+    b.disabled = !admin; b.title = admin ? "" : "用户 Key 不可修改权重";
+  });
+  // 访客 Key 管理面板（仅管理员，且设置弹窗打开时）
+  refreshUserKeysPanel();
+}
+
 /* ---------- tabs ---------- */
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -52,7 +100,77 @@ $("settingsBtn").onclick = () => {
   $("cfg-key").value = cfg.key;
   $("cfg-status").textContent = "";
   $("settings").classList.remove("hidden");
+  refreshUserKeysPanel();
 };
+
+/* ---------- 访客 Key 管理（管理员） ---------- */
+// 调用 /admin/* 端点（非 /call 通道）
+async function adminApi(path, method = "GET", body = null) {
+  const opt = { method, headers: { "X-API-Key": cfg.key } };
+  if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const res = await fetch(cfg.base.replace(/\/$/, "") + path, opt);
+  const data = await res.json();
+  if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+  return data.data !== undefined ? data.data : data;
+}
+
+function refreshUserKeysPanel() {
+  const box = $("userkeys");
+  if (!box) return;
+  const settingsOpen = !$("settings").classList.contains("hidden");
+  if (isAdmin() && cfg.key && settingsOpen) { box.classList.remove("hidden"); loadUserKeys(); }
+  else box.classList.add("hidden");
+}
+
+async function loadUserKeys() {
+  const list = $("uk-list");
+  list.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await adminApi("/admin/user-keys");
+    const keys = d.keys || [];
+    if (!keys.length) { list.innerHTML = '<div class="empty">暂无访客 Key，点上方按钮生成</div>'; return; }
+    list.innerHTML = keys.map((k) => `
+      <div class="uk-item ${k.disabled ? "off" : ""}">
+        <div class="uk-info">
+          <b>${k.label || "访客"}</b>${k.disabled ? '<span class="uk-tag">已停用</span>' : ""}
+          <code class="uk-key">${k.key}</code>
+          <small>${k.created_at || ""}</small>
+        </div>
+        <div class="uk-ops">
+          <button class="btn-ghost" data-uk-copy="${k.key}">复制</button>
+          <button class="btn-ghost" data-uk-toggle="${k.id}">${k.disabled ? "启用" : "停用"}</button>
+          <button class="btn-ghost uk-del" data-uk-del="${k.id}">删除</button>
+        </div>
+      </div>`).join("");
+  } catch (e) { list.innerHTML = '<div class="empty">加载失败：' + e.message + "</div>"; }
+}
+
+$("uk-create").onclick = async () => {
+  const label = $("uk-label").value.trim();
+  try {
+    await adminApi("/admin/user-keys", "POST", { label });
+    $("uk-label").value = "";
+    toast("已生成访客 Key", "ok");
+    loadUserKeys();
+  } catch (e) { toast("生成失败：" + e.message, "bad"); }
+};
+
+$("uk-list").addEventListener("click", async (e) => {
+  const copy = e.target.closest("[data-uk-copy]");
+  const tog = e.target.closest("[data-uk-toggle]");
+  const del = e.target.closest("[data-uk-del]");
+  if (copy) {
+    try { await navigator.clipboard.writeText(copy.getAttribute("data-uk-copy")); toast("Key 已复制", "ok"); }
+    catch (err) { toast("复制失败，请手动选择", "bad"); }
+  } else if (tog) {
+    try { await adminApi("/admin/user-keys/toggle", "POST", { id: tog.getAttribute("data-uk-toggle") }); loadUserKeys(); }
+    catch (err) { toast("操作失败：" + err.message, "bad"); }
+  } else if (del) {
+    if (!confirm("删除后该访客 Key 立即失效，确认删除？")) return;
+    try { await adminApi("/admin/user-keys/delete", "POST", { id: del.getAttribute("data-uk-del") }); loadUserKeys(); }
+    catch (err) { toast("删除失败：" + err.message, "bad"); }
+  }
+});
 $("settings").addEventListener("click", (e) => { if (e.target.id === "settings") $("settings").classList.add("hidden"); });
 function reloadActiveTab() {
   const active = document.querySelector(".tab.active");
@@ -73,7 +191,8 @@ $("cfg-save").onclick = async () => {
     const h = await health();
     if (h.status === "ok") {
       $("settings").classList.add("hidden");
-      toast("已连接：功能数 " + h.functions, "ok");
+      await refreshRole();
+      toast(`已连接：功能数 ${h.functions}（${isAdmin() ? "管理员" : "只读用户"}）`, "ok");
       reloadActiveTab();
       return;
     }
@@ -87,7 +206,8 @@ $("cfg-test").onclick = async () => {
   s.textContent = "连接中…"; s.className = "status";
   try {
     const h = await health();
-    s.textContent = `连通 ✓ 交易日=${h.trade_open} 功能数=${h.functions} 版本=${h.data_version}`;
+    await refreshRole();
+    s.textContent = `连通 ✓ 角色=${isAdmin() ? "管理员" : "只读用户"} 交易日=${h.trade_open} 功能数=${h.functions} 版本=${h.data_version}`;
     s.className = "status ok";
   } catch (e) { s.textContent = "连接失败：" + e.message; s.className = "status bad"; }
 };
@@ -103,7 +223,9 @@ $("q-run").onclick = async () => {
     const d = await call("screen_quant", params);
     const rows = d.candidates || [];
     $("q-meta").textContent = `${d.trade_date || ""} · ${rows.length} 只`;
-    $("q-result").innerHTML = renderCandidates(rows);
+    // renderCandidates 内部直接写入 #q-result（drawQuant），不返回值；
+    // 不能用其返回值(undefined)覆盖已渲染表格
+    renderCandidates(rows);
   } catch (e) { $("q-result").innerHTML = ""; toast("选股失败：" + e.message, "bad"); }
   btn.disabled = false;
 };
@@ -139,6 +261,14 @@ const QUANT_COLS = [
   { key: "low_ivol", label: "低波动" },
   { key: "low_turnover", label: "低换手" },
   { key: "vol_confirm", label: "量能" },
+  // 候选因子（后端仅在权重≠0 时返回，届时自动出现在列表）
+  { key: "mom_6_1", label: "6-1动量" },
+  { key: "max_lottery", label: "彩票效应⁻" },
+  { key: "downside_vol", label: "下行波动⁻" },
+  { key: "amihud_illiq", label: "非流动性" },
+  { key: "small_size", label: "小市值" },
+  { key: "value_bm", label: "账面市值比" },
+  { key: "earnings_yield", label: "盈利收益率" },
   { key: "score", label: "综合分" },
 ];
 const QUANT_ALWAYS = ["__ticker", "last", "chg", "ret5", "score"];
@@ -286,6 +416,7 @@ async function syncSentimentWindow() {
 }
 
 $("s-window-save").onclick = async () => {
+  if (!isAdmin()) { toast("用户 Key 不可修改归一化窗口", "bad"); return; }
   const w = Number($("s-window").value);
   const st = $("s-window-status");
   if (!(w >= 3 && w <= 30)) { st.textContent = "窗口须 3-30"; return; }
@@ -379,7 +510,7 @@ function renderRanges(inds, weights) {
     const tp = pct(cur, lo, hi), mp = pct(mean, lo, hi);
     const vm = d.vs_mean ?? 0;
     const vmCls = vm > 0 ? "pos" : (vm < 0 ? "neg" : "");
-    const icon = k === "index_kline"
+    const icon = ["index_body", "index_amp", "avg_price_body", "avg_price_amp"].includes(k)
       ? '<svg class="k-ic" viewBox="0 0 24 24" aria-hidden="true"><line x1="8" y1="2" x2="8" y2="22" stroke="currentColor" stroke-width="1.5"/><rect x="4.5" y="7" width="7" height="9" rx="1" fill="currentColor"/><line x1="17" y1="4" x2="17" y2="20" stroke="currentColor" stroke-width="1.5"/><rect x="13.5" y="9" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'
       : "";
     return `<div class="range-row">
@@ -405,6 +536,13 @@ $("b-run").onclick = () => loadBacktest(true);
 let _btLoaded = false;
 async function loadBacktest(force = false) {
   if (_btLoaded && !force) return;
+  if (!isAdmin()) {
+    _btLoaded = false;
+    const tip = '<div class="empty">只读用户 Key 不可触发回测，请使用管理员 Key</div>';
+    ["b-auto-ret", "b-auto-win", "b-driver", "b-pred-acc", "b-detail", "b-hints"].forEach((id) => ($(id).innerHTML = tip));
+    $("b-meta").textContent = "";
+    return;
+  }
   _btLoaded = true;
   const setLoading = (id) => ($(id).innerHTML = '<div class="empty">加载中…</div>');
   ["b-auto-ret", "b-auto-win", "b-driver", "b-pred-acc", "b-detail"].forEach(setLoading);
@@ -482,6 +620,13 @@ async function loadWeights() {
     const models = d.models || {};
     box.innerHTML = "";
     Object.keys(models).forEach((m) => box.appendChild(modelBlock(m, models[m])));
+    if (!isAdmin()) {
+      const tip = document.createElement("p");
+      tip.className = "hint";
+      tip.textContent = "当前为只读用户 Key，权重仅供查看，不可修改。";
+      box.prepend(tip);
+    }
+    applyRoleUI();
   } catch (e) { box.innerHTML = ""; toast("加载配置失败：" + e.message, "bad"); }
 }
 
@@ -497,6 +642,14 @@ const FACTOR_LABEL = {
   low_ivol: "低特质波动",
   low_turnover: "低换手",
   vol_confirm: "量能确认（温和放量）",
+  // 候选因子（默认权重 0）
+  mom_6_1: "6-1 动量（中期趋势）",
+  max_lottery: "MAX 彩票效应（反向）",
+  downside_vol: "下行波动率（反向）",
+  amihud_illiq: "Amihud 非流动性",
+  small_size: "规模因子（小市值）",
+  value_bm: "账面市值比 B/M（价值）",
+  earnings_yield: "盈利收益率 E/P（价值）",
   // 板块
   sec_mom_12_1: "板块 12-1 动量",
   sec_mom_20d: "板块 20 日动量",
@@ -511,7 +664,10 @@ const FACTOR_LABEL = {
   turnover: "大盘成交额（量能）",
   index_mom: "大盘指数动量",
   avg_price_mom: "平均股价指数（全市场平均涨幅）",
-  index_kline: "大盘K线形态（收盘强弱）",
+  index_body: "大盘指数实体长度（百分点）",
+  index_amp: "大盘指数振幅方向（百分点）",
+  avg_price_body: "平均股价指数实体长度（百分点）",
+  avg_price_amp: "平均股价指数振幅方向（百分点）",
 };
 const factorLabel = (f) => FACTOR_LABEL[f] || f;
 
@@ -524,6 +680,13 @@ const FACTOR_DESC = {
   low_ivol: "近 60 日日收益标准差取负（低特质波动）。低波动异象：波动越低、风险调整后收益越优。值越大（波动越低）越好。正向。",
   low_turnover: "换手率取负。高换手往往对应过度交易/情绪过热，未来收益偏低；低换手更稳健。值越大（换手越低）越好。正向。",
   vol_confirm: "近 5 日均量 / 前 20 日均量，衡量温和放量（已截断防爆量）。适度放量确认趋势。正向。",
+  mom_6_1: "6-1 中期动量：过去约 126 个交易日、剔除最近 21 日的累计收益（Jegadeesh-Titman 1993）。比 12-1 更贴近中短期趋势延续，与 12-1 互补。默认权重 0，需要时启用。",
+  max_lottery: "MAX 彩票效应（Bali, Cakici & Whitelaw 2011）：过去 21 日最大单日涨幅取负。高“博彩性”（近期出现暴涨）的个股因投资者偏好而被高估、未来收益偏低，故取负对齐为越大越好。默认权重 0。",
+  downside_vol: "下行波动率（Ang, Chen & Xing 2006）：近 60 日仅负收益部分的标准差，取负。下行风险越低越优（低下行波动溢价）。区别于总波动，只惩罚亏损端波动。默认权重 0。",
+  amihud_illiq: "Amihud 非流动性（2002）：近 20 日 mean(|日收益| / 成交额)。衡量单位成交额推动价格的幅度，越大越不流动。学术上存在非流动性溢价（长周期正向）；但本项目偏短线交易、更看重流动性，需谨慎，故默认权重 0。",
+  small_size: "规模因子（Fama-French SMB 1993）：−ln(流通市值)。市值越小值越大，捕捉小市值溢价。A 股小市值波动大、需结合流动性与风险控制，默认权重 0。",
+  value_bm: "账面市值比 B/M = 1/PB（Fama-French HML）：越高代表越“便宜”的价值股，捕捉价值溢价。默认权重 0。",
+  earnings_yield: "盈利收益率 E/P = 1/PE_TTM：估值/质量类价值因子，盈利收益率越高越便宜。本项目 PE 仅作风险背景（权重通常 0），默认权重 0。",
   sec_mom_12_1: "板块指数的 12-1 中期动量。A 股行业层面动量为正（板块轮动有延续性）。正向。",
   sec_mom_20d: "板块指数近 20 个交易日动量，捕捉近端趋势延续。正向。",
   sec_mom_5d: "板块指数近 5 个交易日动量，反映短期情绪热度延续。正向。",
@@ -532,11 +695,14 @@ const FACTOR_DESC = {
   adv_dec_ratio: "全市场上涨家数 /（上涨+下跌家数），衡量赚钱效应广度。越高情绪越热。",
   limit_up: "全市场涨停家数，情绪亢奋度的正向指标。越多越热，正向计分。",
   limit_down: "全市场跌停家数，恐慌度指标。越多越冷，**反向计分**（跌停越多，子分越低，拉低温度）。",
-  index_kline: "当天大盘（沪深300）K 线形态：0.5×收盘在日内高低区间的位置 + 0.5×阳阴实体占比，0~1。收在高位、大阳线得分高；收在低位、阴线得分低。反映当日多空强弱。",
   sector_ratio: "上涨板块数 /（上涨+下跌板块数），衡量热点扩散广度。越高越热。",
   turnover: "全市场成交额（量能）。放量代表资金活跃、情绪升温。",
   index_mom: "大盘指数当日涨跌幅（动量）。正向反映当日强弱。",
   avg_price_mom: "全市场个股平均涨跌幅（以涨幅锚定，非绝对均价）。反映“平均一只票”的当日表现。越高越热。",
+  index_body: "大盘（沪深300）当日实体长度，按百分点位口径 (收盘-开盘)/前收×100。阳线为正、阴线为负，绝对值=实体长度。长阳线高分、长阴线低分、短实体贴近中性（分歧小）。低权重情绪因子。",
+  index_amp: "大盘（沪深300）当日振幅方向信号，按百分点位口径 (下影线-上影线)/前收×100。振幅越大代表分歧越大；长下影线（抄底/支撑）→高分，长上影线（抛压）→低分，小振幅/短影线→中性。低权重情绪因子。",
+  avg_price_body: "平均股价指数当日实体长度（全市场个股 OHLC 等权平均构造“平均一只票”K线），百分点位口径。语义同大盘实体：长阳高分、长阴低分、短实体中性。低权重情绪因子。",
+  avg_price_amp: "平均股价指数当日振幅方向信号（全市场平均K线），百分点位口径。语义同大盘振幅：长下影高分、长上影低分、小振幅中性，振幅大表分歧大。低权重情绪因子。",
 };
 
 function showFactorInfo(key) {
@@ -582,6 +748,7 @@ function modelBlock(model, info) {
   inputs().forEach((i) => i.addEventListener("input", refreshSum));
   refreshSum();
   wrap.querySelector("[data-save]").onclick = async () => {
+    if (!isAdmin()) { toast("用户 Key 不可修改权重", "bad"); return; }
     const weights = {};
     inputs().forEach((i) => (weights[i.dataset.f] = parseFloat(i.value) || 0));
     try {
@@ -635,7 +802,7 @@ $("pc-run").onclick = async () => {
   btn.disabled = false;
 };
 
-/* 首屏：未配置 key 时自动弹出设置框，引导填写 */
+/* 首屏：未配置 key 时自动弹出设置框，引导填写；已配置则识别角色以控制权限 UI */
 if (!cfg.key) {
   setTimeout(() => {
     $("cfg-base").value = cfg.base;
@@ -644,4 +811,6 @@ if (!cfg.key) {
     $("cfg-status").className = "status";
     $("settings").classList.remove("hidden");
   }, 300);
+} else {
+  refreshRole();
 }

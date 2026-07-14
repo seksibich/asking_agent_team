@@ -17,7 +17,8 @@
 cp .env.example .env
 # 编辑 .env：
 #   TUSHARE_TOKEN=<你的 tushare token>
-#   API_KEY=<强随机字符串，用作 X-API-Key>
+#   API_KEY=<强随机字符串，管理员 Key，用作 X-API-Key，完整权限>
+#   USER_API_KEY=<可选，只读用户 Key：不能改权重/归一窗口、不能触发回测；留空则不启用>
 #   DB_URL=            # 留空=本地 SQLite；上云填 mysql+pymysql://user:pwd@host:3306/stock_agent?charset=utf8mb4
 ```
 
@@ -65,7 +66,8 @@ pip install -r requirements.txt
 
 # 2) 环境变量（读 .env 或直接 export）
 export TUSHARE_TOKEN=xxx
-export API_KEY=xxx
+export API_KEY=xxx            # 管理员 Key（完整权限）
+export USER_API_KEY=xxx       # 可选：只读用户 Key（禁改权重/窗口、禁回测）
 export CACHE_DIR=$(pwd)/cache
 export DATA_DIR=$(pwd)/data
 # 可选：export DB_URL=mysql+pymysql://user:pwd@host:3306/stock_agent?charset=utf8mb4
@@ -111,7 +113,8 @@ curl -XPOST http://localhost:18901/call \
 | 现象 | 排查 |
 |---|---|
 | `/health` `tushare_ready:false` | `.env` 的 `TUSHARE_TOKEN` 未配置/无效 |
-| 前端提示 unauthorized | Web 设置里未填或填错 `X-API-Key`（=API_KEY） |
+| 前端提示 unauthorized | Web 设置里未填或填错 `X-API-Key`（=API_KEY 或 USER_API_KEY） |
+| 403 forbidden / 用户 Key 不可改配置 | 用户 Key 只读；改权重/归一窗口、触发回测需用管理员 `API_KEY` |
 | `/health` `db_ready:false` | `DB_URL` 连接失败；检查 RDS 连通/账号；SQLite 检查 `data/` 可写 |
 | 402 tushare quota | 对应 tushare 接口积分/权限不足 |
 | 构建慢 | 网络拉取镜像/依赖慢；可配国内 Docker registry mirror 与 pip 源 |

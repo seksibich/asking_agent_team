@@ -9,6 +9,8 @@ disable-model-invocation: false
 
 > 竞价分析已独立为 `bidding-analysis` 技能，在 **09:25 竞价结束**后由主 Agent 执行。
 
+> **输出目录取决于触发来源**（见 output-format「触发来源决定输出目录」）：定时任务(T1)→ `yyyy年MM月dd日/01-盘前汇总.md` 并写自动记忆；**用户手动触发 → `投研/yyyyMMdd-手动盘前汇总/`，且不覆盖当日定时日报、不改写 `daily/yyyyMMdd.md`、不以 category=auto 登记选股**。
+
 ## 前置步骤（共用）
 
 1. **交易日守卫**：`GET /health`，`trade_open=false` 则直接返回。

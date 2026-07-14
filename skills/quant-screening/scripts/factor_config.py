@@ -79,19 +79,28 @@ def get_factor_config(p: dict) -> dict:
             "weights": effective_weights(m),
             "source": "override" if has_ov else "default",
             "updated_at": ov.get(m, {}).get("updated_at") if has_ov else None,
+            "version_id": ov.get(m, {}).get("version_id") if has_ov else None,
+            "actor": ov.get(m, {}).get("actor") if has_ov else None,
         }
     return {"source": "factor_config", "fetched_at": common.now_str(), "models": out}
 
 
 @register("set_factor_weights", "screening",
-          "更新某模型的全部因子/指标权重（必须传全部且权重和=1）。缺失/多余/差异/和≠1 时返回错误并指引",
+          "更新某模型的全部因子/指标权重（必须传全部且权重和=1）。缺失/多余/差异/和≠1 时返回错误并指引。"
+          "每次成功修改都会留痕为一个类 commit 的 version_id（署名 actor），可用 get_config_history/get_config_version 定位",
           params=[{"name": "model", "type": "string", "required": True, "desc": "stock|sector|trend|sentiment"},
                   {"name": "weights", "type": "object", "required": True,
-                   "desc": "全部规范因子的权重字典，权重和须=1.0"}],
-          returns="applied 是否成功；失败含 expected_factors/missing/unexpected/hint")
+                   "desc": "全部规范因子的权重字典，权重和须=1.0"},
+                  {"name": "actor", "type": "string", "required": False, "default": "agent",
+                   "desc": "修改者身份署名，如 回测分析师/main-orchestrator/user"},
+                  {"name": "reason", "type": "string", "required": False, "default": "",
+                   "desc": "修改原因（回测证据/背离说明等），建议附回测 version 或关键指标"}],
+          returns="applied 是否成功 + version_id（留痕版本）；失败含 expected_factors/missing/unexpected/hint")
 def set_factor_weights(p: dict) -> dict:
     model = p["model"]
     weights = p["weights"] or {}
+    actor = p.get("actor") or "agent"
+    reason = p.get("reason") or ""
     if model not in DEFAULTS:
         return {"applied": False, "error": f"unknown model: {model}",
                 "valid_models": list(DEFAULTS.keys())}
@@ -119,12 +128,70 @@ def set_factor_weights(p: dict) -> dict:
         return {"applied": False, "error": f"权重之和必须为 1.0（当前 {round(total, 4)}）",
                 "model": model, "expected_factors": canonical_factors(model)}
 
+    norm_weights = {k: round(float(v), 6) for k, v in weights.items()}
+    # 留痕为一个版本（类 commit），署名 actor
+    ver = db.record_config_version(f"factor_weights:{model}", norm_weights, actor, reason)
     ov = _load_overrides()
-    ov[model] = {"weights": {k: round(float(v), 6) for k, v in weights.items()},
-                 "updated_at": common.now_str()}
+    ov[model] = {"weights": norm_weights, "updated_at": common.now_str(),
+                 "version_id": ver["version_id"], "actor": actor, "reason": reason,
+                 "parent_version": ver.get("parent_version")}
     _save_overrides(ov)
-    return {"applied": True, "model": model, "weights": ov[model]["weights"],
-            "note": "已保存，后续 screen_quant/screen_sector/screen_trend 将使用新权重"}
+    return {"applied": True, "model": model, "weights": norm_weights,
+            "version_id": ver["version_id"], "parent_version": ver.get("parent_version"),
+            "actor": actor, "reason": reason,
+            "note": "已保存并留痕；后续 screen_quant/screen_sector/screen_trend 将使用新权重。"
+                    "可用 get_config_history / get_config_version 定位或 restore_config_version 回滚"}
+
+
+@register("get_config_history", "screening",
+          "查询配置变更留痕（因子/情绪权重、归一窗口等）：按 version_id 倒序返回，含 actor/reason/payload/parent。"
+          "可按 config_key 过滤（如 factor_weights:stock / factor_weights:sentiment / sentiment_window）",
+          params=[{"name": "config_key", "type": "string", "required": False,
+                   "desc": "过滤键：factor_weights:<model> 或 sentiment_window；省略返回全部"},
+                  {"name": "model", "type": "string", "required": False,
+                   "desc": "便捷参数：等价于 config_key=factor_weights:<model>"},
+                  {"name": "limit", "type": "int", "required": False, "default": 50}],
+          returns="versions 列表（version_id/config_key/actor/reason/payload/parent_version/created_at）")
+def get_config_history(p: dict) -> dict:
+    key = p.get("config_key")
+    if not key and p.get("model"):
+        key = f"factor_weights:{p['model']}"
+    versions = db.list_config_versions(key, int(p.get("limit", 50)))
+    return {"source": "config_history", "fetched_at": common.now_str(),
+            "config_key": key, "versions": versions}
+
+
+@register("get_config_version", "screening",
+          "按 version_id 定位某次配置变更的完整快照（含当时的全部权重 payload、actor、reason）",
+          params=[{"name": "version_id", "type": "string", "required": True, "desc": "类 commit 的版本号"}],
+          returns="该版本的 config_key/actor/reason/payload/parent_version/created_at；不存在返回 found=false")
+def get_config_version(p: dict) -> dict:
+    v = db.get_config_version(p["version_id"])
+    if not v:
+        return {"source": "config_version", "fetched_at": common.now_str(),
+                "found": False, "version_id": p["version_id"]}
+    return {"source": "config_version", "fetched_at": common.now_str(), "found": True, **v}
+
+
+@register("restore_config_version", "screening",
+          "回滚到某个历史版本的配置：读取该 version_id 的 payload 并重新生效（仅支持 factor_weights:<model>）。"
+          "回滚本身也会留痕为一个新版本（parent 指向被回滚版本），署名 actor",
+          params=[{"name": "version_id", "type": "string", "required": True, "desc": "要回滚到的历史版本号"},
+                  {"name": "actor", "type": "string", "required": False, "default": "agent"},
+                  {"name": "reason", "type": "string", "required": False, "default": ""}],
+          returns="restored 是否成功 + 新 version_id")
+def restore_config_version(p: dict) -> dict:
+    v = db.get_config_version(p["version_id"])
+    if not v:
+        return {"restored": False, "error": f"version 不存在: {p['version_id']}"}
+    key = v.get("config_key", "")
+    if not key.startswith("factor_weights:"):
+        return {"restored": False, "error": f"暂只支持回滚 factor_weights:<model>，该版本 config_key={key}"}
+    model = key.split(":", 1)[1]
+    payload = v.get("payload") or {}
+    reason = p.get("reason") or f"restore from {p['version_id']}"
+    return set_factor_weights({"model": model, "weights": payload,
+                               "actor": p.get("actor") or "agent", "reason": reason})
 
 
 if __name__ == "__main__":

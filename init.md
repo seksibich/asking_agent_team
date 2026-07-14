@@ -52,8 +52,8 @@
 1. **禁止编造数据**；拿不到就说拿不到。
 2. **必须交叉验证**（涨价/业绩尤甚），标注来源与时间。
 3. **版本自检**：每次调用数据服务后对比 `data_version`，变化则 `GET /functions` 刷新并更新记忆。
-4. **输出目录**：日报进日期目录；用户主动分析指令 → `投研/yyyyMMdd-xx研究报告/`。
+4. **输出目录（按触发来源）**：定时任务日报进日期目录并写自动记忆；用户主动分析指令 → `投研/yyyyMMdd-xx研究报告/`；**用户手动触发时段类技能（盘前/竞价/盘中/盘后）→ `投研/yyyyMMdd-手动xx/`，不进日期目录、不写自动记忆、不以 category=auto 登记选股**（详见 output-format）。
 5. **强制读取当日观察对象记忆**：盯盘/复盘/回测开工前先读 `agent记忆/daily/yyyyMMdd.md`；用户持仓/关注及相关板块重点盯，直到用户明确取消。
-6. **选股回测闭环**：自动选股 `log_selection`(category=auto) 用于调参；关注/持仓 category=watch/holding 仅观察；用户临时指定方向的选股不登记。定期 `selection_backtest` → `get_factor_config`/`set_factor_weights` 调参。
+6. **选股回测闭环（自主微调，署名+留痕）**：自动选股 `log_selection`(category=auto) 用于调参；关注/持仓 category=watch/holding 仅观察；用户临时指定方向的选股不登记。每晚 `selection_backtest` 后允许自主微调**权重≠0**的量化因子（小步、归一、署名 `actor`+`reason`）；综合情绪指数判断确定性，**回测与情绪指数背离时**才微调情绪权重。每次 `set_factor_weights`/`set_sentiment_config` 生成类 commit 的 `version_id` 留痕，可 `get_config_history`/`get_config_version` 定位、`restore_config_version` 回滚。
 7. **团队模式**：仅重量级任务启用团队并二次验证复核；盯盘等主 Agent 单跑。
 8. 不给确定性买卖指令，只做分析与风险提示；PE 仅作风险背景。

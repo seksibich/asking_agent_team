@@ -15,13 +15,13 @@
 | T4 | 12:50 | **盘中消息 + 早盘总结** | 主 | intraday-watch | `news_flash` `news_filter` `market_limit` | `03-早盘总结.md`（+ 有消息影响则推送） |
 | T5 | 13:05~14:55（每10分钟）| 盘中盯盘 | 主 | intraday-watch | `watch_intraday` | 异动推送 / 静默 |
 | T6 | 17:30 | **当日总结**（盘后轻量，主 Agent） | 主 | post-market | `market_index` `sector_dc` `market_limit` `money_hsgt` | `04-当日总结.md` + 推送 |
-| T7 | 22:00 | **综合复盘 + 选股 + 回测**（完整团队） | 团队 | post-market + review-learning + 全体子Agent | `money_toplist` `screen_sector` `screen_quant` `screen_trend` `predictions_backtest` `selection_backtest` `log_selection` | `05-综合复盘.md` + 次日候选 + 推送 |
+| T7 | 22:00 | **综合复盘 + 选股 + 回测**（完整团队）。量化选股 `top_n=50`，次日候选须**按主线/产业链分组解读**（逐股板块/行业/炒作路径 + 消息面/行业新闻/近期主线） | 团队 | post-market + review-learning + 全体子Agent | `money_toplist` `screen_sector` `screen_quant`(top_n=50) `screen_trend` `predictions_backtest` `selection_backtest` `log_selection` | `05-综合复盘.md`（含分组解读） + 次日候选 + 推送 |
 
 ## 周期任务
 
 | 序号 | 时间 | 任务 | 模式 | 绑定 | 关键调用 | 产出 |
 |---|---|---|---|---|---|---|
-| W1 | 周日 20:00 | **周回测** + 趋势周报 + 下周候选池 + 因子调参 | 团队 | review-learning + 回测子Agent | `selection_backtest` `predictions_backtest` `screen_sector/quant/trend` `get_factor_config` `set_factor_weights` | `周报/...周报.md` |
+| W1 | 周日 20:00 | **周回测** + 趋势周报 + 下周候选池（量化 `top_n=50`，按主线/产业链分组解读） + 因子调参 | 团队 | review-learning + 回测子Agent | `selection_backtest` `predictions_backtest` `screen_sector/quant`(top_n=50)`/trend` `get_factor_config` `set_factor_weights` | `周报/...周报.md` |
 | M1 | 每月最后交易日 21:00 | **月回测** + 月报 + 用户画像更新 + 因子调参 | 团队 | review-learning + 回测子Agent | `selection_backtest` `get_factor_config` `set_factor_weights` | `月报/...月报.md` |
 | D1 | 交易日 17:45 | **全市场因子预计算**（落库 daily_factors，供次日选股读库提速） | 服务/主 | quant-screening | `precompute_daily_factors` | daily_factors 更新 |
 | P1 | 周六 12:00 | 涨价链专项扫描 | 主 | industry-analysis | `price_hike_scan` `news_filter` `macro_ppi` | 更新 `观察池.md` |
@@ -29,7 +29,7 @@
 ## 关键规则
 - **T1 盘前**要先跑 `selection_backtest`/读近7日自动选股（重点前一日），据此结合今日消息/宏观/期货，产出今日关注板块与个股，并写入当日观察对象记忆。
 - **盯盘（T3/T5）用主 Agent 单跑**，追求时效；重量级（T1/T7/W1/M1/用户分析）才启用团队。
-- **回测→调参闭环**（T7/W1/M1）：回测子Agent 出调参建议 → 主 Agent 复核 → `get_factor_config` 取最新因子列表 → `set_factor_weights` 提交全部因子权重（缺失/多余/差异/和≠1 会被拒并指引修正）。
+- **回测→自主微调闭环**（T7/W1/M1，署名+留痕）：回测子Agent 出调参建议 → 主 Agent 复核 → `get_factor_config` 取最新因子列表 → `set_factor_weights` 提交全部因子权重（**仅微调权重≠0 的因子、小步、归一，署名 actor + reason**，缺失/多余/差异/和≠1 会被拒并指引）。综合情绪指数判断确定性，**回测与情绪指数持续背离时**才 `set_factor_weights(model=sentiment)` 微调情绪权重。每次修改返回 `version_id` 写入学习日志（可 `get_config_history`/`get_config_version` 定位、`restore_config_version` 回滚）。
 - 每日 auto/watch/holding 标的用 `log_selection` 登记到服务端供回测。
 
 ## 非交易日

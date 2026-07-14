@@ -108,4 +108,5 @@ curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
 ## 安全
 
 - `.env` 含真实 token，已 gitignore；务必设置强随机 `API_KEY`。
+- **API Key 分级**：`API_KEY` 为管理员 Key（完整权限）；可选配置 `USER_API_KEY` 作为只读用户 Key —— 用户 Key 可查看/选股/读情绪，但**不能修改因子权重、归一化窗口，也不能触发回测**（服务端返回 403，Web 面板对应入口自动禁用）。留空 `USER_API_KEY` 则不启用。
 - 本地/内网使用；迁移公网（ECS）时建议加防火墙白名单或反向代理鉴权。

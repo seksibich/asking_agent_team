@@ -18,8 +18,12 @@ import numpy as np
 import pandas as pd
 
 # ---------------- 个股因子默认权重（sum=1.0） ----------------
-# 侧重回测有效的趋势+反转+低波动组合
+# 侧重回测有效的趋势+反转+低波动组合。
+# 下半部分为「候选因子」，默认权重 0（不参与打分、不在选股列表展示）；
+# 依据前沿学术论文 / 量化机构常用 / A股回测经验预置，需要时在「权重配置」页调高权重启用。
+# 所有因子均已对齐为「值越大越好（预期收益越高）」，故合成权重恒为正。
 STOCK_FACTOR_WEIGHTS: dict[str, float] = {
+    # —— 默认启用（sum=1.0）——
     "mom_12_1": 0.16,        # 12-1 动量（趋势，剔除最近1个月避免短期反转污染）
     "trend_ma": 0.14,        # 均线多头排列强度（趋势）
     "high_52w": 0.09,        # 距52周高点接近度（趋势，52周高点因子）
@@ -27,6 +31,14 @@ STOCK_FACTOR_WEIGHTS: dict[str, float] = {
     "low_turnover": 0.13,    # 低换手（情绪/流动性，高换手未来收益低）
     "low_ivol": 0.20,        # 低波动（特质波动率，低波动异象）
     "vol_confirm": 0.06,     # 量能确认（温和放量）
+    # —— 候选因子（默认 0，学术/机构常用，按需启用）——
+    "mom_6_1": 0.0,          # 6-1 中期动量（Jegadeesh-Titman 1993；中短期趋势延续）
+    "max_lottery": 0.0,      # MAX 彩票效应反向（Bali/Cakici/Whitelaw 2011；高博彩性未来收益低）
+    "downside_vol": 0.0,     # 下行波动率取负（Ang/Chen/Xing 2006；下行风险溢价）
+    "amihud_illiq": 0.0,     # Amihud 非流动性（2002；非流动性溢价，长周期正向，短线慎用）
+    "small_size": 0.0,       # 规模因子 −ln(流通市值)（Fama-French SMB 1993；小市值溢价）
+    "value_bm": 0.0,         # 账面市值比 B/M=1/PB（Fama-French HML；价值溢价）
+    "earnings_yield": 0.0,   # 盈利收益率 E/P=1/PE_TTM（价值/质量；本项目 PE 仅作背景，默认 0）
 }
 
 # ---------------- 板块因子默认权重（sum=1.0） ----------------
@@ -51,19 +63,25 @@ TREND_FACTOR_WEIGHTS: dict[str, float] = {
 }
 
 # ---------------- 情绪温度指标权重（sum=1.0，0-100 温度合成） ----------------
-# 各指标均为"越高越热"，按当天之前 7 日窗口做 min-max 归一后加权
+# 各指标均为"越高越热/越偏多"，按当天之前 7 日窗口做 min-max 归一后加权。
+# 振幅方向信号 + 实体长度（大盘指数 / 平均股价指数）均按百分点位口径，低权重参与。
+# 注：原 index_kline（大盘K线形态）已由 index_body + index_amp 覆盖（阳阴实体 + 影线方向），故移除。
 SENTIMENT_FACTOR_WEIGHTS: dict[str, float] = {
     "adv_dec_ratio": 0.22,   # 大盘涨跌家数比（上涨家数占比）
     "limit_up": 0.12,        # 涨停家数（越多越热，正向）
     "limit_down": 0.06,      # 跌停家数（越多越冷，反向计分）
-    "index_kline": 0.14,     # 当天大盘K线形态（收盘在日内区间强弱+阳阴实体）
     "sector_ratio": 0.13,    # 板块涨跌比（上涨板块占比）
-    "turnover": 0.13,        # 大盘成交额（量能）
+    "turnover": 0.12,        # 大盘成交额（量能）
     "index_mom": 0.12,       # 大盘指数动量
-    "avg_price_mom": 0.08,   # 平均股价指数动量
+    "avg_price_mom": 0.07,   # 平均股价指数动量（全市场平均涨跌幅）
+    "index_body": 0.05,      # 大盘指数实体长度（百分点，长阳高分/长阴低分/短实体中性）
+    "index_amp": 0.05,       # 大盘指数振幅方向信号（百分点，长下影高分/长上影低分/小振幅中性）
+    "avg_price_body": 0.03,  # 平均股价指数实体长度（百分点）
+    "avg_price_amp": 0.03,   # 平均股价指数振幅方向信号（百分点）
 }
 
 TRADING_DAYS_YEAR = 252
+TRADING_DAYS_HALF_YEAR = 126
 TRADING_DAYS_MONTH = 21
 
 
@@ -82,11 +100,15 @@ def _ret(series: pd.Series, lookback: int, skip: int = 0) -> float:
 
 
 # ================= 个股因子 =================
-def compute_stock_factors(df: pd.DataFrame, turnover_rate: Optional[float] = None) -> Optional[dict[str, Any]]:
-    """计算单只个股的趋势/情绪因子原始值。
+def compute_stock_factors(df: pd.DataFrame, turnover_rate: Optional[float] = None,
+                          basic: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    """计算单只个股的趋势/情绪 + 候选因子原始值。
 
-    df 需含 close, vol 列，按 trade_date 升序。数据不足 60 日返回 None。
+    df 需含 close, vol 列（可选含 amount 列用于流动性因子），按 trade_date 升序。
+    数据不足 60 日返回 None。
     turnover_rate 为最新换手率（%），来自 daily_basic，可选。
+    basic 为该股最新 daily_basic 派生字段（pe_ttm/pb/circ_mv 等），可选；
+    缺失时对应候选因子取 0（中性，默认权重 0 不影响打分）。
     返回值均已对齐为「越大越好」。
     """
     if df is None or df.empty or len(df) < 60:
@@ -123,6 +145,48 @@ def compute_stock_factors(df: pd.DataFrame, turnover_rate: Optional[float] = Non
     vr = _safe(vol.tail(5).mean() / base_vol) if base_vol else 1.0
     vol_confirm = min(vr, 3.0)  # 截断防爆量污染
 
+    # ============ 候选因子（默认权重 0，需要时在权重配置启用）============
+    rets = close.pct_change()
+
+    # 6-1 中期动量：过去约 126 日、剔除最近 21 日（中短期趋势延续）
+    mom_6_1 = _ret(close, TRADING_DAYS_HALF_YEAR - TRADING_DAYS_MONTH, skip=TRADING_DAYS_MONTH)
+
+    # MAX 彩票效应反向：过去 21 日最大单日涨幅，取负（高博彩性个股未来收益偏低）
+    last21 = rets.tail(TRADING_DAYS_MONTH).dropna()
+    max_lottery = -_safe(float(last21.max())) if len(last21) else 0.0
+
+    # 下行波动率取负：近 60 日仅负收益的标准差（下行风险溢价，低下行波动更优）
+    r60 = rets.tail(60).dropna()
+    neg = r60[r60 < 0]
+    downside_vol = -_safe(float(neg.std(ddof=0))) if len(neg) > 1 else 0.0
+
+    # Amihud 非流动性：近 20 日 mean(|日收益| / 成交额)，越大越不流动（非流动性溢价，正向）
+    amihud_illiq = 0.0
+    if "amount" in df.columns:
+        amt = df["amount"].astype(float).reset_index(drop=True)
+        m = min(20, len(amt) - 1)
+        if m > 0:
+            rr = rets.reset_index(drop=True).tail(m).abs()
+            aa = amt.tail(m).replace(0.0, np.nan)
+            ratio = (rr / aa).dropna()
+            # amount 单位千元，比值极小，放大到可读量级（横截面 zscore 不改排序）
+            amihud_illiq = _safe(float(ratio.mean()) * 1e6) if len(ratio) else 0.0
+
+    # daily_basic 派生（规模 / 价值 / 盈利收益率）
+    small_size = 0.0
+    value_bm = 0.0
+    earnings_yield = 0.0
+    if basic:
+        circ_mv = basic.get("circ_mv")            # 流通市值（万元）
+        if circ_mv and float(circ_mv) > 0:
+            small_size = -_safe(math.log(float(circ_mv)))   # −ln(市值)：市值越小值越大
+        pb = basic.get("pb")
+        if pb and float(pb) > 0:
+            value_bm = _safe(1.0 / float(pb))               # 账面市值比 B/M（越高越“便宜”）
+        pe = basic.get("pe_ttm") if basic.get("pe_ttm") not in (None, "") else basic.get("pe")
+        if pe and float(pe) > 0:
+            earnings_yield = _safe(1.0 / float(pe))          # 盈利收益率 E/P
+
     return {
         "mom_12_1": mom_12_1,
         "trend_ma": trend_ma,
@@ -131,6 +195,14 @@ def compute_stock_factors(df: pd.DataFrame, turnover_rate: Optional[float] = Non
         "low_turnover": low_turnover,
         "low_ivol": low_ivol,
         "vol_confirm": vol_confirm,
+        # 候选因子
+        "mom_6_1": mom_6_1,
+        "max_lottery": max_lottery,
+        "downside_vol": downside_vol,
+        "amihud_illiq": amihud_illiq,
+        "small_size": small_size,
+        "value_bm": value_bm,
+        "earnings_yield": earnings_yield,
         "price": round(price, 2),
     }
 

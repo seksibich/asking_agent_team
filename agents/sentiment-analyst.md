@@ -12,33 +12,37 @@
 
 ## 情绪温度模型（0-100，量化）—— 由服务端统一计算
 
-**首选调用服务端 `sentiment_temperature`**（保证口径统一、可复算、带 30 日缓存）：
+**一律调用服务端 `sentiment_temperature`**（保证口径统一、可复算、带缓存）。**不要在本地写死权重、指标清单或复算温度**——温度、指标集与权重都以接口实时返回为准：
 ```json
 POST /call
 {"function": "sentiment_temperature", "params": {"date": "20260714"}}
 ```
-返回 `temperature`(0-100)、`level`(档位)、`indicators`(每项 raw+子分)、`weights`。
+返回 `temperature`(0-100)、`level`(档位)、`indicators`(每项 `raw_today/window_min/window_mean/window_max/vs_mean/sub_score`)、`weights`(当前生效权重)、`window_size`。**直接用返回的 `weights` 与 `indicators`**，勿假设固定数值。
 
-### 计算口径（服务端实现）
-综合**八项**指标，各"越高越热"，按**当天之前 N 个交易日**窗口（N 可配置，默认 7，范围 3-30）做 min-max 归一为 0-100 子分，再加权合成：
+### 计算口径（服务端实现，权重以接口为准）
+综合多项指标，各"越高越热/越偏多"，按**当天之前 N 个交易日**窗口（N 可配置，默认 7，范围 3-30）做 min-max 归一为 0-100 子分，再加权合成。**当前指标清单与生效权重请调 `get_factor_config(model=sentiment)` 或直接读 `sentiment_temperature` 返回的 `weights`**，下表仅为指标语义说明（权重会随配置变化，不在此写死）：
 
-| 指标 | 含义 | 默认权重 |
-|---|---|---|
-| `adv_dec_ratio` | 大盘涨跌家数比（上涨家数占比） | 0.22 |
-| `limit_up` | 涨停家数（越多越热，正向） | 0.12 |
-| `limit_down` | 跌停家数（越多越冷，**反向计分**：子分=100−归一，拉低温度） | 0.06 |
-| `index_kline` | **当天大盘K线形态**（收盘在日内区间强弱 + 阳阴实体，0~1） | 0.14 |
-| `sector_ratio` | 板块涨跌比（上涨板块占比） | 0.13 |
-| `turnover` | 大盘成交额（量能） | 0.13 |
-| `index_mom` | 大盘指数动量（当日涨跌幅） | 0.12 |
-| `avg_price_mom` | 平均股价指数（**全市场平均涨跌幅**，涨幅锚定，非绝对均价） | 0.08 |
+| 指标 | 含义 |
+|---|---|
+| `adv_dec_ratio` | 大盘涨跌家数比（上涨家数占比） |
+| `limit_up` | 涨停家数（越多越热，正向） |
+| `limit_down` | 跌停家数（越多越冷，**反向计分**：子分=100−归一，拉低温度） |
+| `sector_ratio` | 板块涨跌比（上涨板块占比） |
+| `turnover` | 大盘成交额（量能） |
+| `index_mom` | 大盘指数动量（当日涨跌幅） |
+| `avg_price_mom` | 平均股价指数（**全市场平均涨跌幅**，涨幅锚定，非绝对均价） |
+| `index_body` | **大盘指数实体长度**（百分点位 `(收-开)/前收×100`；长阳高分/长阴低分/短实体中性） |
+| `index_amp` | **大盘指数振幅方向**（百分点位 `(下影-上影)/前收×100`；长下影高分/长上影低分/小振幅中性） |
+| `avg_price_body` | **平均股价指数实体长度**（全市场平均K线，百分点位口径，语义同大盘实体） |
+| `avg_price_amp` | **平均股价指数振幅方向**（全市场平均K线，百分点位口径，语义同大盘振幅） |
 
-- 每个指标输出含 `raw_today / window_min / window_mean / window_max / vs_mean / sub_score`，便于对比今值在窗口中的相对高低与离均值程度（Web 看板可视化）。
-- **反向指标**（如 `limit_down` 跌停家数）：原始值越大越"冷"，子分取 `100 − min-max归一`，从而拉低温度；涨停 `limit_up` 为正向。共 **8 项**指标，权重和=1。
-- 温度分档：≥80 高潮 / 60-80 回暖 / 40-60 分歧 / 20-40 退潮 / <20 冰点。
-- **权重可配置**：`get_factor_config(model=sentiment)` 查看，`set_factor_weights(model=sentiment,...)` 调整（须传全部 8 项且和=1）。
-- **归一窗口可配置**：`get_sentiment_config` / `set_sentiment_config`（3-30 天，落库持久化）。改口径或改窗口后，窗口内历史需重采（清 `daily_sentiment` 或等自然滚动）。
-- 原始指标按交易日落库 `daily_sentiment`，避免重复全市场取数。
+> 指标集可能随服务端演进增删（例如原"大盘K线形态 index_kline"已因与 `index_body`+`index_amp` 重复而移除）。**以接口返回为准，不要硬编码指标数量或权重。**
+
+- **反向指标**（如 `limit_down`）：原始值越大越"冷"，子分取 `100 − min-max归一`；涨停 `limit_up` 为正向。反向标记由服务端处理，`indicators` 里 `sub_score` 已是最终子分。
+- **振幅/实体因子语义**：振幅越大=分歧越大；长下影线→高分（抄底/支撑），长上影线→低分（抛压）；长实体依阳/阴定方向（长阳高分、长阴低分）；短实体+小振幅→中性。按**百分点位**计算，跨标的口径一致。
+- 温度分档：≥80 高潮 / 60-80 回暖 / 40-60 分歧 / 20-40 退潮 / <20 冰点（以返回 `level` 为准）。
+- **权重/窗口均可配置**：`get_factor_config(model=sentiment)` / `set_factor_weights`；`get_sentiment_config` / `set_sentiment_config`（3-30 天）。改配置后窗口内历史需重采（清 `daily_sentiment` 或等自然滚动）。原始指标按交易日落库 `daily_sentiment`，避免重复取数。
+- **情绪权重微调时机（克制）**：仅当**回测结论与情绪指数所示环境持续背离**时，才 `set_factor_weights(model=sentiment, actor=..., reason=...)` 小步微调（只动权重≠0 的分量、归一），并署名+留痕（返回 `version_id` 记入学习日志）。无背离不动；不因单日波动频繁改权重。详见 review-learning「综合情绪指数判断选股确定性 + 背离才调情绪权重」。
 
 ## 辅助数据（可补充定性判断）
 - `hot_dc` `hot_ths` `hot_kpl_concept`（热度/题材强度）

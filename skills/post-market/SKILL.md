@@ -7,6 +7,8 @@ disable-model-invocation: false
 
 # 盘后：当日总结 + 综合复盘
 
+> **输出目录取决于触发来源**（见 output-format）：定时任务(T6/T7)→ `yyyy年MM月dd日/04-当日总结.md`、`05-综合复盘.md`，并写自动记忆（`daily` 快照、`log_selection(category=auto)`、predictions/学习日志）；**用户手动触发复盘 → `投研/yyyyMMdd-手动复盘/`，不覆盖当日定时日报、不改写自动记忆、不以 category=auto 登记选股**（避免污染回测调参）。
+
 ## 前置步骤
 1. 交易日守卫（`GET /health`）。
 2. **强制读取当日观察对象记忆**（持仓/关注/相关板块/自动选股）、`观察池`、当日 `predictions.jsonl`。
@@ -51,9 +53,10 @@ disable-model-invocation: false
 - 明确**明日仓位倾向**：具备重仓环境 / 中性 / 需要空仓，并说明依据；作为次日选股出手权重与仓位上限
 
 ### 选股（团队协同，择时叠加）
-- `screen_sector` 定强势主线 → `screen_trend`/`screen_quant` 在主线内选股 → 团队叠加涨价/逻辑/情绪复核 → 主 Agent 二次验证
+- `screen_sector` 定强势主线 → `screen_trend`/`screen_quant`（**自动跑取 `top_n=50`**）在主线内/全市场选股 → 团队叠加涨价/逻辑/情绪复核 → 主 Agent 二次验证
 - **出手评分 = 四维综合分 × buy_weight_hint（择时）**；连续冰点期提高试仓权重（重超跌+涨价/逻辑），连续高热期谨慎
-- 产出次日候选，符合自动选股定义的用 `log_selection`（category=auto）登记
+- **次日候选须分组解读**：为每只候选定位板块/行业与炒作路径，把关联个股（同板块/主线/产业链）归组，逐组结合当日消息面、行业新闻与近期主线分析——按 output-format「表格5：量化选股分组解读」输出，不得只堆因子分
+- 符合自动选股定义的用 `log_selection`（category=auto）登记
 
 ### 因子调参闭环（回测分析师 → 主 Agent）
 - 依据 `selection_backtest` 的分驱动超额与胜率给出权重建议
@@ -74,6 +77,7 @@ disable-model-invocation: false
 ## 用户操作回顾
 ## 晚间公告与消息面
 ## 明日策略与关注标的
+## 次日量化候选分组解读（top_n=50，按主线/产业链归组，含板块/行业/炒作路径 + 消息面/行业新闻/近期主线）
 ## Agent 自评与回测（分驱动准确率）
 ```
 

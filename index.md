@@ -97,8 +97,9 @@
 
 ## 4. 输出目录规范（详见 output-format）
 
-- 定时任务日报 → `盯盘/yyyy年MM月dd日/`
+- 定时任务日报 → `盯盘/yyyy年MM月dd日/`（并写自动记忆：daily 快照 / log_selection auto）
 - **用户主动分析指令 → 独立目录 `投研/yyyyMMdd-xx研究报告/`**
+- **用户手动触发时段类技能（盘前/竞价/盘中/盘后）→ `投研/yyyyMMdd-手动xx/`**，不进日期目录、不写自动记忆、不以 category=auto 登记选股
 - 选股 → `盯盘/选股/`；周报/月报 → `盯盘/周报|月报/`；记忆 → `盯盘/agent记忆/`
 
 ## 5. 记忆规范（详见 memory/MEMORY.md）
@@ -114,7 +115,7 @@
 - **用户关注/持仓** → `log_selection` 登记（category=watch/holding，仅盯盘观察）。
 - **用户临时指定方向的选股**（点名行业/板块/事件）**不登记、不纳入调参**。
 - 定期 `selection_backtest` 出 1/3/7/30 日收益/胜率/超额（分 category、auto 再分 driver/分数桶）→ 调参建议。
-- **调参落地**：`get_factor_config` → `set_factor_weights`（提交全部因子权重，模型 stock/sector/trend；缺失/多余/差异/和≠1 会被拒并指引修正）。
+- **调参落地（署名+留痕）**：`get_factor_config` → `set_factor_weights`（提交全部因子权重，模型 stock/sector/trend/sentiment；仅微调权重≠0 因子、小步归一；传 `actor`+`reason`）。每次修改生成类 commit 的 `version_id` 落库留痕；情绪权重仅在**回测与情绪指数背离**时调整。可 `get_config_history`/`get_config_version` 定位、`restore_config_version` 回滚。
 
 ## 7. 定时任务表（详见 schedule.md）
 

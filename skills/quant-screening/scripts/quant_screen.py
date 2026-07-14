@@ -108,11 +108,16 @@ def _attach_quotes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _build_factor_table(pro, codes: list[str], end: str) -> pd.DataFrame:
     """为候选股构建因子原始值表。"""
     start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=420)).strftime("%Y%m%d")
+    turnover_map: dict[str, Any] = {}
+    basic_map: dict[str, dict[str, Any]] = {}
     try:
-        basics = pro.daily_basic(trade_date=end, fields="ts_code,turnover_rate")
-        turnover_map = {r["ts_code"]: r.get("turnover_rate") for r in basics.to_dict(orient="records")}
+        basics = pro.daily_basic(trade_date=end,
+                                 fields="ts_code,turnover_rate,pe_ttm,pe,pb,circ_mv,total_mv")
+        for r in basics.to_dict(orient="records"):
+            turnover_map[r["ts_code"]] = r.get("turnover_rate")
+            basic_map[r["ts_code"]] = r
     except Exception:
-        turnover_map = {}
+        pass
 
     rows: list[dict[str, Any]] = []
     for code in codes:
@@ -120,7 +125,7 @@ def _build_factor_table(pro, codes: list[str], end: str) -> pd.DataFrame:
             df = pro.daily(ts_code=code, start_date=start, end_date=end)
         except Exception:
             continue
-        fac = factors.compute_stock_factors(df, turnover_map.get(code))
+        fac = factors.compute_stock_factors(df, turnover_map.get(code), basic_map.get(code))
         if fac is None:
             continue
         fac["code"] = code
@@ -178,8 +183,9 @@ def run(industries: Optional[list[str]] = None,
     tbl = factors.composite_score(tbl, w)
     tbl = tbl.sort_values("score", ascending=False)
 
-    cols = ["code", "price", "mom_12_1", "reversal_1m", "trend_ma", "high_52w",
-            "low_ivol", "low_turnover", "vol_confirm", "score"]
+    # 仅展示权重不为 0 的因子列（0 权重的候选因子不参与打分也不展示）
+    active = [f for f in w if float(w.get(f, 0) or 0) != 0.0]
+    cols = ["code", "price"] + active + ["score"]
     cols = [c for c in cols if c in tbl.columns]
     out = tbl[cols].head(top_n).round(4).to_dict(orient="records")
     try:
@@ -195,16 +201,22 @@ def run(industries: Optional[list[str]] = None,
         "trade_date": end,
         "data_source": data_source,
         "weights": w,
-        "factor_note": "个股：mom_12_1(趋势)+reversal_1m(短期反转)+low_ivol/low_turnover(情绪)+trend_ma/high_52w(趋势)",
+        "factor_note": "默认启用：mom_12_1(趋势)+reversal_1m(短期反转)+low_ivol/low_turnover(情绪)+trend_ma/high_52w(趋势)+vol_confirm(量能)；"
+                       "候选因子(默认权重0，可在权重配置启用)：mom_6_1/max_lottery/downside_vol/amihud_illiq/small_size/value_bm/earnings_yield。"
+                       "仅权重≠0 的因子参与打分并在结果中展示",
         "candidates": out,
         "note": "量化候选，须由 Agent 叠加 涨价>逻辑>预期>情绪 四维交叉验证复核",
     }
 
 
 @register("screen_quant", "screening",
-          "量化多因子选股（个股：12-1动量+1月反转+低波动+低换手+趋势）。候选须四维复核",
+          "量化多因子选股（默认：12-1动量+1月反转+低波动+低换手+趋势+量能；另有 7 个默认0权重候选因子"
+          "mom_6_1/max_lottery/downside_vol/amihud_illiq/small_size/value_bm/earnings_yield 可在权重配置启用，"
+          "仅权重≠0 的因子参与打分与展示）。候选须四维复核",
           params=[{"name": "industries", "type": "array", "required": False,
-                   "desc": "限定行业/主线名，省略则全市场"},
+                   "desc": "限定行业/主线/概念名（单词条多源模糊匹配：stock_basic行业+申万L1/L2/L3+同花顺/东财概念，"
+                           "支持'机器人''PCB铜箔''电子布'等细分主题；传多词条取交集层层收窄，"
+                           "如['通信','PCB','铜箔']=同时属于三者），省略则全市场"},
                   {"name": "weights", "type": "object", "required": False, "desc": "自定义因子权重"},
                   {"name": "top_n", "type": "int", "required": False, "default": 30}],
           returns="candidates（含各因子值与合成 score）")

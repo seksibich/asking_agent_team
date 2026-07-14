@@ -19,47 +19,62 @@ disable-model-invocation: false
 
 ## 一、个股量化选股（screen_quant）
 
-### 因子与默认权重（横截面 z-score 加权，sum=1.0）
+### 因子（横截面 z-score 加权合成，权重和=1.0）
 
-| 因子 | 维度 | 方向 | 权重 | 说明 |
-|---|---|---|---|---|
-| `mom_12_1` | 趋势 | + | 0.16 | 过去 252 日剔除最近 21 日的收益 |
-| `trend_ma` | 趋势 | + | 0.14 | 多头排列（price>ma20>ma60）+ 乖离 |
-| `high_52w` | 趋势 | + | 0.09 | 距 52 周高点接近度 |
-| `reversal_1m` | 情绪 | + | 0.22 | 最近 21 日收益取负（短期反转） |
-| `low_turnover` | 情绪 | + | 0.13 | 换手率取负（高换手未来收益低） |
-| `low_ivol` | 情绪 | + | 0.20 | 近 60 日日收益波动取负（低波动异象） |
-| `vol_confirm` | 量能 | + | 0.06 | 近 5 日/前 20 日均量，温和放量（截断防爆量） |
+> **权重不写死**：当前规范因子列表与生效权重一律以 `get_factor_config(model=stock)` 返回为准（服务端可增删因子/改权重）。下表仅说明因子语义与方向，不列具体权重。`screen_quant` 只返回并展示**权重≠0**的因子列。
 
-所有因子已对齐「值越大越好」，故权重全正。可通过请求体 `weights` 覆盖默认权重做因子测试。
+**默认启用因子**（方向均为 +，值越大越好）：
+
+| 因子 | 维度 | 说明 |
+|---|---|---|
+| `mom_12_1` | 趋势 | 过去 252 日剔除最近 21 日的收益 |
+| `trend_ma` | 趋势 | 多头排列（price>ma20>ma60）+ 乖离 |
+| `high_52w` | 趋势 | 距 52 周高点接近度 |
+| `reversal_1m` | 情绪 | 最近 21 日收益取负（短期反转） |
+| `low_turnover` | 情绪 | 换手率取负（高换手未来收益低） |
+| `low_ivol` | 情绪 | 近 60 日日收益波动取负（低波动异象） |
+| `vol_confirm` | 量能 | 近 5 日/前 20 日均量，温和放量（截断防爆量） |
+
+**候选因子**（默认权重 0，不参与打分也不展示；源自学术/机构常用，按需在权重配置启用）：
+`mom_6_1`(6-1中期动量) · `max_lottery`(MAX彩票效应反向) · `downside_vol`(下行波动率反向) · `amihud_illiq`(Amihud非流动性) · `small_size`(规模/小市值) · `value_bm`(账面市值比B/M) · `earnings_yield`(盈利收益率E/P)。
+
+所有因子已对齐「值越大越好」，故权重全正。可通过请求体 `weights` 临时覆盖默认权重做因子测试（无需落库）。
 
 ### 请求示例
 ```json
 POST /call
 {"function": "screen_quant",
- "params": {"industries": ["光伏", "半导体"], "top_n": 30,
+ "params": {"industries": ["光伏", "半导体", "机器人", "PCB铜箔"], "top_n": 30,
             "weights": {"reversal_1m": 0.30, "low_ivol": 0.25}}}
 ```
-`industries` 省略则全市场（自动剔除 ST/退）。
+- `industries` 省略则全市场（自动剔除 ST/退）。
+- **多源模糊匹配**：单个词条在 tushare 行业(stock_basic) + 申万 L1/L2/L3 + 同花顺/东财概念内取并集，支持"机器人/PCB铜箔/电子布"等细分主题与产业链概念。
+- **多词条取交集（层层收窄）**：传多个词条时返回**同时属于全部词条**的个股，用于产业链下钻定位。例如 `["通信","PCB","铜箔"]` = 通信∩PCB∩铜箔，而非任一命中的并集。某词条无任何命中则交集为空。
+- **输入宽容**：大小写不敏感、自动去首尾空格、中英文逗号(`，`/`,`)均可切分；可传数组或逗号分隔字符串。
+
+### 选股数量
+- **自动跑（定时任务 T7/W1 等由调度触发的选股）：`top_n=50`**。
+- 手动/网页触发可自定义（网页默认 30）。
 
 ### Agent 复核流程
 1. 拿到 `candidates`（含各因子值与合成 `score`）
-2. 对 Top N 逐一叠加**涨价/景气预期**判断（`price-hike/scan` + 外部行业价格/期货数据交叉验证），按四维打分；以预期驱动，不以过往业绩为主（业绩披露期除外）
+2. 对候选逐一叠加**涨价/景气预期**判断（`price-hike/scan` + 外部行业价格/期货数据交叉验证），按四维打分；以预期驱动，不以过往业绩为主（业绩披露期除外）
 3. 剔除逻辑不符、数据异常者；情绪主导（涨价+逻辑均<0.4）标高风险
-4. 产出 `选股/yyyyMMdd-量化选股.md`（含因子表 + 四维打分表 + 数据来源）
-5. 强信号追加 `predictions.jsonl`（driver 标注），线索入 `观察池`
+4. **逐股定位板块/行业 + 炒作路径，并把关联个股归组**：用 `sector_dc`/`screen_sector`/申万行业为每只标的确定行业与细分环节，将同板块/同主线/同产业链（上下游、同题材、同涨价链、同催化）的个股放到一组；每组结合 `news_flash`/`news_filter`/`price_hike_scan` 的**消息面与行业新闻**、以及**近期主线**（观察池/板块动量）综合解读，标注每只的**炒作路径**（题材由来→催化→当前阶段）
+5. 产出 `选股/yyyyMMdd-量化选股.md`：因子表 + 四维打分表 + **量化选股分组解读表（output-format 表格5，按主线/产业链归组）** + 数据来源
+6. 强信号追加 `predictions.jsonl`（driver 标注），线索入 `观察池`；符合自动选股定义的用 `log_selection(category=auto)` 登记
 
 ## 二、选板块 / 板块轮动（screen_sector）
 
-### 因子与默认权重（sum=1.0）
+### 因子（方向均为 +，权重和=1.0；权重以 `get_factor_config(model=sector)` 为准）
 
-| 因子 | 方向 | 权重 | 说明 |
-|---|---|---|---|
-| `sec_mom_12_1` | + | 0.30 | 板块 12-1 中期动量 |
-| `sec_mom_20d` | + | 0.25 | 板块 20 日动量（近端延续） |
-| `sec_mom_5d` | + | 0.15 | 板块 5 日动量（情绪热度） |
-| `sec_vol_confirm` | + | 0.10 | 板块量能确认（放量上行） |
-| `sec_low_vol` | + | 0.20 | 板块低波动（稳健趋势优先） |
+| 因子 | 说明 |
+|---|---|
+| `sec_mom_12_1` | 板块 12-1 中期动量 |
+| `sec_mom_20d` | 板块 20 日动量（近端延续） |
+| `sec_mom_5d` | 板块 5 日动量（情绪热度） |
+| `sec_vol_confirm` | 板块量能确认（放量上行） |
+| `sec_low_vol` | 板块低波动（稳健趋势优先） |
 
 数据源：申万一级行业指数（`sw_daily` + `index_classify`），无权限回退概念/板块指数。
 
@@ -89,19 +104,26 @@ POST /call
 ```
 返回 `canonical_factors`（规范因子列表）、`weights`（生效权重）、`source`（default/override）。
 
-### 更新权重（调参落地）
+### 更新权重（调参落地，署名 + 留痕）
+**必须先 `get_factor_config(model=...)` 取回 `canonical_factors`，再提交其中的全部因子**（含默认 0 的候选因子），不能凭记忆写死一份清单——否则会因缺失/多余被拒。**每次修改都要署名 `actor` 并写 `reason`**（回测证据），服务端会生成类 commit 的 `version_id` 留痕：
 ```json
 POST /call
 {"function": "set_factor_weights",
  "params": {"model": "stock",
-            "weights": {"mom_12_1":0.16,"trend_ma":0.14,"high_52w":0.09,
-                        "reversal_1m":0.22,"low_turnover":0.13,"low_ivol":0.20,"vol_confirm":0.06}}}
+            "weights": {"<canonical_factors 里的每个因子>": 0.0, "...": "..."},
+            "actor": "回测分析师", "reason": "回测30日超额: mom_12_1 领先, 情绪转负 → 小步上调动量/下调情绪"}}
 ```
 校验规则（任一不满足即被拒并返回原因）：
 - 必须提交该模型的**全部**规范因子，不能缺失、不能多余、名称须一致
-- 权重之和必须为 1.0（容差 0.01）
+- 权重之和必须为 1.0（容差 0.01）；不想启用的候选因子填 0
+- 自主微调只动**权重≠0**的因子、小步（单因子 ≤0.03）后归一；0 权重候选保持 0
 
-失败返回含 `expected_factors`/`missing`/`unexpected`/`hint`：**先 `get_factor_config` 同步最新因子列表**（服务端可能已新增因子），补齐后重试。这是回测→调参闭环的落地步骤（见 review-learning 与 backtest-analyst）。
+返回含 `version_id`（留痕版本，写入学习日志）。失败含 `expected_factors`/`missing`/`unexpected`/`hint`：**先 `get_factor_config` 同步最新因子列表**后重试。
+
+### 配置版本留痕 / 定位 / 回滚
+- `get_config_history {model|config_key, limit}`：查某模型权重（或 `sentiment_window`）的变更历史（倒序，含 actor/reason/version_id/parent）。
+- `get_config_version {version_id}`：按版本号定位当时的完整权重快照。
+- `restore_config_version {version_id, actor, reason}`：回滚到历史版本（回滚亦留痕为新版本）。
 
 ## 严谨要求
 - 因子值全部来自服务端真实行情计算，标注 `trade_date`

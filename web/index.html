@@ -12,12 +12,15 @@
       <svg viewBox="0 0 24 24" class="brand-icon" aria-hidden="true"><path d="M4 19V5m0 14h16M8 15l3-4 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span>盯盘 · 量化面板</span>
     </div>
-    <button id="settingsBtn" class="icon-btn" title="设置">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-    </button>
+    <div class="topbar-right">
+      <span id="role-badge" class="role-badge admin" title="当前 API Key 角色">管理员</span>
+      <button id="settingsBtn" class="icon-btn" title="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <nav class="tabs">
@@ -49,12 +52,14 @@
       <div class="card">
         <div class="card-title">选股参数</div>
         <div class="form-row">
-          <label>行业/主线（可空，逗号分隔）</label>
-          <input id="q-industries" type="text" placeholder="如 光伏,半导体（留空=全市场）" />
+          <label>行业/主线/概念（可空，逗号分隔）</label>
+          <input id="q-industries" type="text" placeholder="如 光伏,半导体,机器人,PCB铜箔（留空=全市场）" />
+          <p class="hint">多源模糊匹配：tushare 行业 + 申万 L1/L2/L3 + 同花顺/东财概念，支持“机器人/PCB铜箔/电子布”等细分主题。多个词条取<b>交集</b>层层收窄（如“通信,PCB,铜箔”=同时属于三者）；留空则全市场（剔除 ST）。</p>
         </div>
         <div class="form-row">
           <label>返回数量 Top N</label>
           <input id="q-topn" type="number" value="30" min="5" max="100" />
+          <p class="hint">个股因子：12-1 动量 + 1月反转 + 低波动 + 低换手 + 均线多头/距52周高 + 量能，横截面标准化后按权重合成综合分，取 Top N。权重可在「权重配置」页调整。</p>
         </div>
         <button id="q-run" class="btn-primary">
           <svg viewBox="0 0 24 24" class="btn-ic"><path d="M5 3l14 9-14 9V3Z" fill="currentColor"/></svg>
@@ -203,6 +208,16 @@
       <div class="modal-actions">
         <button id="cfg-test" class="btn-ghost">测试连接</button>
         <button id="cfg-save" class="btn-primary">保存</button>
+      </div>
+
+      <!-- 访客 Key 管理（仅管理员可见） -->
+      <div id="userkeys" class="userkeys hidden">
+        <div class="card-title">访客 Key 管理 <span class="meta">只读用户：可查看/选股/读情绪，不能改配置或回测</span></div>
+        <div class="form-row inline">
+          <input id="uk-label" type="text" placeholder="备注（如：张三 / 演示）" />
+          <button id="uk-create" class="btn-primary">生成访客 Key</button>
+        </div>
+        <div id="uk-list" class="uk-list"><div class="empty">加载中…</div></div>
       </div>
     </div>
   </div>

@@ -52,6 +52,19 @@ def _turnover_map(pro, date: str) -> dict[str, float]:
         return {}
 
 
+def _basic_map(pro, date: str) -> dict[str, dict[str, Any]]:
+    """全市场某日估值/市值切片（供规模/价值/盈利收益率等候选因子，永久缓存复用）。"""
+    try:
+        payload = common.cached_call(
+            "daily_basic_val_slice", {"trade_date": date},
+            lambda: pro.daily_basic(trade_date=date,
+                                    fields="ts_code,pe_ttm,pe,pb,circ_mv,total_mv"),
+            historical=True)
+        return {r["ts_code"]: r for r in payload.get("rows", [])}
+    except Exception:
+        return {}
+
+
 def _compute_for_date(pro, target: str, lookback: int) -> int:
     """为交易日 target 计算全市场因子并落库，返回写入股票数。"""
     dates = _trade_dates(pro, target, lookback)
@@ -63,16 +76,18 @@ def _compute_for_date(pro, target: str, lookback: int) -> int:
     for d in dates:
         sl = _daily_slice(pro, d)
         if not sl.empty:
-            frames.append(sl[["ts_code", "trade_date", "close", "vol"]])
+            keep = [c for c in ("ts_code", "trade_date", "close", "vol", "amount") if c in sl.columns]
+            frames.append(sl[keep])
     if not frames:
         return 0
     allbars = pd.concat(frames, ignore_index=True)
     turnover = _turnover_map(pro, target)
+    basic = _basic_map(pro, target)
 
+    bar_cols = [c for c in ("trade_date", "close", "vol", "amount") if c in allbars.columns]
     items: list[dict[str, Any]] = []
     for code, g in allbars.groupby("ts_code"):
-        fac = factors.compute_stock_factors(g[["trade_date", "close", "vol"]],
-                                            turnover.get(code))
+        fac = factors.compute_stock_factors(g[bar_cols], turnover.get(code), basic.get(code))
         if fac is not None:
             items.append({"code": code, "factors": fac})
     if items:

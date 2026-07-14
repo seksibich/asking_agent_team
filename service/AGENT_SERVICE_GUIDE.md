@@ -11,9 +11,22 @@
 |---|---|---|
 | `/health` | GET | 健康检查：`status/date/trade_open/data_version/functions` |
 | `/functions` | GET | 全部功能索引（名称/分组/描述/参数/返回），含 `data_version` |
+| `/whoami` | GET | 返回当前 Key 角色：`role`(admin/user) / `is_admin` / `admin_only`(仅管理员可调用的功能名) |
 | `/call` | POST | 统一调用：`{"function":"<名>","params":{...}}` |
 
 鉴权：所有请求带头 `X-API-Key: <service_api_key>`（见 `.env`）。
+
+**Key 分级（管理员 vs 用户）**：
+- **管理员 Key**（`.env` 的 `API_KEY`，向后兼容，亦可用 `ADMIN_API_KEY`）：完整权限。
+- **用户 Key**（`.env` 的 `USER_API_KEY`，可选）：只读体验，可查看/选股/读情绪，但**不能**调用以下管理员专属功能，否则返回 `403`：
+  `set_factor_weights`（改因子权重）、`set_sentiment_config`（改归一窗口）、`selection_backtest` / `predictions_backtest`（触发回测）。
+- 若 `.env` 未配置任何 Key（本地开发），默认放行为管理员。智能体使用的是管理员 Key。
+- **访客 Key 动态管理**（仅管理员，落库 `config_kv.user_api_keys`；Web 设置页「访客 Key 管理」可视化操作）：
+  - `GET /admin/user-keys`：列出全部访客 Key
+  - `POST /admin/user-keys` `{label}`：生成新访客 Key
+  - `POST /admin/user-keys/toggle` `{id}`：启用/停用
+  - `POST /admin/user-keys/delete` `{id}`：删除（立即失效）
+  动态访客 Key 与 `.env` 的 `USER_API_KEY` 均视为用户角色（可并存）。
 
 调用返回结构：
 ```json
@@ -49,8 +62,14 @@
 - 涨价/宏观：`price_hike_scan` `macro_ppi` `macro_cpi` `macro_pmi`
 - 选股/盯盘：`screen_trend` `screen_quant` `screen_sector` `watch_intraday`
 - 因子预计算：`precompute_daily_factors`（盘后落库 daily_factors，选股读库提速）
-- 因子配置：`get_factor_config` `set_factor_weights`（提交全部因子权重，缺失/多余/和≠1 报错并指引）
-- 情绪温度：`sentiment_temperature`（0-100，指标权重 model=sentiment 可配置）
+- 因子配置：`get_factor_config` `set_factor_weights`（提交全部因子权重，缺失/多余/和≠1 报错并指引）。
+  个股(stock)模型含 7 个默认启用因子 + 7 个默认 0 权重候选因子（mom_6_1/max_lottery/downside_vol/amihud_illiq/small_size/value_bm/earnings_yield，源自学术/机构常用）；screen_quant 仅返回权重≠0 的因子列
+- 配置留痕/版本：`set_factor_weights` 与 `set_sentiment_config` 支持传 `actor`（署名）+ `reason`，每次成功修改生成类 commit 的 `version_id` 并落库留痕（config_versions 表，含 parent/payload）。
+  - `get_config_history {config_key|model, limit}`：查配置变更历史（倒序）
+  - `get_config_version {version_id}`：按版本号定位当时完整权重快照
+  - `restore_config_version {version_id, actor, reason}`（管理员）：回滚到历史版本（回滚亦留痕为新版本）
+  - config_key 约定：`factor_weights:<stock|sector|trend|sentiment>`、`sentiment_window`
+- 情绪温度：`sentiment_temperature`（0-100，11 项指标；含大盘/平均股价指数振幅方向+实体长度，指标权重 model=sentiment 可配置）
 - 择时：`market_timing`（连续冰点/高热、出手买入权重提示）
 - 竞价分析：`bidding_analysis`（09:25 竞价数据 + 竞价成交额 TopN + 异常高开/竞价爆量）
 - 投研：`research_build`
@@ -69,6 +88,7 @@
 | 400 | 参数错误 / 未知功能 | 校验 function 与 params；必要时先刷新 `/functions` |
 | 401 | 鉴权失败 | 检查 X-API-Key |
 | 402 | tushare 积分/权限不足 | 跳过该功能或改用替代 |
+| 403 | 权限不足（用户 Key 调用管理员专属功能） | 改用管理员 Key（改权重/窗口、触发回测需管理员） |
 | 503 | 服务未启动 | 提示启动本地 Docker |
 
 ## 5. 扩展方式（开发者）

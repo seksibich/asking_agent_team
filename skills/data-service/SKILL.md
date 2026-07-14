@@ -17,6 +17,7 @@ disable-model-invocation: false
 - **当前：本地 Mac Docker**，基址 `http://localhost:18901`
 - **后续上云**：部署云服务器后改为公网 API 基址（协议/鉴权/功能不变），同步更新记忆 `service_state.json` 的 `base_url`
 - 鉴权：请求头 `X-API-Key: {service_api_key}`（值见 `init.md` / `.env`）
+- Key 分级：管理员 Key(`API_KEY`) 全权限；用户 Key(`USER_API_KEY`) 只读，不能改权重/归一窗口、不能触发回测（否则 403）。智能体用的是管理员 Key
 - 详细服务文档见 `service/AGENT_SERVICE_GUIDE.md`
 
 ## 三个核心端点
@@ -59,7 +60,7 @@ POST /call
 | sector | sector_dc, sector_index_classify, sector_sw_daily, sector_ths_daily |
 | meta | meta_stock_basic, meta_trade_cal |
 | screening | screen_trend, screen_quant, screen_sector, watch_intraday, get_factor_config, set_factor_weights, precompute_daily_factors |
-| sentiment | sentiment_temperature（0-100 情绪温度，含大盘K线形态、平均涨幅等六项+窗口低/均/高）, market_timing（择时：连续冰点/高热+出手权重）, get_sentiment_config / set_sentiment_config（归一窗口 3-30 天，落库）, bidding_analysis（09:25 竞价分析数据） |
+| sentiment | sentiment_temperature（0-100 情绪温度，11 项：含涨跌家数比、平均涨幅、大盘/平均股价指数振幅方向+实体长度等+窗口低/均/高）, market_timing（择时：连续冰点/高热+出手权重）, get_sentiment_config / set_sentiment_config（归一窗口 3-30 天，落库）, bidding_analysis（09:25 竞价分析数据） |
 | research | research_build |
 | review | log_selection（category=auto/watch/holding，DB 幂等去重）, log_prediction（DB 幂等）, selection_backtest（成熟样本固化）, predictions_backtest |
 

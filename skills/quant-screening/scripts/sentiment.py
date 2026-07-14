@@ -1,8 +1,15 @@
 """市场情绪温度（0-100）。
 
-综合六项指标：大盘指数动量、板块涨跌比、大盘涨跌家数比、平均股价指数动量、
-大盘成交额、涨跌停家数。各指标"越高越热"，按**当天之前 7 个交易日**窗口做
-min-max 归一为 0-100 子分，再按情绪指标权重（factor_config 的 sentiment 模型）加权合成。
+综合多项指标：大盘指数动量、板块涨跌比、大盘涨跌家数比、平均股价指数动量、
+大盘成交额、涨跌停家数；以及大盘指数与平均股价指数的**振幅方向信号 + 实体长度**
+（按百分点位口径，低权重，已涵盖原"大盘K线形态"的阳阴实体/收盘强弱语义）。
+各指标"越高越热/越偏多"，按**当天之前 7 个交易日**窗口做 min-max 归一为 0-100 子分，
+再按情绪指标权重（factor_config 的 sentiment 模型）加权合成。
+
+其中振幅/实体因子的语义（越高越偏多）：
+- 振幅越大=分歧越大；长下影线→适当高分（抄底/支撑），长上影线→适当低分（抛压）。
+- 长实体依阳/阴定方向：长阳高分、长阴低分。
+- 短实体 + 振幅偏中性→贴近中性（分歧小、抄底力度小）。
 
 原始指标按交易日缓存到 DATA_DIR/sentiment_cache.json（滚动保留 30 个交易日），
 避免重复全市场取数。
@@ -72,6 +79,21 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
     avg_chg = float(pct.mean())  # 全市场平均涨跌幅（以涨幅锚定，越高越热）
     turnover = float(daily["amount"].astype(float).sum())  # 千元
 
+    # 平均股价指数：全市场个股 OHLC 等权平均，构造"平均一只票"的K线，
+    # 实体/振幅均按【百分点位】口径（相对平均前收），而非绝对价格数值
+    avg_price_body = 0.0   # 实体：阳线正、阴线负，绝对值=实体长度（百分点）
+    avg_price_amp = 0.0    # 振幅方向信号：下影线净多于上影线为正（越高越偏多）
+    try:
+        a_open = float(daily["open"].astype(float).mean())
+        a_high = float(daily["high"].astype(float).mean())
+        a_low = float(daily["low"].astype(float).mean())
+        a_close = float(daily["close"].astype(float).mean())
+        a_pre = float(daily["pre_close"].astype(float).mean())
+        if a_pre > 0:
+            avg_price_body, avg_price_amp = _kline_signals(a_open, a_high, a_low, a_close, a_pre)
+    except Exception:
+        pass
+
     # 板块涨跌比
     sector_ratio = 0.5
     try:
@@ -94,20 +116,20 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
     except Exception:
         pass
 
-    # 大盘指数动量（当日涨跌幅）+ 当天K线形态（收盘强弱 + 阳阴实体）
+    # 大盘指数动量（当日涨跌幅）+ 按【百分点位】口径的大盘振幅方向信号与实体长度
+    # （实体+影线已覆盖原 index_kline 的收盘强弱/阳阴实体语义，故不再单列 K 线形态因子）
     index_mom = 0.0
-    index_kline = 0.5
+    index_body = 0.0
+    index_amp = 0.0
     try:
         idx = pro.index_daily(ts_code=BENCH_INDEX, trade_date=date)
         if idx is not None and not idx.empty:
             row = idx.iloc[0]
             index_mom = float(row["pct_chg"])
             o, h, l, cl = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
-            rng = h - l
-            if rng > 0:
-                pos = max(0.0, min(1.0, (cl - l) / rng))   # 收盘在日内区间位置（越高越强）
-                body = (cl - o) / rng                        # 实体方向与占比，∈[-1,1]
-                index_kline = round(0.5 * pos + 0.5 * (body + 1) / 2, 4)  # 0~1，越高越强/越阳
+            pre = float(row["pre_close"]) if "pre_close" in idx.columns else 0.0
+            if pre > 0:
+                index_body, index_amp = _kline_signals(o, h, l, cl, pre)
     except Exception:
         pass
 
@@ -115,13 +137,33 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
         "adv_dec_ratio": round(adv_dec_ratio, 4),
         "limit_up": limit_up,
         "limit_down": limit_down,
-        "index_kline": index_kline,
         "sector_ratio": round(sector_ratio, 4),
         "turnover": round(turnover, 2),
         "index_mom": round(index_mom, 4),
         "avg_price_mom": round(avg_chg, 4),  # 全市场平均涨跌幅（涨幅锚定）
+        "index_body": index_body,            # 大盘指数实体（百分点，阳正阴负）
+        "index_amp": index_amp,              # 大盘指数振幅方向信号（下影净偏多，百分点）
+        "avg_price_body": avg_price_body,    # 平均股价指数实体（百分点，阳正阴负）
+        "avg_price_amp": avg_price_amp,      # 平均股价指数振幅方向信号（下影净偏多，百分点）
         "adv": adv, "dec": dec,
     }
+
+
+def _kline_signals(o: float, h: float, l: float, cl: float, pre: float) -> tuple[float, float]:
+    """由单根K线 OHLC + 前收，计算【百分点位】口径的两项情绪信号（越高越偏多/越热）。
+
+    - body 实体长度：(close-open)/pre*100，阳线为正、阴线为负，绝对值=实体长度。
+      长阳→高分，长阴→低分，短实体→贴近 0（中性，分歧小）。
+    - amp  振幅方向信号：(下影线-上影线)/pre*100。
+      振幅大且长下影线→大正值（抄底/支撑，偏多，适当高分）；
+      振幅大且长上影线→大负值（抛压，偏空，适当低分）；
+      振幅小/影线短→贴近 0（分歧小、抄底力度小，中性）。
+    """
+    body = (cl - o) / pre * 100.0
+    upper = (h - max(o, cl)) / pre * 100.0   # 上影线（百分点）
+    lower = (min(o, cl) - l) / pre * 100.0   # 下影线（百分点）
+    amp = lower - upper
+    return round(body, 4), round(amp, 4)
 
 
 def _minmax_sub(values: list[float], today: float) -> float:
@@ -156,6 +198,8 @@ def _temperature_for(cache: dict[str, Any], target: str, all_dates: list[str],
     indicators: dict[str, Any] = {}
     temperature = 0.0
     for ind in weights:
+        if ind not in today:
+            continue   # 旧缓存缺该指标（如新增因子）：跳过，待窗口内数据滚动补齐
         series = [float(cache[d][ind]) for d in window if ind in cache[d]]
         if not series:
             continue
@@ -178,6 +222,7 @@ def _temperature_for(cache: dict[str, Any], target: str, all_dates: list[str],
 
 @register("sentiment_temperature", "sentiment",
           "市场情绪温度 0-100：综合大盘指数/板块涨跌比/涨跌家数比/平均股价/成交额/涨跌停，"
+          "并叠加大盘与平均股价指数的振幅方向信号+实体长度(百分点位,低权重)，"
           "按当天之前7个交易日窗口归一加权。指标权重见 get_factor_config(model=sentiment)",
           params=[{"name": "date", "type": "string", "required": False, "desc": "YYYYMMDD，默认最近交易日"}],
           returns="temperature(0-100) / level / indicators(raw+sub) / weights")
@@ -273,24 +318,38 @@ def market_timing(p: dict) -> dict:
 
 
 @register("get_sentiment_config", "sentiment",
-          "获取情绪配置：归一窗口天数（当天之前 N 个交易日）及允许范围",
-          params=[], returns="window / range")
+          "获取情绪配置：归一窗口天数（当天之前 N 个交易日）及允许范围，含当前窗口的留痕版本号",
+          params=[], returns="window / range / version_id / actor")
 def get_sentiment_config(p: dict) -> dict:
+    meta = db.get_config(WINDOW_CONFIG_KEY)
+    version_id = meta.get("version_id") if isinstance(meta, dict) else None
+    actor = meta.get("actor") if isinstance(meta, dict) else None
     return {"source": "sentiment_config", "fetched_at": common.now_str(),
-            "window": _window(), "range": [WINDOW_MIN, WINDOW_MAX], "default": WINDOW_DEFAULT}
+            "window": _window(), "range": [WINDOW_MIN, WINDOW_MAX], "default": WINDOW_DEFAULT,
+            "version_id": version_id, "actor": actor}
 
 
 @register("set_sentiment_config", "sentiment",
-          "设置情绪归一窗口天数（3-30，落库持久化）。影响 sentiment_temperature / market_timing",
-          params=[{"name": "window", "type": "int", "required": True, "desc": "3-30 之间的交易日数"}],
-          returns="applied / window")
+          "设置情绪归一窗口天数（3-30，落库持久化）。影响 sentiment_temperature / market_timing。"
+          "每次修改留痕为类 commit 的 version_id（署名 actor），可用 get_config_history(config_key=sentiment_window) 定位",
+          params=[{"name": "window", "type": "int", "required": True, "desc": "3-30 之间的交易日数"},
+                  {"name": "actor", "type": "string", "required": False, "default": "agent",
+                   "desc": "修改者身份署名"},
+                  {"name": "reason", "type": "string", "required": False, "default": "",
+                   "desc": "修改原因（回测/背离说明等）"}],
+          returns="applied / window / version_id")
 def set_sentiment_config(p: dict) -> dict:
     w = int(p["window"])
     if not (WINDOW_MIN <= w <= WINDOW_MAX):
         return {"applied": False, "error": f"window 须在 {WINDOW_MIN}-{WINDOW_MAX} 之间", "given": w}
-    db.set_config(WINDOW_CONFIG_KEY, {"window": w})
-    return {"applied": True, "window": w,
-            "note": "已保存；后续情绪温度/择时按新窗口归一（可能需重采窗口内数据）"}
+    actor = p.get("actor") or "agent"
+    reason = p.get("reason") or ""
+    ver = db.record_config_version(WINDOW_CONFIG_KEY, {"window": w}, actor, reason)
+    db.set_config(WINDOW_CONFIG_KEY, {"window": w, "version_id": ver["version_id"],
+                                      "actor": actor, "reason": reason})
+    return {"applied": True, "window": w, "version_id": ver["version_id"],
+            "parent_version": ver.get("parent_version"), "actor": actor,
+            "note": "已保存并留痕；后续情绪温度/择时按新窗口归一（可能需重采窗口内数据）"}
 
 
 if __name__ == "__main__":

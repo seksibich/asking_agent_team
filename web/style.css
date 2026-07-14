@@ -15,6 +15,24 @@ svg{width:20px;height:20px}
 .brand-icon{color:var(--brand);width:24px;height:24px}
 .icon-btn{background:var(--brand-soft);border:none;border-radius:12px;padding:8px;color:var(--brand);cursor:pointer;display:flex}
 .icon-btn:hover{background:#dde7ff}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.userkeys{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.uk-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto}
+.uk-item{display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.uk-item.off{opacity:.55}
+.uk-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.uk-info b{font-size:13px}
+.uk-key{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--brand);
+  word-break:break-all;background:var(--brand-soft);padding:2px 6px;border-radius:6px}
+.uk-tag{font-size:11px;color:#b26a00;margin-left:6px}
+.uk-ops{display:flex;gap:6px;flex-shrink:0}
+.uk-ops .btn-ghost{padding:4px 10px;font-size:12px}
+.uk-del{color:#dc2626}
+.role-badge{font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;line-height:1.6}
+.role-badge.admin{background:var(--brand-soft);color:var(--brand)}
+.role-badge.user{background:#fff4e5;color:#b26a00}
+button:disabled,input:disabled{opacity:.55;cursor:not-allowed}
 
 .tabs{display:flex;gap:10px;padding:16px 22px 0;flex-wrap:wrap}
 .tab{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card);

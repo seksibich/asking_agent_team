@@ -69,14 +69,23 @@ stock_agent_kit/
 
 ## 快速开始
 
-1. 配置 `service/.env`（`TUSHARE_TOKEN` 已填入；把 `API_KEY` 改成强随机值）。
-2. 启动本地数据服务：
+1. 克隆后配置密钥（`.env` 不入库，需从模板复制）：
    ```bash
    cd service
+   cp .env.example .env
+   # 编辑 .env，至少填写：
+   #   TUSHARE_TOKEN=<你的 tushare token>
+   #   API_KEY=<强随机字符串，用作 X-API-Key>
+   #   DB_URL=            # 留空=本地 SQLite；上云填 RDS MySQL 连接串
+   ```
+2. 启动本地数据服务（含 Web 面板）：
+   ```bash
    docker compose up -d --build
    curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
    curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/functions
    ```
+   `/health` 返回 `tushare_ready` / `db_ready` / `trade_open` 可用于自检。
+   首次可选：补算历史因子 `curl -XPOST http://localhost:18901/call -H "X-API-Key: <key>" -H "Content-Type: application/json" -d '{"function":"precompute_daily_factors","params":{"full":true}}'`。
 3. 把 `init.md` 作为初始化指令交给智能体，它会按索引完成自我初始化。
 4. **Web 面板**（与服务同源部署）：浏览器打开 `http://localhost:18901/ui/`，右上角设置里填入 `X-API-Key`。
    - 量化选股：调 `screen_quant` 看结果

@@ -63,11 +63,19 @@ class CallReq(BaseModel):
 def health():
     common.clean_expired_cache()
     day = common.today_str()
+    tushare_ready = bool(common.TUSHARE_TOKEN)
     try:
-        open_ = common.is_trade_open(day)
+        open_ = common.is_trade_open(day) if tushare_ready else None
     except Exception:
         open_ = None
+    db_ready = True
+    try:
+        import db
+        db.get_engine().connect().close()
+    except Exception:
+        db_ready = False
     return _versioned({"status": "ok", "date": day, "trade_open": open_,
+                       "tushare_ready": tushare_ready, "db_ready": db_ready,
                        "functions": len(registry.names())})
 
 

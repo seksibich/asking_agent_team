@@ -87,13 +87,46 @@ def functions_index() -> dict[str, Any]:
     }
 
 
+def _coerce(spec: dict[str, Any], value: Any) -> Any:
+    """按声明类型对入参做宽松归一，增强对 Agent 各种传参形态的健壮性。"""
+    t = spec.get("type", "")
+    name = spec["name"]
+    try:
+        if t == "int":
+            return int(float(value)) if not isinstance(value, bool) else int(value)
+        if t == "float":
+            return float(value)
+        if t == "bool":
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+        if t == "array":
+            if isinstance(value, list):
+                return value
+            if isinstance(value, str):
+                parts = [x.strip() for x in value.replace("，", ",").split(",")]
+                return [x for x in parts if x]
+            return [value]
+        if t == "object":
+            if isinstance(value, dict):
+                return value
+            raise ValueError("expected object")
+        if t == "string":
+            return value if isinstance(value, str) else str(value)
+    except (ValueError, TypeError):
+        raise ParamError(f"param '{name}' expects {t}, got: {value!r}")
+    return value
+
+
 def _validate(meta: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
-    """按元数据校验并填充默认值。"""
+    """按元数据校验、类型归一并填充默认值。"""
     result: dict[str, Any] = {}
     for spec in meta["params"]:
         pname = spec["name"]
         if pname in params and params[pname] is not None:
-            result[pname] = params[pname]
+            result[pname] = _coerce(spec, params[pname])
         elif spec.get("required"):
             raise ParamError(f"missing required param: {pname}")
         elif "default" in spec:

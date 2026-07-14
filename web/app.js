@@ -361,13 +361,39 @@ async function loadWeights() {
 
 const MODEL_LABEL = { stock: "个股量化 (screen_quant)", sector: "板块轮动 (screen_sector)", trend: "趋势选股 (screen_trend)", sentiment: "情绪温度指标" };
 
+// 因子/指标 英文字段 -> 中文含义
+const FACTOR_LABEL = {
+  // 个股 / 趋势
+  mom_12_1: "12-1 动量（中期趋势）",
+  reversal_1m: "1 个月反转（短期超跌反弹）",
+  trend_ma: "均线多头排列强度",
+  high_52w: "距 52 周高点接近度",
+  low_ivol: "低特质波动",
+  low_turnover: "低换手",
+  vol_confirm: "量能确认（温和放量）",
+  // 板块
+  sec_mom_12_1: "板块 12-1 动量",
+  sec_mom_20d: "板块 20 日动量",
+  sec_mom_5d: "板块 5 日动量",
+  sec_vol_confirm: "板块量能确认",
+  sec_low_vol: "板块低波动",
+  // 情绪温度
+  adv_dec_ratio: "涨跌家数比（上涨占比）",
+  limit_updown: "涨跌停家数（涨停占比）",
+  sector_ratio: "板块涨跌比（上涨板块占比）",
+  turnover: "大盘成交额（量能）",
+  index_mom: "大盘指数动量",
+  avg_price_mom: "平均股价指数",
+};
+const factorLabel = (f) => FACTOR_LABEL[f] || f;
+
 function modelBlock(model, info) {
   const wrap = document.createElement("div");
   wrap.className = "model-block";
   const factors = info.canonical_factors || Object.keys(info.weights || {});
   const grid = factors.map((f) => {
     const v = info.weights?.[f] ?? 0;
-    return `<div class="weight-item"><label>${f}</label>
+    return `<div class="weight-item"><label title="${f}">${factorLabel(f)} <span class="fkey">${f}</span></label>
       <input type="number" step="0.01" min="0" max="1" data-f="${f}" value="${v}" /></div>`;
   }).join("");
   wrap.innerHTML = `

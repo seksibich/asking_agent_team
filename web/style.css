@@ -82,7 +82,8 @@ tbody tr:hover{background:#f7f9ff}
 .model-sum.bad{color:var(--bad)} .model-sum.ok{color:var(--ok)}
 .weight-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:12px}
 .weight-item{display:flex;flex-direction:column;gap:4px}
-.weight-item label{font-size:12px;color:var(--sub)}
+.weight-item label{font-size:12px;color:var(--ink)}
+.weight-item .fkey{color:var(--sub);font-size:11px;font-family:ui-monospace,Menlo,monospace}
 .weight-item input{padding:7px 10px}
 .model-actions{display:flex;gap:10px;align-items:center}
 

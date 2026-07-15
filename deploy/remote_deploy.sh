@@ -39,7 +39,11 @@ step "1/7 拉取最新代码（分支 $BRANCH）"
 git fetch --prune origin
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
 git reset --hard "origin/$BRANCH"     # 与远端严格一致，避免本地脏改冲突
-log "当前提交: $(git rev-parse --short HEAD) - $(git log -1 --pretty=%s)"
+GIT_REV="$(git rev-parse --short HEAD)"
+log "当前提交: $GIT_REV - $(git log -1 --pretty=%s)"
+# 写入 VERSION 文件，供服务端 /health 暴露 git_revision（不依赖运行时 .git 可用）
+echo "$GIT_REV" > "$APP_DIR/VERSION"
+log "已写入 VERSION 文件: $GIT_REV"
 
 # ---------------------------------------------------------------------------
 step "2/7 准备 Python 虚拟环境与依赖"

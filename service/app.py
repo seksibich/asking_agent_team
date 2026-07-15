@@ -25,6 +25,7 @@ from pydantic import BaseModel
 import common
 import registry
 import loader
+import version
 
 def _normalize_key(value: Optional[str]) -> str:
     """规范化环境变量或请求中的 Key，避免部署工具带入首尾空白/外层引号。"""
@@ -153,7 +154,10 @@ def health():
         db_ready = False
     return _versioned({"status": "ok", "date": day, "trade_open": open_,
                        "tushare_ready": tushare_ready, "db_ready": db_ready,
-                       "functions": len(registry.names())})
+                       "functions": len(registry.names()),
+                       # agent 文档版本对齐：语义版本 + 部署 git 版本（供 agent 增量更新自身文档）
+                       "agent_doc_version": version.agent_doc_version(),
+                       "git_revision": version.git_revision()})
 
 
 @app.get("/functions")

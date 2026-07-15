@@ -16,17 +16,30 @@
 
 **跨目录引用（`agent/` 之外的 `doc/`、`profile/`、`service/`）一律写仓库根相对路径。** 运行期记忆目录 `盯盘/agent记忆/`、产出目录 `投研/` 是 agent 生成的输出，与工程目录 `agent/` 无关，勿混淆。
 
-## 文档版本与同步（AGENT_DOC_VERSION）★
+## 文档版本与同步（AGENT_DOC_VERSION，与 git 版本对齐）★
 
-- **AGENT_DOC_VERSION：`v1.3.0`**（工程目录重组为 agent/service/doc/profile；剔除不可用数据接口并确立「数据禁止降级、资讯外部多源」降级二分，2026-07-15）
-- 变更日志：`profile/CHANGELOG-AGENT.md`（每次调整 agent 文档都会在此新增一条版本记录 + 文件清单）。
-- **同步机制（每次收到 init.md 都执行，先于其它初始化步骤）**：
-  1. 读取本文件的 `AGENT_DOC_VERSION`（= 目标版本）。
-  2. 读取记忆 `agent记忆/service_state.json` 的 `agent_doc_version`（= 已内化版本；无则视为首次）。
-  3. **一致** → 跳过同步，按下方步骤正常运行。
-  4. **落后**（目标更高）→ 打开 `profile/CHANGELOG-AGENT.md`，按顺序处理所有「> 已内化版本」且「≤ 目标版本」的条目：逐条**重读该版本「变更文件清单」里的文件并重新内化**，执行其「agent 动作」（如更新记忆/模板/定时任务）。补齐后把 `agent_doc_version` 更新为目标版本。
-  5. **首次**（无 `agent_doc_version`）→ 全量内化本 init.md 指向的所有文档，记 `agent_doc_version = AGENT_DOC_VERSION`。
-- 初始化回执须报告：`文档版本：v1.3.0（首次内化 / 已从 vA.B.C 同步 / 无变更）`。
+- **AGENT_DOC_VERSION：`v1.4.0`**（`/health` 暴露 `agent_doc_version` + `git_revision`，agent 据此感知变更并**增量**更新自身文档；文档来源本地优先、回退 GitHub raw，2026-07-15）
+- 变更日志：`profile/CHANGELOG-AGENT.md`（每条版本记录含摘要 + **对应 git commit** + 变更文件清单 + agent 动作）。
+- 仓库（公开）：`https://github.com/seksibich/asking_agent_team`
+
+### 两个版本号（都可从 `/health` 获取）
+- `agent_doc_version`：语义版本（本文件顶部声明，服务端从 `agent/init.md` 解析后由 `/health` 回传）。**决定「要不要更新、更新哪些文档」。**
+- `git_revision`：服务端本次部署的 git commit 短 sha（`/health` 回传）。**用于精确定位/拉取「与线上服务完全一致的那一版文档内容」。**
+- 记忆 `agent记忆/service_state.json` 需保存已内化的 `agent_doc_version` 与 `git_revision`。
+
+### 何时检查（agent 常驻，多触发点）
+1. 每次收到 init.md（初始化）；2. 每次对话/任务开场（见 index.md 检查清单）；3. 每次调用数据服务后顺带看 `/health` 回传（与 `data_version` 一并比对）。
+
+### 同步流程（每次都执行，先于其它初始化步骤）
+1. 调 `GET /health`，读取目标 `agent_doc_version` 与目标 `git_revision`。
+2. 与记忆中已内化的 `agent_doc_version` 比对：
+   - **一致** → 无需更新文档（即使 `git_revision` 变了也不重读——说明本次只改了后端/前端等非 agent 文档内容）；仅更新记忆里的 `git_revision`。
+   - **首次**（无记录）→ 全量内化本 init.md 指向的所有文档，记录目标 `agent_doc_version` 与 `git_revision`。
+   - **落后**（目标更高）→ 打开 `profile/CHANGELOG-AGENT.md`，按顺序取所有「> 已内化版本」且「≤ 目标版本」的条目，**汇总去重其「变更文件清单」→ 只重读这些变动文件并重新内化**（增量，省 token；未变动文档不重读），执行各条「agent 动作」；补齐后更新记忆的两个版本号。
+3. **按目标 `git_revision` 获取变动文件内容**（保证与线上服务同版本），来源优先级：
+   - **本地优先**：本机能访问工程仓库时，`git fetch` 后 `git show <git_revision>:agent/<file>`（或切到该 commit 读文件）——本机开着时零网络、最省。
+   - **回退 GitHub raw**（本机关机/读不到时）：`https://raw.githubusercontent.com/seksibich/asking_agent_team/<git_revision>/<path>`（公开仓库，无需 token），只拉变更清单里的文件。
+- 初始化回执须报告：`文档版本：v1.4.0（首次内化 / 已从 vA.B.C 同步 / 无变更），git_revision：<sha>`。
 - 注意：本机制管理**文档/规范**版本；数据服务**功能索引**用 `data_version` 单独管理（见 index.md），二者并存互不替代。
 
 ## 数据服务接入信息（固定配置）
@@ -66,12 +79,12 @@
 
 ### 第 4 步：连通数据服务并建立版本基线
 - 用上方「数据服务接入信息」的基址与 `X-API-Key`。
-- `GET /health` 确认连通与 `trade_open`。不通则提示用户启动 `service/` 的 Docker，在此之前不取数、不编造。
-- `GET /functions` 获取功能索引与 `data_version`，连同 `base_url` 写入记忆 `agent记忆/service_state.json`。
+- `GET /health` 确认连通与 `trade_open`，并读取 `agent_doc_version`、`git_revision`（用于文档版本对齐，见第 0 步）。不通则提示用户启动 `service/` 的 Docker，在此之前不取数、不编造。
+- `GET /functions` 获取功能索引与 `data_version`，连同 `base_url`、`agent_doc_version`、`git_revision` 写入记忆 `agent记忆/service_state.json`。
 
 ### 第 5 步：建立记忆
 按 `memory/MEMORY.md`，以 `memory/templates/` 为模板，在输出根目录 `盯盘/agent记忆/` 下建立：
-`service_state.json`（已在第 4 步写入 `base_url`/`data_version`/`functions`；**并写入 `agent_doc_version`**，见第 0 步）、`关注与持仓.md`（持久，用户关注/持仓+相关板块）、`daily/`（每日观察对象，★强制读取）、`predictions.jsonl`、`观察池.md`、`用户画像.md`、当月`学习日志`。
+`service_state.json`（已在第 4 步写入 `base_url`/`data_version`/`functions`；**并写入 `agent_doc_version` 与 `git_revision`**，见第 0 步）、`关注与持仓.md`（持久，用户关注/持仓+相关板块）、`daily/`（每日观察对象，★强制读取）、`predictions.jsonl`、`观察池.md`、`用户画像.md`、当月`学习日志`。
 
 ### 第 6 步：加载 Agent 团队
 读取 `agents/TEAM.md` 与各角色文件。明确：团队仅用于盘前汇总、综合复盘、周/月回测、用户分析；盯盘/竞价/12:50/17:30 由主 Agent 单跑。
@@ -83,7 +96,7 @@
 读取 `schedule.md`，逐条注册；注册前清理同名旧任务。
 
 ### 第 9 步：初始化回执
-输出确认：**文档版本 AGENT_DOC_VERSION（首次内化 / 已从 vA.B.C 同步 / 无变更）**、已加载人格 + 团队(1主+5子) + **12 个 Skills（逐文件完整加载）**、分析重心、数据服务连通状态与 data_version、记忆体系状态（含关注与持仓、当日观察对象）、定时任务清单。
+输出确认：**文档版本 AGENT_DOC_VERSION（首次内化 / 已从 vA.B.C 同步 / 无变更）+ git_revision**、已加载人格 + 团队(1主+5子) + **12 个 Skills（逐文件完整加载）**、分析重心、数据服务连通状态与 data_version、记忆体系状态（含关注与持仓、当日观察对象）、定时任务清单。
 
 ## 运行期常驻规则
 
@@ -111,8 +124,12 @@
 - **正式候选理由链**：所有正式量化/趋势候选逐只提供量化评分与关键依据、四维分、题材/产业链、短中期动量/量能/阶段、主线关系、催化与炒作路径，并按“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”输出；缺环写“无可核验证据”。
 - **T7 业绩增长参考池**：只列真实字段并按 `code+report_period+announcement_date` 去重；不调用 `log_selection`，不写 predictions/观察池，不纳入 auto/watch/holding 或回测调参。业绩增长不得宣称必然利好；PE/PB 仍仅作风险背景。
 
-## v1.3.0 补充执行约束
+## v1.4.0 补充执行约束
 
+- **文档版本经 `/health` 对齐并增量更新**：`/health` 现返回 `agent_doc_version`（语义版本）与 `git_revision`（部署 commit）。agent 常驻运行，除初始化外，在每次对话/任务开场（及调用数据服务后）都比对 `/health` 的 `agent_doc_version` 与记忆值。
+  - 只有 `agent_doc_version` 变高才更新文档；**按 `profile/CHANGELOG-AGENT.md` 变更文件清单只重读变动文件（增量，省 token），不全量重读**。仅 `git_revision` 变而 `agent_doc_version` 未变时不重读文档。
+  - 取变动文件内容按目标 `git_revision` 锚定：**本地优先**（`git show <git_revision>:<path>`），本机关机/读不到时**回退 GitHub raw**（`https://raw.githubusercontent.com/seksibich/asking_agent_team/<git_revision>/<path>`，公开仓库免 token）。
+  - 记忆 `service_state.json` 保存 `agent_doc_version` 与 `git_revision`。
 - **工程目录已重组**：见本文件顶部「路径约定」。agent 相关内容在 `agent/`，数据服务（后端+前端+DB）在 `service/`，交叉文档与业务索引在 `doc/`，配置与变更日志在 `profile/`。agent 目录内互引用相对 `agent/`，跨目录用仓库根相对路径。
 - **数据服务接口已按可用性精简**：剔除当前 token 无权限/不可用的 `news_flash`/`news_filter`/`news_anns`/`news_cctv`/`overseas_us`/`hot_kpl_concept`（详见 `agent/skills/data-service/SKILL.md` 分组表与 `doc/AGENT_SERVICE_GUIDE.md`）。不要再调用这些功能名。
 - **降级二分（强制，贯穿全部取数）**：

@@ -9,7 +9,7 @@
 
 | 端点 | 方法 | 用途 |
 |---|---|---|
-| `/health` | GET | 健康检查：`status/date/trade_open/data_version/functions` |
+| `/health` | GET | 健康检查：`status/date/trade_open/data_version/functions`，以及 `agent_doc_version`（agent 文档语义版本）、`git_revision`（部署 commit 短 sha） |
 | `/functions` | GET | 全部功能索引（名称/分组/描述/参数/返回），含 `data_version` |
 | `/whoami` | GET | 返回当前 Key 角色：`role`(admin/user) / `is_admin` / `admin_only`(仅管理员可调用的功能名) |
 | `/call` | POST | 统一调用：`{"function":"<名>","params":{...}}` |
@@ -49,6 +49,21 @@
   2. 每次调用任意功能后，对比返回 `data_version` 与记忆版本。
   3. 不一致 → 立即重新 `GET /functions`，更新记忆中的版本与索引，再继续。
 - 这样即使服务端新增/调整了功能，智能体也能自动感知并获取最新能力，无需改初始化提示词。
+
+## 2 之二. Agent 文档版本对齐（`agent_doc_version` + `git_revision`）
+
+`/health` 除 `data_version`（功能索引版本）外，另回传两个字段用于 **agent 文档与线上服务对齐**：
+
+- `agent_doc_version`：agent 文档语义版本（服务端从 `agent/init.md` 顶部 `AGENT_DOC_VERSION` 解析）。**决定是否/如何更新文档**。
+- `git_revision`：本次部署的 git commit 短 sha（部署脚本写入根目录 `VERSION` 文件，服务端优先读取，回退 `git rev-parse`）。**用于按版本精确拉取文档内容**。
+
+Agent 侧逻辑（详见 `agent/init.md`「文档版本与同步」）：
+1. 常驻期间在每次对话/任务开场比对 `/health` 的 `agent_doc_version` 与记忆值；
+2. 落后时按 `profile/CHANGELOG-AGENT.md` 的变更文件清单**只重读变动文件**（增量，省 token）；
+3. 按目标 `git_revision` 取文件内容——**本地优先**（`git show <rev>:<path>`），本机关机时**回退 GitHub raw**（公开仓库，无需 token）；
+4. 仅 `git_revision` 变而 `agent_doc_version` 未变时，不重读文档。
+
+> 前后端一致性由「同仓库同 commit 部署 + 重启」保证；agent 侧为会话级最终一致（每次开场对齐）。
 
 ## 3. 功能分组
 

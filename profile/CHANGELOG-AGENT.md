@@ -34,6 +34,20 @@
 
 ## 版本记录（最新在上）
 
+### v1.4.0 — 2026-07-15（health 版本对齐 + 增量文档更新）
+
+- **摘要**：`/health` 新增 `agent_doc_version`（语义版本）与 `git_revision`（部署 commit）两个字段；agent 常驻运行，在每次对话/任务开场比对 `/health` 版本，发现 `agent_doc_version` 变高时按本变更日志的「变更文件清单」**只重读变动文件**（增量，省 token），并按目标 `git_revision` 取文档内容（本地优先、回退 GitHub raw 公开仓库免 token）。前后端一致由同仓库同 commit 部署保证，agent 侧为会话级最终一致。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`（版本→v1.4.0，重写「文档版本与同步」为 git 对齐 + 增量 + 来源优先级，第 4/5/9 步与 v1.4.0 约束）
+  - `agent/index.md`（开场检查清单第 1之二 / 第 4 步纳入 agent_doc_version/git_revision 与增量更新）
+  - `agent/memory/MEMORY.md`、`agent/memory/templates/service_state.json`（新增 `git_revision` 字段与维护规则）
+  - `doc/AGENT_SERVICE_GUIDE.md`（`/health` 字段 + 新增「Agent 文档版本对齐」小节）、`agent/skills/data-service/SKILL.md`（`/health` 字段说明）
+  - 服务端（非 agent 文档，一并记录）：`service/version.py`（新增）、`service/app.py`（/health 加字段）、`service/loader.py`（排除 version 模块）、`deploy/remote_deploy.sh`（写 VERSION 文件）、`.gitignore`（忽略 /VERSION）
+- **agent 动作**：
+  1. 每次对话/任务开场调 `GET /health`，比对 `agent_doc_version` 与记忆；落后按本清单只重读变动文件（增量），按目标 `git_revision` 取内容（本地优先→GitHub raw）。
+  2. 记忆 `service_state.json` 新增并维护 `git_revision`；仅 `git_revision` 变而 `agent_doc_version` 未变时不重读文档、只更新该字段。
+  3. 本条起，每条版本记录都以「变更文件清单」为增量更新依据；改 agent 文档务必同步 bump `AGENT_DOC_VERSION` 与本清单。
+
 ### v1.3.0 — 2026-07-15（工程重组 + 接口可用性 + 降级二分）
 
 - **摘要**：①工程目录按职责重组为 `agent/`（agent 全部内容）、`service/`（后端+前端 `service/web`+DB）、`doc/`（agent↔服务交叉文档与业务索引）、`profile/`（配置+变更日志）+ 根级全局文档；②审计数据服务接口可用性，剔除当前 token 不可用的 6 个接口（4 个 news + `overseas_us` + `hot_kpl_concept`），修复 `fundamental_forecast` 无参失败，功能数 65→59；③确立「数据类接口禁止降级、失败则失败；资讯类由外部财经平台多源获取」的降级二分，贯穿初始化/定时任务/子 Agent 编排，强调数据优先、结论优先。

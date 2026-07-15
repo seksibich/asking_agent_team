@@ -86,13 +86,15 @@
   "data_version": "",
   "functions": [],
   "agent_doc_version": "",
+  "git_revision": "",
   "last_checked": ""
 }
 ```
 
 **维护规则**：
-- 初始化：`GET /functions`，写入 `data_version` 与 `functions`（功能索引）、`last_checked`。
-- **`agent_doc_version`**：记录已内化的 agent 文档版本（= 上次同步时 init.md 的 `AGENT_DOC_VERSION`）。每次收到 init.md 时比对，落后则按 `profile/CHANGELOG-AGENT.md` 补齐后更新为最新（详见 init.md 第 0 步 / 文档版本与同步）。与 `data_version`（数据服务功能索引版本）互相独立。
+- 初始化：`GET /functions`，写入 `data_version` 与 `functions`（功能索引）、`last_checked`；`GET /health` 读 `agent_doc_version`、`git_revision` 写入。
+- **`agent_doc_version`**：记录已内化的 agent 文档版本。每次收到 init.md 或对话开场时，比对 `/health` 回传的 `agent_doc_version`；落后则按 `profile/CHANGELOG-AGENT.md` **只重读变更文件清单里的变动文件**（增量），按目标 `git_revision` 取内容（本地优先、回退 GitHub raw）后更新为最新（详见 init.md 第 0 步 / 文档版本与同步）。与 `data_version`（数据服务功能索引版本）互相独立。
+- **`git_revision`**：服务端 `/health` 回传的部署 commit 短 sha，用于按版本精确拉取文档内容。仅 `git_revision` 变而 `agent_doc_version` 未变时，只更新本字段、不重读文档。
 - 每次调用任意功能后，对比返回的 `data_version`：
   - 与记忆一致 → 不动
   - 不一致 → 重新 `GET /functions`，覆盖更新 `data_version`/`functions`/`last_checked`

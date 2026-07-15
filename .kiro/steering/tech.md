@@ -17,6 +17,7 @@
 - `service/common.py`：tushare 客户端单例、缓存（当日缓存 + `permanent/` 永久历史缓存）、交易日守卫、统一返回结构 `{source, fetched_at, rows}`。
 - `service/db.py`：selections / predictions / forward_returns / backtest_snapshots / daily_factors / config_versions / daily_sentiment 等表，幂等 upsert。
 - 端点：`GET /health`、`GET /functions`、`GET /whoami`、`POST /call`、`/admin/user-keys*`。
+- `service/version.py`：`/health` 回传 `agent_doc_version`（从 `agent/init.md` 解析）与 `git_revision`（读根目录 `VERSION` 文件，回退 `git rev-parse`），供 agent 做文档版本对齐与增量更新；`VERSION` 由 `deploy/remote_deploy.sh` 写入、已 gitignore。
 
 ## 常用命令（均在仓库根目录执行）
 

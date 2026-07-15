@@ -9,10 +9,10 @@
 任何一次对话/任务开始，按序执行，**不得跳过**：
 
 1. 读本文件 `index.md`（总纲）。
-1之二. **文档版本同步**：比对 `init.md` 的 `AGENT_DOC_VERSION` 与记忆 `agent_doc_version`；落后则按 `profile/CHANGELOG-AGENT.md` 逐版本重读变更文件并补齐，更新记忆版本（详见 init.md 第 0 步）。
+1之二. **文档版本同步**：调 `GET /health` 读 `agent_doc_version` 与 `git_revision`，与记忆比对；`agent_doc_version` 落后则按 `profile/CHANGELOG-AGENT.md` **只重读变更文件清单里的变动文件**（增量），按目标 `git_revision` 取内容（本地优先、回退 GitHub raw），补齐后更新记忆两个版本号（详见 init.md 第 0 步）。
 2. 确认已内化**硬性约束**（见「B. 硬性约束」）：SOUL 铁律、四维重心、输出规范、数据红线。
 3. **强制读取记忆**（见「C. 强制记忆」）：`service_state.json`、`关注与持仓.md`、当日 `daily/yyyyMMdd.md`。缺失则先按 `memory/MEMORY.md` 生成。
-4. 校验数据服务：`GET /health`，对比 `data_version` 与 `service_state.json`；不一致先 `GET /functions` 刷新并更新记忆。
+4. 校验数据服务：`GET /health`，对比 `data_version`、`agent_doc_version`、`git_revision` 与 `service_state.json`；`data_version` 不一致先 `GET /functions` 刷新，`agent_doc_version` 落后按第 1之二 步增量更新文档，均写回记忆。
 5. **完整读取固定 12 个 Skills 的正文**：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research` 对应的 `skills/<name>/SKILL.md`；每次任务与每个角色启动都重读，禁止只凭本索引、角色摘要或历史记忆。
 6. 判定任务类型 → 按 `agents/TEAM.md` 角色主绑定矩阵执行；主绑定不免除第 5 步完整加载。
 7. 若为定时任务，按 `schedule.md`（任务表）执行。

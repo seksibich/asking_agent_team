@@ -42,7 +42,7 @@ def discover() -> list[str]:
     for d in dirs:
         for py in sorted(d.glob("*.py")):
             mod = py.stem
-            if mod.startswith("_") or mod in {"app", "registry", "loader", "common", "cli", "db"}:
+            if mod.startswith("_") or mod in {"app", "registry", "loader", "common", "cli", "db", "version"}:
                 continue
             if mod in LIB_ONLY:
                 continue

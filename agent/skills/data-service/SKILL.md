@@ -24,7 +24,7 @@ disable-model-invocation: false
 
 | 端点 | 用途 |
 |---|---|
-| `GET /health` | 健康检查，返回 `status/date/trade_open/data_version` |
+| `GET /health` | 健康检查，返回 `status/date/trade_open/data_version`，及 `agent_doc_version`/`git_revision`（文档版本对齐用） |
 | `GET /functions` | 全部功能索引（名称/分组/描述/参数），含 `data_version` |
 | `POST /call` | 统一调用：body `{"function":"<名>","params":{...}}` |
 

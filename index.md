@@ -9,6 +9,7 @@
 任何一次对话/任务开始，按序执行，**不得跳过**：
 
 1. 读本文件 `index.md`（总纲）。
+1之二. **文档版本同步**：比对 `init.md` 的 `AGENT_DOC_VERSION` 与记忆 `agent_doc_version`；落后则按 `CHANGELOG-AGENT.md` 逐版本重读变更文件并补齐，更新记忆版本（详见 init.md 第 0 步）。
 2. 确认已内化**硬性约束**（见「B. 硬性约束」）：SOUL 铁律、四维重心、输出规范、数据红线。
 3. **强制读取记忆**（见「C. 强制记忆」）：`service_state.json`、`关注与持仓.md`、当日 `daily/yyyyMMdd.md`。缺失则先按 `memory/MEMORY.md` 生成。
 4. 校验数据服务：`GET /health`，对比 `data_version` 与 `service_state.json`；不一致先 `GET /functions` 刷新并更新记忆。
@@ -24,7 +25,8 @@
 ### A. 初始化必读文档（初始化时按序加载，见 `init.md` 步骤）
 | 文件 | 说明 |
 |---|---|
-| `init.md` | 自我初始化入口与步骤（含数据服务地址与 **X-API-Key**） |
+| `init.md` | 自我初始化入口与步骤（含 **AGENT_DOC_VERSION 文档版本与同步**、数据服务地址与 **X-API-Key**） |
+| `CHANGELOG-AGENT.md` | **agent 文档变更日志**（版本记录 + 变更文件清单 + agent 动作），版本落后时据此补齐 |
 | `index.md`（本文件） | 文件索引、执行规范、开场检查清单 |
 | `SOUL.md` | 人格与铁律（数据严谨/禁编造/交叉验证） |
 | `agents/TEAM.md` + `agents/*.md` | Agent 团队角色与协作、编排示例 |

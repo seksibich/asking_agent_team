@@ -7,7 +7,7 @@
 
 | 文件（建在 输出根/agent记忆/ 下） | 用途 | 更新时机 |
 |---|---|---|
-| `service_state.json` | **服务端版本号 + 功能索引缓存** | 初始化 + 每次检测到 data_version 变化 |
+| `service_state.json` | **服务端版本号 + 功能索引缓存 + `agent_doc_version`（已内化文档版本）** | 初始化 + 每次检测到 data_version 变化 + 文档版本同步后 |
 | `关注与持仓.md` | **用户关注股 + 持仓（持久状态）+ 相关板块** | 用户增删时；持续有效直到用户明确取消 |
 | `daily/yyyyMMdd.md` | **每日观察对象快照（强制读取）** | 每日盘前生成；盯盘/复盘/回测前强制读取 |
 | `predictions.jsonl` | 结构化预判日志（含 driver 维度） | 每次方向性预判 |
@@ -78,12 +78,14 @@
   "base_url": "http://localhost:18901",
   "data_version": "",
   "functions": [],
+  "agent_doc_version": "",
   "last_checked": ""
 }
 ```
 
 **维护规则**：
 - 初始化：`GET /functions`，写入 `data_version` 与 `functions`（功能索引）、`last_checked`。
+- **`agent_doc_version`**：记录已内化的 agent 文档版本（= 上次同步时 init.md 的 `AGENT_DOC_VERSION`）。每次收到 init.md 时比对，落后则按 `CHANGELOG-AGENT.md` 补齐后更新为最新（详见 init.md 第 0 步 / 文档版本与同步）。与 `data_version`（数据服务功能索引版本）互相独立。
 - 每次调用任意功能后，对比返回的 `data_version`：
   - 与记忆一致 → 不动
   - 不一致 → 重新 `GET /functions`，覆盖更新 `data_version`/`functions`/`last_checked`

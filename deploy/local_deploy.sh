@@ -43,10 +43,10 @@ git push origin "$BRANCH"
 # 2) SSH 触发远端部署
 REMOTE_CMD="APP_DIR='$REMOTE_APP_DIR' BRANCH='$BRANCH' PORT='$PORT' SERVICE_NAME='$SERVICE_NAME' bash '$REMOTE_APP_DIR/deploy/remote_deploy.sh'"
 if [ -n "$SSH_HOST" ]; then
-  log "连接 SSH 别名 $SSH_HOST，执行远端部署脚本"
-  ssh "$SSH_HOST" "$REMOTE_CMD" || die "远端部署失败，请查看上方日志或登录服务器 journalctl -u $SERVICE_NAME"
+  log "连接 SSH 别名 ${SSH_HOST} ，执行远端部署脚本"
+  ssh "$SSH_HOST" "$REMOTE_CMD" || die "远端部署失败，请查看上方日志或登录服务器 journalctl -u ${SERVICE_NAME}"
 else
-  log "连接 $SSH_USER@$SERVER_IP:$SSH_PORT，执行远端部署脚本"
+  log "连接 ${SSH_USER}@${SERVER_IP}:${SSH_PORT} ，执行远端部署脚本"
   ssh -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new "$SSH_USER@$SERVER_IP" "$REMOTE_CMD" \
     || die "远端部署失败，请查看上方日志或登录服务器 journalctl -u $SERVICE_NAME"
 fi

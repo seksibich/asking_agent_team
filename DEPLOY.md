@@ -104,27 +104,36 @@ cp .env.example .env
 
 ```bash
 # 在仓库根目录
-docker compose up -d --build          # 首次构建并启动（含 Web）
-docker compose ps                      # 查看状态（healthy）
-docker compose logs -f                 # 日志
+# 生产部署必须显式使用主配置，避免自动合并开发热挂载配置
+docker compose -f docker-compose.yml up -d --build --force-recreate
+docker compose -f docker-compose.yml ps                 # 查看状态（healthy）
+docker compose -f docker-compose.yml logs --tail=100    # 查看启动日志
 
-# 健康检查
-curl -H "X-API-Key: $API_KEY" http://localhost:18901/health
+# 健康检查（/health 仅检查服务状态，不代表 Key 有效）
+curl http://localhost:18901/health
+
+# 管理员鉴权检查：只输出角色，不输出 Key
+curl -sS -H "X-API-Key: $API_KEY" http://localhost:18901/whoami
+# 预期："role":"admin"、"is_admin":true
+
 # 浏览器打开 Web 面板
 #   http://localhost:18901/ui/   （右上角设置填入 API_KEY）
 ```
 
 说明：
-- 根目录 `docker-compose.override.yml` 为**开发热挂载**（改 web/service/skills 免重建，`--reload` 生效）。
-  生产部署请忽略它：`docker compose -f docker-compose.yml up -d --build`。
+- 管理员变量支持 `API_KEY` 和 `ADMIN_API_KEY`，两者均可生效；建议统一只配置 `API_KEY`，避免运维混淆。
+- Key 在服务进程启动时读取。修改 `.env` 或云平台环境变量后，必须执行 `up -d --build --force-recreate`；仅执行 `restart` 可能继续使用旧容器环境。
+- 后端会清理配置值和请求 Key 的首尾空白及外层引号，但不会修复变量名错误。请求头必须是 `X-API-Key`，不能只配置 `ADMIN_KEY`、`SERVICE_API_KEY` 等未支持的变量名。
+- 启动日志只输出 `admin_keys` 和 `user_key` 的配置状态，不会输出密钥内容。若 `admin_keys=0`，说明云端变量没有注入到实际服务进程。
+- 根目录 `docker-compose.override.yml` 为**开发热挂载**（改 web/service/skills 免重建，`--reload` 生效）。生产部署请显式使用：`docker compose -f docker-compose.yml up -d --build --force-recreate`。
 - 数据/缓存持久化在根目录 `data/`、`cache/`（compose 卷挂载）。
 - 上云 RDS：在 `.env` 设 `DB_URL`，并先在 RDS 执行 `service/db/schema.sql`（或依赖启动自动建表）。
 
 常用运维：
 ```bash
-docker compose restart                 # 重启
-docker compose down                    # 停止（保留 data/cache）
-docker compose -f docker-compose.yml up -d --build   # 生产模式（无热挂载）
+docker compose -f docker-compose.yml restart                 # 不改变环境变量时使用
+docker compose -f docker-compose.yml down                    # 停止（保留 data/cache）
+docker compose -f docker-compose.yml up -d --build --force-recreate   # 更新代码或 Key 后使用
 ```
 
 ---

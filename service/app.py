@@ -26,10 +26,26 @@ import common
 import registry
 import loader
 
-# 管理员 Key：向后兼容旧的 API_KEY，同时支持显式 ADMIN_API_KEY
-ADMIN_API_KEY = os.getenv("API_KEY", "") or os.getenv("ADMIN_API_KEY", "")
+def _normalize_key(value: Optional[str]) -> str:
+    """规范化环境变量或请求中的 Key，避免部署工具带入首尾空白/外层引号。"""
+    if not value:
+        return ""
+    normalized = value.strip()
+    if len(normalized) >= 2 and normalized[0] in "'\"" and normalized[-1] == normalized[0]:
+        normalized = normalized[1:-1].strip()
+    return normalized
+
+
+# 管理员 Key：API_KEY 与 ADMIN_API_KEY 均可用，避免旧变量覆盖云端新配置。
+# 只在进程启动时读取；修改云端变量后必须重启/重建服务。
+ADMIN_API_KEYS = frozenset(
+    key for key in (
+        _normalize_key(os.getenv("API_KEY")),
+        _normalize_key(os.getenv("ADMIN_API_KEY")),
+    ) if key
+)
 # 访客 Key：可查看、选股、读情绪和查看回测结果，不能改配置或运行全市场预计算
-USER_API_KEY = os.getenv("USER_API_KEY", "")
+USER_API_KEY = _normalize_key(os.getenv("USER_API_KEY"))
 
 # 仅管理员可调用的敏感功能：修改配置、写入全市场预计算结果
 ADMIN_ONLY_FUNCTIONS = {
@@ -56,6 +72,8 @@ def _startup() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"[startup] db init skipped: {e}")
     imported = loader.discover()
+    print(f"[startup] auth configured: admin_keys={len(ADMIN_API_KEYS)}, "
+          f"user_key={bool(USER_API_KEY)}")
     print(f"[startup] loaded {len(imported)} function modules, "
           f"{len(registry.names())} functions, data_version={registry.data_version()}")
 
@@ -81,15 +99,17 @@ def _save_user_keys(keys: list[dict[str, Any]]) -> None:
 def _role_for(x_api_key: Optional[str]) -> Optional[str]:
     """返回调用方角色：admin / user / None（未授权）。
     未配置任何凭据时，未输入 token 只按只读用户处理；已配置管理员 Key 时空 token 仍未授权。"""
-    if ADMIN_API_KEY and x_api_key == ADMIN_API_KEY:
+    candidate = _normalize_key(x_api_key)
+    if candidate and any(secrets.compare_digest(candidate, key) for key in ADMIN_API_KEYS):
         return "admin"
     dyn = _dynamic_user_keys()
-    if not ADMIN_API_KEY and not USER_API_KEY and not dyn:
+    if not ADMIN_API_KEYS and not USER_API_KEY and not dyn:
         return "user"   # 未配置凭据时允许只读访问，但不开放管理员操作
-    if USER_API_KEY and x_api_key == USER_API_KEY:
+    if USER_API_KEY and candidate and secrets.compare_digest(candidate, USER_API_KEY):
         return "user"
     for k in dyn:
-        if not k.get("disabled") and x_api_key and x_api_key == k.get("key"):
+        dynamic_key = _normalize_key(k.get("key"))
+        if not k.get("disabled") and candidate and dynamic_key and secrets.compare_digest(candidate, dynamic_key):
             return "user"
     return None
 

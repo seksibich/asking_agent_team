@@ -55,7 +55,7 @@ disable-model-invocation: false
 生成 key `{异动类型}:{target}`，服务端 `notify_dedup` 在 {config.dedup_window_minutes} 分钟内同 key 不重复推送。
 
 ### 预判记录
-有明确方向性预判时追加 `predictions.jsonl`（标注 driver）；纯事实通报（如止损触发）不记录。
+定时 T3/T4/T5 有明确正式方向性预判时可追加 `predictions.jsonl`（标注 driver）；纯事实通报不记录。用户手动盯盘默认 ephemeral，不写 predictions、daily 或观察池。
 
 ---
 
@@ -73,9 +73,9 @@ disable-model-invocation: false
 
 ## Skill 加载约束 / 依赖 Skills
 
-- 盘中任务启动前完整读取本文件并确认固定 11 Skills 已完整加载；不得只凭 schedule 摘要执行。
+- 盘中任务启动前完整读取本文件并确认固定 12 Skills（含 `stock-research`）已完整加载；不得只凭 schedule 摘要执行。
 - **直接依赖**：`data-service`、`priority-framework`、`output-format`。
-- **协同 Skills**：`pre-market`、`bidding-analysis`（观察清单与预判输入）、`post-market`（盘中事实交接）、`stock-screening`（主线标的）。
+- **协同 Skills**：`pre-market`、`bidding-analysis`（观察清单与预判输入）、`post-market`（盘中事实交接）、`stock-screening`（主线标的）、`stock-research`（用户单股调研引用盘中事实时协同，不作为定时必执行绑定）。
 - T3/T4/T5 必须点名 `skills/intraday-watch/SKILL.md` 与 `skills/data-service/SKILL.md`；需要报告时同时点名 `skills/output-format/SKILL.md`。
 
 ## 盘中新闻与行情 fallback

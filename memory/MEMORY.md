@@ -3,6 +3,13 @@
 本目录定义智能体的记忆规则与模板。初始化时，若输出根目录的 `agent记忆/` 下对应文件不存在，
 按 `memory/templates/` 复制建立。记忆只记**可核验的事实与自身预判**，不记编造内容，每条带时间戳。
 
+## ephemeral / watch / auto 边界（强制）
+
+- **ephemeral（默认）**：用户主动单股调研、按事件/行业/热门板块选股，仅落投研报告；不写 predictions、daily、观察池，不调用 `log_selection`，不回测。
+- **watch（用户明确持久化）**：仅用户明确说「加入观察/持续跟踪/纳入后续回测」等才更新 `关注与持仓.md` 并 `log_selection(category=watch)`；进入 1/3/7/30 日观察性回测，但必须与 auto 分组，不计入自动胜率、`tuning_hints` 或因子/情绪调参。
+- **auto（调度器正式候选）**：只有调度器正式自动选股候选可用 `category=auto`，进入自动回测与调参闭环；任何用户主动研究不得因高分升级为 auto。
+- watch 题材字段至少包含：`theme_event`（题材/具体事件）、`driver`（事件驱动）、`benefit_type`（直接/间接受益）、`heat_0_100`、`stage`（首次发酵/加速/分歧/退潮/证伪）、`evidence_sources`、`evidence_times`、`invalidation`、`join_source`（加入来源）、`join_date`、`persistence_category=watch`。
+
 ## 记忆分类
 
 | 文件（建在 输出根/agent记忆/ 下） | 用途 | 更新时机 |
@@ -37,8 +44,8 @@
 ```markdown
 ## 持仓（category=holding，仅未清仓）
 | 代码 | 名称 | 买入总金额 | 卖出总金额 | 持仓状态 | 止损 | 相关板块 | 首次买入日期 |
-## 关注（category=watch）
-| 代码 | 名称 | 关注理由 | 相关板块 | 加入日期 |
+## 关注（category=watch；仅用户明确持久化）
+| 代码 | 名称 | theme_event | driver | 受益类型 | 热度 | 阶段 | 证据与时间 | 证伪 | 加入来源 | 加入日期 |
 ## 已清仓归档（不再盯，除非用户要求→转普通关注）
 | 代码 | 名称 | 买入总金额 | 卖出总金额 | 已实现盈亏 | 清仓日期 |
 ## 相关板块（需连带观察）
@@ -58,15 +65,15 @@
 | 代码 | 名称 | 相关板块 |
 ## 用户持仓（category=holding，仅未清仓）
 | 代码 | 名称 | 买入总金额 | 卖出总金额 | 止损 | 相关板块 |
-## 当日重点板块（自动选股 + 关注/持仓相关板块并集）
-- 板块名：来源（选股/关注/持仓）
+## 当日重点题材/事件/板块（自动选股 + 关注/持仓相关主题并集）
+- 题材/具体事件/板块：来源（选股/关注/持仓）；首次发酵/加速/分歧/退潮/证伪；证据与时间
 ## 临时观察列表（高热度股，当日有效，不持久、不入回测）
 | 代码 | 名称 | 热度来源 | 备注 |
 ## 择时与仓位（盘前初判 + 收盘更新）
 - 情绪温度 / 冰点或高热 streak / 仓位倾向(重仓/中性/空仓) / buy_weight_hint
 ```
-生成时：从 `关注与持仓.md` 取持久状态（持仓仅取未清仓）；从近 7 日自动选股（服务端 `selection_backtest` 或本地记录，重点前一日）取自动选股；合并相关板块；盘前把 `hot_dc/hot_ths/hot_kpl_concept` 高热度股写入临时观察列表；用 `market_timing` 写入择时与仓位倾向。
-同时把当日 auto/watch/holding 标的用 `log_selection` 登记到服务端（供回测）。
+生成时：从 `关注与持仓.md` 取持久状态（持仓仅取未清仓）；从近 7 日自动选股（服务端 `selection_backtest` 或本地记录，重点前一日）取自动选股；合并相关题材/事件/板块；盘前把 `hot_dc/hot_ths/hot_kpl_concept` 高热度股写入临时观察列表；用 `market_timing` 写入择时与仓位倾向。
+仅调度器正式 auto 候选、已存在 watch 和 holding 标的按各自类别登记。不得把 ephemeral 用户主动研究写入 daily 或自动登记；用户明确持久化后才新增 watch。
 
 ## 1. 服务端状态记忆（service_state.json）★
 
@@ -98,7 +105,8 @@
 {"date":"YYYY-MM-DD","time":"HH:MM","type":"涨价预判|行业预判|个股预判|板块预判|情绪预判","target":"标的或主题","direction":"up|down|neutral","confidence":0.0,"driver":"涨价|逻辑|预期|情绪","basis":"依据","sources":["来源1","来源2"]}
 ```
 - `driver` 必填，标注主导维度，供回测分驱动统计准确率。
-- 写入时机：盘前/竞价/盘中异动预判、投研结论、选股入选理由。
+- **写入时机**：仅调度器自动链路中的正式方向性预判（盘前/竞价/盘中/T7 正式候选）调用 `log_prediction`/写本日志；写入前确认不是 ephemeral 用户主动研究、不是 watch 观察样本、不是业绩增长参考池。
+- **禁止写入**：用户主动单股调研、方向选股、行业/事件研究默认 ephemeral，不能因报告有方向性结论自动写 predictions；用户明确持久化为 watch 后仍只做 selection 观察性回测，不进入 predictions auto 统计。
 - 读取时机：综合复盘回测、周月报。
 
 ## 3. 学习日志（学习日志-yyyy年MM月.md）

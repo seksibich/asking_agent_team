@@ -36,13 +36,13 @@ disable-model-invocation: false
      - 高位高开 + 情绪高热连续 → 警惕冲高回落，不追
    - **抄底判断**：连续冰点（market_timing cold_streak≥2）+ 标的超跌 + 竞价企稳/温和放量 + 有涨价/逻辑支撑 → 可能支持抄底（分批试仓）
 3. **开盘策略**：积极 / 观望 / 防守（结合择时仓位倾向 buy_weight_hint）。
-4. 与盘前预判对比，标注偏差；方向性判断写 `predictions.jsonl`（driver 标注）。
+4. 与盘前预判对比并标注偏差；仅定时 T2 的正式方向性判断写 `predictions.jsonl`（driver 标注）。用户手动竞价分析默认 ephemeral，不写自动记忆。
 5. 生成 `02-竞价分析.md`，推送要点（1~3 句）。
 
 ## 输出结构（02-竞价分析.md）
 ```markdown
 # 竞价分析 — yyyy-MM-dd 09:25
-## 情绪与择时环境（温度值 + stance + buy_weight_hint）
+## 情绪与择时环境（情绪温度、市场状态、建议出手权重）
 ## 重点标的竞价表现（关注/持仓/昨日选股/高热度）
 | 代码 | 名称 | 昨收 | 高开% | 竞价额 | 竞价额/昨额 | 昨日成交额 | 判断 |
 ## 全市场竞价 Top20（成交额）+ 异常高开 + 竞价爆量
@@ -57,7 +57,7 @@ disable-model-invocation: false
 
 ## Skill 加载约束 / 依赖 Skills
 
-- 使用前完整读取本文件并确认 11 Skills 已完整加载，不得只凭“竞价分析”摘要执行。
+- 使用前完整读取本文件并确认固定 12 Skills（含 `stock-research`）已完整加载，不得只凭“竞价分析”摘要执行。
 - **直接依赖**：`data-service`（竞价、情绪与错误处理）、`priority-framework`（逻辑/风险约束）、`output-format`（触发来源与报告）。
-- **协同 Skills**：`pre-market`（临时观察列表/盘前预判）、`intraday-watch`（开盘后交接）、`post-market`（偏差复盘）、`review-learning`（预判验证）。
+- **协同 Skills**：`pre-market`（临时观察列表/盘前预判）、`intraday-watch`（开盘后交接）、`post-market`（偏差复盘）、`review-learning`（预判验证）、`stock-research`（仅为用户单股调研提供竞价事实，不作为定时必执行绑定）。
 - 竞价接口缺失时按 `skills/data-service/SKILL.md` 标缺失与 `degraded`，不得用盘口猜测替代。

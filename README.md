@@ -105,15 +105,26 @@ curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
 - **因子可配置**：`get_factor_config` / `set_factor_weights`（提交全部因子权重，缺失/多余/差异/和≠1 会被拒并指引修正）实现回测→调参闭环。
 - **Agent 团队**：主 Agent + 5 子 Agent；重量级任务（盘前/复盘/周月回测/用户分析）启用团队，盯盘主 Agent 单跑。见 `agents/TEAM.md`。
 
+## 用户主动研究入口
+
+| 用户需求 | 入口 Skill | 输出目录 | 默认持久化 |
+|---|---|---|---|
+| 指定事件、行业导向或热门板块选股 | `industry-analysis` + `stock-screening` + `quant-screening` | `投研/yyyyMMdd-{主题}选股/` | `ephemeral` |
+| 主动调研单只股票 | `stock-research` | `投研/yyyyMMdd-{股票名}个股调研/` | `ephemeral` |
+
+两类入口都先动态识别“题材/具体事件 → 行业产业链 → 个股”，题材不限申万、东财或同花顺分类；报告标题后首节固定为“一眼结论（核心摘要）”，先给仓位/次日倾向、事件 Top N、事件映射个股和最大风险/证伪。仅用户明确要求「加入观察/持续跟踪/纳入后续回测」时才转 `category=watch`，跟踪 1/3/7/30 日收益；watch 与 auto 完全隔离，不参与自动胜率、`tuning_hints` 或调参。`category=auto` 仅限调度器正式自动候选。
+
 ## 安全
 
 - `.env` 含真实 token，已 gitignore；务必设置强随机 `API_KEY`。
 - **API Key 分级**：`API_KEY` 为管理员 Key（完整权限）；可选配置 `USER_API_KEY` 作为只读用户 Key —— 用户 Key 可查看/选股/读情绪，但**不能修改因子权重、归一化窗口，也不能触发回测**（服务端返回 403，Web 面板对应入口自动禁用）。留空 `USER_API_KEY` 则不启用。
 - 本地/内网使用；迁移公网（ECS）时建议加防火墙白名单或反向代理鉴权。
 
-## Agent→Skill 强制绑定（AGENT_DOC_VERSION v1.1.0）
+## Agent→Skill 强制绑定（AGENT_DOC_VERSION v1.2.0）
 
-首次初始化、每次任务启动以及每个 Agent/角色启动时，必须完整读取全部 11 个 `SKILL.md`：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`。`agents/TEAM.md` 的角色主绑定只决定主职责，不允许只凭 `index.md`、矩阵或角色摘要执行。
+首次初始化、每次任务启动以及每个 Agent/角色启动时，必须完整读取全部 12 个 `SKILL.md`：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`。`agents/TEAM.md` 的角色主绑定只决定主职责，不允许只凭 `index.md`、矩阵或角色摘要执行。`stock-research` 是用户主动单股调研入口，不加入定时 T1/T6/T7 的必执行绑定。
+
+- 面向用户的报告必须使用通俗中文：首屏和正文不得堆砌英文接口名、参数名、JSON 字段或因子代码；技术名称只在数据来源附录、故障诊断或用户明确要求时保留，并同时给出中文解释。
 
 ## 接口契约与统一 fallback 速览
 

@@ -9,23 +9,24 @@ disable-model-invocation: false
 
 ## 一、每日回测（并入 22:00 综合复盘）
 
-见 post-market。预判先用 `log_prediction` 登记到 DB（按 日期+标的+方向 幂等），复盘调 `predictions_backtest`（读 DB 当日预判 → 用 `market_daily` 验证 → 分 `driver` 统计准确率）→ 写 `学习日志`。
+见 post-market。**仅调度器自动链路中的正式方向性预判**可先用 `log_prediction` 登记到 DB（按 日期+标的+方向 幂等），复盘调 `predictions_backtest`（读 DB 正式预判 → 用 `market_daily` 验证 → 分 `driver` 统计准确率）→ 写 `学习日志`。用户主动单股调研、方向选股、行业/事件研究默认 ephemeral，不调用 `log_prediction`、不写 `predictions.jsonl`；转为 watch 后仍只做 selection 观察性回测，不进入 auto 预判胜率。
 
-## 一之二、选股回测闭环（自动选股专用）★
+## 一之二、选股回测闭环（ephemeral / watch / auto 严格隔离）★
 
-针对**自动选股**（综合量化 + 消息面 + 热度跑出的股票）建立跟踪回测闭环。
-**用户主动指定行业/板块/事件方向的选股不纳入**（这类不代表 Agent 的自主判断力）。
+- **auto**：仅调度器正式自动候选，进入自动胜率/超额、`tuning_hints` 与因子/情绪调参。
+- **ephemeral**：用户主动单股调研或按行业/板块/事件选股默认不登记、不回测。
+- **watch**：仅用户明确要求「加入观察/持续跟踪/纳入后续回测」后登记；跟踪 1/3/7/30 日收益，但必须与 auto 分组，只作观察统计，绝不进入自动胜率、`tuning_hints` 或因子/情绪调参。
+- **holding**：用户持仓仅作观察，沿用持仓规则，不进入 auto 调参。
 
 ### 登记（选股当时）
 每次自动选出标的后，调 `log_selection` 登记到服务端 DB（按 日期+代码+category **幂等去重**，重复登记不会重复计数）：
 ```json
 {"function":"log_selection","params":{"code":"600XXX.SH","name":"某某","score":0.79,"driver":"涨价","reason":"...","category":"auto"}}
 ```
-用户关注/持仓用 `category=watch|holding`（仅观察）；用户临时指定方向的选股不登记。
+用户关注/持仓用 `category=watch|holding`（仅观察）；用户主动指定方向的选股、单股调研和行业/事件研究默认 `ephemeral`、不登记，无论评分多高也不得自动升级。仅用户明确要求加入观察、持续跟踪或纳入后续回测时才持久化为 watch；登记理由/记忆至少包含 `theme_event`、`driver`、直接/间接受益、热度、阶段、证据、证伪、加入来源与日期；服务字段不足时将完整元数据保存在 `关注与持仓.md` 并在 reason 中保留摘要。
 
 ### 回测（定期）
-调 `selection_backtest`，服务端计算每只自动选股在选出后 **1/3/7/30 交易日**的涨幅、胜率、
-相对沪深300超额，并按 **driver（涨价/逻辑/预期/情绪）** 与 **分数分桶** 汇总，产出 `tuning_hints`。
+调 `selection_backtest`，分别展示 auto/watch/holding。auto 计算 1/3/7/30 交易日涨幅、胜率、相对沪深300超额，并可按 driver/分数桶生成 `tuning_hints`；watch 同样跟踪 1/3/7/30 日收益，但只作观察统计，必须从自动胜率、`tuning_hints` 和调参输入中过滤。
 
 ### 据回测自主微调（每晚，署名 + 留痕）★
 每晚回测后，允许 Agent（回测分析师产出建议 → 主 Agent 复核）**自主微调量化选股中权重不为 0 的因子**，并落库生效：
@@ -95,7 +96,7 @@ disable-model-invocation: false
 
 ## Skill 加载约束 / 依赖 Skills
 
-- 回测、调参、周月报前完整读取本文件并确认固定 11 Skills 已完整加载，不得只凭历史调参摘要执行。
+- 回测、调参、周月报前完整读取本文件并确认固定 12 Skills（含 `stock-research`）已完整加载，不得只凭历史调参摘要执行。
 - **直接依赖**：`data-service`（真实行情、错误与重试）、`quant-screening`（因子契约）、`output-format`（回测报告）、`post-market`（每日闭环）。
-- **协同 Skills**：`priority-framework`、`stock-screening`、`industry-analysis`，用于按 driver 解释而不篡改事实。
+- **协同 Skills**：`priority-framework`、`stock-screening`、`industry-analysis`、`stock-research`；其中 `stock-research` 仅在用户明确持久化为 watch 后提供观察样本，禁止进入 auto 调参。
 - 数据缺失时按 `skills/data-service/SKILL.md` 标 `degraded`，不计算伪准确率；T7 的关键接口执行 5/15 分钟延迟重试，非关键接口失败不阻塞已有样本的复盘。

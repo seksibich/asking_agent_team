@@ -32,9 +32,28 @@
 
 ## 版本记录（最新在上）
 
+### v1.2.0 — 2026-07-15（提交待回填）
+
+- **摘要**：新增 `stock-research` 单股调研 Skill、动态题材/具体事件驱动的报告首屏与双入口选股，建立 ephemeral/watch/auto 严格隔离；同时要求面向用户的报告使用通俗中文，避免用大量英文接口名、参数名和因子代码干扰阅读。
+- **变更文件清单（agent 相关）**：
+  - `CHANGELOG-AGENT.md`、`README.md`、`index.md`、`init.md`、`schedule.md`
+  - `agents/TEAM.md`、`agents/ORCHESTRATION.md`、`agents/main-orchestrator.md`
+  - `agents/technical-trend-analyst.md`、`agents/sentiment-analyst.md`、`agents/fundamental-research-analyst.md`、`agents/macro-news-analyst.md`、`agents/backtest-analyst.md`
+  - `memory/MEMORY.md`、`memory/templates/关注与持仓.md`、`memory/templates/daily-观察对象.md`
+  - 全部 12 个 `skills/*/SKILL.md`，其中新增 `skills/stock-research/SKILL.md`
+- **agent 动作**：
+  1. 重新逐文件完整加载固定 12 个 Skills；`stock-research` 仅作为用户主动单股调研入口，不加入 T1/T6/T7 定时必执行绑定。
+  2. T1/T6/T7、趋势/量化选股、用户方向选股和单股调研统一按“一眼结论（核心摘要）→目录导读→详细正文”，按“题材/具体事件 → 个股”展示重点。
+  3. 自动与用户主动选股均先做动态题材映射，再执行量化/趋势筛选；量化原始分先转当批横截面排名，四维硬门槛继续生效。
+  4. 用户主动研究默认仅生成本次报告；只有用户明确要求时才加入观察，进行隔离的 1/3/7/30 日观察性回测，禁止进入自动胜率、调参提示和因子/情绪调优。
+  5. T6/T7 动态题材调用链必须覆盖消息/公告、热榜、涨停连板、量能与资金，并遵守新闻降级链和关键接口 5/15 分钟重试。
+  6. 面向用户的报告首屏、结论、正文和表格字段必须使用通俗中文；不得堆砌英文接口名、参数名、JSON 字段或因子代码。技术名称仅在数据来源附录、故障诊断或用户明确要求时保留，并紧邻中文解释。
+  7. T7 业绩增长参考池继续与正式选股、记忆、回测和调参严格隔离。
+
 ### v1.1.0 — 2026-07-15（提交 48a2e57）
 
-- **摘要**：在既有情绪极端指数、连板与断板反包、强制 Agent→Skill 绑定和统一 fallback 基础上，继续扩充当前 v1.1.0：T1/T6/T7 改为“详尽 Markdown 报告 + 独立精简推送”，报告强制“核心摘要→目录导读→详细正文”；正式量化/趋势候选新增逐股完整理由链与综合理由表；T7 在业绩窗口新增由基本面分析师维护、全量去重且不持久化/不回测调参的“业绩增长参考池”。版本仍为 v1.1.0，不新增版本，全部改动已随提交 `48a2e57` 落地。
+- **已提交基线（事实保留）**：提交 `48a2e57` 已落地情绪极端指数、连板与断板反包、强制 Agent→Skill 绑定、统一 fallback、T1/T6/T7 详尽报告 + 独立推送、正式候选理由链和隔离的业绩增长参考池。
+- **版本边界**：本条只记录已由提交 `48a2e57` 落地的 v1.1.0 能力；动态题材、单股调研、持久化隔离和通俗中文报告归入上方 v1.2.0。
 - **变更文件清单（agent 相关）**：
   - `CHANGELOG-AGENT.md`
   - `init.md`
@@ -65,11 +84,10 @@
   - `skills/quant-screening/scripts/sentiment.py`（既有 v1.1.0 情绪极端指数实现）
   - `web/index.html`、`web/app.js`、`web/style.css`（情绪温度置顶、设置弹窗、极端指数温度计）
 - **agent 动作**：
-  1. 重新逐文件完整加载固定 11 个 Skills（首次及每次任务/角色启动均执行），并按 `agents/TEAM.md` 与角色主绑定点名分发；继续执行 `skills/data-service/SKILL.md` 的 fallback、缺失标注、T1/T6/T7 5/15 分钟延迟重试和 T4 新闻降级链。
-  2. T1/T6/T7 生成报告时使用 `skills/output-format/SKILL.md` 的对应完整模板：正文尽可能详尽，摘要后必须是目录导读；数据缺失保留章节并写明 fallback 与实际日期。另生成建议≤500字的重点推送，包含报告路径和降级提示，不得复制全文或只报“已生成”。
-  3. 所有正式量化/趋势候选逐只填写「正式候选综合理由表」，理由链固定为“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”；缺失环节写“无可核验证据”。
-  4. T7 基本面分析师在法定/惯例披露季或最近3个交易日接口返回新预告/快报/公告时，调用 `fundamental_forecast`、`fundamental_express`、`news_anns`，必要时用 `fundamental_income`、`fundamental_fina_indicator` 复核；按 `code+report_period+announcement_date` 去重并全量输出业绩增长参考池，无记录明确“当晚无可核验的增长/预增公告”。
-  5. 强制隔离业绩增长参考池：不得调用 `log_selection`，不得写 `predictions.jsonl`/观察池，不纳入 auto/watch/holding、回测样本或调参；同股只有独立通过正式流程才由正式流程持久化。不得宣称业绩增长必然利好，PE/PB 仍只作风险背景。
+  1. 重读本条变更文件并内化 v1.1.0 情绪极端指数、连板生态与断板反包能力。
+  2. T1/T6/T7 执行详尽报告与独立精简推送，正式候选按完整理由链输出。
+  3. 关键接口执行统一 fallback 与 5/15 分钟延迟重试，失败时披露降级状态并继续可完成部分。
+  4. T7 业绩增长参考池与正式选股、记忆、回测和调参严格隔离。
 
 ### v1.0.0 — 2026-07-15（基线锚定，提交 3d822f7）
 

@@ -18,20 +18,17 @@ disable-model-invocation: false
 ## 一、当日总结（17:30，**主 Agent 轻量**）
 
 不启用团队，主 Agent 快速汇总并形成详尽 Markdown：
-1. 数据状态：交易日、接口状态、实际数据日期、重试与 fallback。
-2. 指数与成交：大盘收盘、成交额、量价变化（`market_index`）。
-3. 板块趋势与主线阶段：板块涨跌、短中期动量、量能与启动/主升/高位/退潮阶段（`sector_dc`）。
-4. 情绪/连板/极端指数：`sentiment_temperature`、`sentiment_extreme_index`、`market_limit`、`market_lianban`、`market_timing`。
-5. 资金：北向及可核验资金变化（`money_hsgt` 等）；缺失时明确降级。
-6. 涨价链：`price_hike_scan` 与观察池线索的当日进展。
-7. 持仓/关注：逐一核对当日表现、催化、板块联动与风险。
-8. 明日环境初判：结合择时、消息面和行业催化给出重仓环境/中性/降仓或空仓倾向，说明依据，非确定性指令。
-9. 风险与来源：披露缺口、证伪条件、来源与时间。
+1. **首屏一眼结论**：标题后第一节固定为 `## 一眼结论（核心摘要）`，依次输出次日仓位倾向、当日最强题材/具体事件 Top N 及次日延续初判、“题材/事件 → 代表个股”、最大风险/证伪和首屏结论表。
+2. 数据状态：交易日、接口状态、实际数据日期、重试与 fallback。
+3. 指数与成交：大盘收盘、成交额、量价变化（`market_index`）。
+4. 动态题材与板块趋势：综合消息面、热榜、涨停连板、量能和资金识别当日最强题材/具体事件，不限传统板块；输出首次发酵/加速/分歧/退潮/证伪、证据及次日延续条件。
+5. 情绪/连板/极端指数：`sentiment_temperature`、`sentiment_extreme_index`、`market_limit`、`market_lianban`、`market_timing`。
+6. 资金、涨价链、持仓/关注、明日环境初判、风险与来源按 T6 模板完整展开。
 
-生成 `04-当日总结.md` 时必须执行 `skills/output-format/SKILL.md` 的 T6 完整模板：**核心摘要 → 目录导读 → 详细正文**；正文至少保留数据状态、指数成交、板块趋势与主线阶段、情绪/连板/极端指数、资金、涨价链、持仓关注、明日环境初判、风险、来源。数据缺失不得删节。推送另按独立模板生成，建议不超过 500 字，不复制正文。
+生成 `04-当日总结.md` 时固定顺序为**一眼结论（核心摘要） → 目录导读 → 详细正文**；数据缺失不得删节。推送另按独立模板生成，建议不超过 500 字。
 
 ### 常用调用
-`market_index` `sector_dc` `market_limit` `market_lianban` `sentiment_temperature` `sentiment_extreme_index` `market_timing` `money_hsgt` `price_hike_scan`
+`market_index` `sector_dc` `market_limit` `market_lianban` `news_filter` `news_anns` `hot_dc` `hot_ths` `hot_kpl_concept` `sentiment_temperature` `sentiment_extreme_index` `market_timing` `money_hsgt` `price_hike_scan`；新闻不足时使用 `news_cctv` + 外部可信来源 fallback。动态题材必须同时覆盖消息/公告、热榜、涨停连板、量能与资金，不得仅凭板块涨幅命名。
 
 ---
 
@@ -51,14 +48,18 @@ disable-model-invocation: false
   → 详尽综合复盘 + 正式次日候选 + 隔离的业绩增长参考池 + 因子调参
 ```
 
+### 动态题材关键调用
+
+`news_filter` `news_anns` `hot_dc` `hot_ths` `hot_kpl_concept` `market_limit` `market_lianban` `money_toplist` `screen_sector`；新闻不足时使用 `news_cctv` + 外部可信来源 fallback。先聚合“消息/公告 + 热榜 + 涨停连板 + 量能资金”，再映射具体事件、产业链和候选个股。
+
 ### 择时与重仓/空仓环境（明日）
 - 调 `market_timing`（连续冰点/高热 streak、`buy_weight_hint`）+ 情绪 + 消息面 + 行业催化。
 - 明确明日仓位倾向：具备重仓环境 / 中性 / 需要降仓或空仓，并说明依据，作为正式候选出手权重和仓位上限参考。
 
 ### 正式量化/趋势选股（团队协同）
-- `screen_sector` 定强势主线 → `screen_trend`/`screen_quant`（自动跑 `top_n=50`）在主线内/全市场选股 → 团队叠加涨价/逻辑/情绪复核 → 主 Agent 二次验证。
-- 出手评分 = 四维综合分 × `buy_weight_hint`；量化/技术信号不能代替基本面证据。
-- 候选须按主线/产业链分组，并逐只使用 output-format「正式候选综合理由表」。每只同时提供量化综合分与关键因子、四维分、板块/产业链、板块短中期动量/量能/阶段、主线关系（核心/分支/补涨/非主线）、催化与炒作路径、完整理由链、风险与证伪。
+- `screen_sector` 与动态题材识别先形成候选：消息面 + 热榜 + 涨停连板 + 量能资金聚类，题材/具体事件不限传统板块；再运行 `screen_trend`/`screen_quant`（自动 `top_n=50`）。
+- 统一计算 `综合选股分 = 利好程度×0.35 + 题材热度×0.25 + 量化横截面分位×0.40`，三项 0~100；z-score 先转当批 percentile；`择时后评分 = 综合选股分 × buy_weight_hint`。四维硬门槛继续生效。
+- 候选须按“题材/事件 → 个股”分组，并逐只使用 output-format「正式候选综合理由表」。每只同时提供量化分位与中文关键依据、四维分、题材/产业链、短中期动量/量能/阶段、主线关系、催化与炒作路径、理由链、风险与证伪；原始因子代码仅可放入数据附录。
 - 固定理由链：**量化信号 → 板块趋势 → 当前主线关系 → 涨价/逻辑/预期催化 → 情绪与择时 → 风险/证伪**。任一环缺资料写「无可核验证据」。
 - 仅符合正式自动选股定义的候选才用 `log_selection(category=auto)` 登记并按规则写自动记忆。
 
@@ -78,7 +79,7 @@ disable-model-invocation: false
 
 ### T7 详尽报告结构
 
-严格使用 `skills/output-format/SKILL.md` 的 T7 完整模板，顺序为**核心摘要 → 目录导读 → 详细正文**。正文至少覆盖：数据状态、全天行情、板块趋势/主线、情绪与连板、资金龙虎榜、涨价景气、晚间公告、正式量化/趋势候选、业绩增长参考池、明日策略、回测调参、风险、来源。报告不得因推送限制删减；不可用数据保留章节并写明缺失、fallback、重试轨迹和实际日期。
+严格使用 `skills/output-format/SKILL.md` 的 T7 完整模板，顺序为**一眼结论（核心摘要） → 目录导读 → 详细正文**。首屏必须先给次日仓位倾向、今日题材复盘、晚间新增具体事件、按“题材/事件 → 个股”分组的次日正式候选、最大风险/证伪和首屏结论表。正文至少覆盖数据状态、全天行情、动态题材阶段、板块趋势、情绪连板、资金龙虎榜、涨价景气、晚间公告、正式候选、业绩增长参考池、明日策略、回测调参、风险和来源。
 
 ### 回测逻辑
 1. 读当日 `predictions.jsonl` 中 direction≠neutral 的正式记录。
@@ -91,9 +92,9 @@ disable-model-invocation: false
 
 ## Skill 加载约束 / 依赖 Skills
 
-- T6/T7 或手动盘后任务启动前完整读取本文件并确认固定 11 Skills 已完整加载，禁止只读 schedule/角色摘要。
+- T6/T7 或手动盘后任务启动前完整读取本文件并确认固定 12 Skills（含 `stock-research`）已完整加载，禁止只读 schedule/角色摘要。
 - **直接依赖**：`data-service`、`priority-framework`、`output-format`。
-- **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`；并读取 `pre-market`/`bidding-analysis`/`intraday-watch` 的当日预判与事实作为复盘输入。
+- **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`；并读取 `pre-market`/`bidding-analysis`/`intraday-watch` 的当日预判与事实作为复盘输入。`stock-research` 仅共享用户单股研究证据，不作为 T6/T7 必执行绑定。
 - T6 必须点名 `skills/post-market/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`；T7 还必须点名 `skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`。
 
 ## 盘后 fallback

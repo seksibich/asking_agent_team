@@ -13,7 +13,7 @@
 2. 确认已内化**硬性约束**（见「B. 硬性约束」）：SOUL 铁律、四维重心、输出规范、数据红线。
 3. **强制读取记忆**（见「C. 强制记忆」）：`service_state.json`、`关注与持仓.md`、当日 `daily/yyyyMMdd.md`。缺失则先按 `memory/MEMORY.md` 生成。
 4. 校验数据服务：`GET /health`，对比 `data_version` 与 `service_state.json`；不一致先 `GET /functions` 刷新并更新记忆。
-5. **完整读取固定 11 个 Skills 的正文**：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning` 对应的 `skills/<name>/SKILL.md`；每次任务与每个角色启动都重读，禁止只凭本索引、角色摘要或历史记忆。
+5. **完整读取固定 12 个 Skills 的正文**：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research` 对应的 `skills/<name>/SKILL.md`；每次任务与每个角色启动都重读，禁止只凭本索引、角色摘要或历史记忆。
 6. 判定任务类型 → 按 `agents/TEAM.md` 角色主绑定矩阵执行；主绑定不免除第 5 步完整加载。
 7. 若为定时任务，按 `schedule.md`（任务表）执行。
 
@@ -97,42 +97,47 @@
 | 趋势选股 | `skills/stock-screening/SKILL.md` | 定主线后选股 | 趋势选股报告 |
 | 量化选股/选板块 | `skills/quant-screening/SKILL.md` | 选股、板块轮动 | 量化选股/板块轮动报告 |
 | 回测/自我改进/周月报 | `skills/review-learning/SKILL.md` | 每日复盘 / 周 / 月 | 回测、调参、周月报 |
+| 单股主动调研 | `skills/stock-research/SKILL.md` | 用户主动研究/分析/评估单只股票 | 题材事件→产业链→利好利空→四维→量化分位→趋势资金→情绪择时→证伪；默认 ephemeral |
 
 ## 4. 输出目录规范（详见 output-format）
 
 - 定时任务日报 → `盯盘/yyyy年MM月dd日/`（并写自动记忆：daily 快照 / log_selection auto）
-- **用户主动分析指令 → 独立目录 `投研/yyyyMMdd-xx研究报告/`**
+- **用户主动行业/主题/事件研究 → `投研/yyyyMMdd-xx研究报告/`，默认 ephemeral**
+- **用户主动方向选股 → `投研/yyyyMMdd-{主题}选股/`，默认 ephemeral**
+- **用户主动单股调研 → `投研/yyyyMMdd-{股票名}个股调研/`，默认 ephemeral**
+- 仅用户明确要求加入观察/持续跟踪/纳入后续回测时转 `watch`；watch 仅做 1/3/7/30 日观察性回测，不参与 auto 胜率、`tuning_hints` 或调参
 - **用户手动触发时段类技能（盘前/竞价/盘中/盘后）→ `投研/yyyyMMdd-手动xx/`**，不进日期目录、不写自动记忆、不以 category=auto 登记选股
-- 选股 → `盯盘/选股/`；周报/月报 → `盯盘/周报|月报/`；记忆 → `盯盘/agent记忆/`
+- 调度器正式候选才可为 `auto`；选股 → `盯盘/选股/`；周报/月报 → `盯盘/周报|月报/`；记忆 → `盯盘/agent记忆/`
 
 ## 5. 记忆规范（详见 memory/MEMORY.md）
 
 - **service_state.json**：服务端 `base_url` + 版本号 + 功能索引（必须）。
 - **关注与持仓.md**（持久）：用户关注/持仓 + 相关板块，重点盯，直到用户明确取消才移除。
-- **daily/yyyyMMdd.md**（★强制读取）：每日观察对象快照（自动选股 + 关注 + 持仓 + 当日重点板块）。**任何盯盘/复盘/回测开工前必须先读**。
-- 预判写 predictions.jsonl（标 driver）；涨价/趋势线索写观察池。
+- **daily/yyyyMMdd.md**（★强制读取）：每日观察对象快照（自动选股 + 关注 + 持仓 + 当日重点题材/事件/板块）。**任何盯盘/复盘/回测开工前必须先读**。
+- 仅调度器正式方向性预判写 predictions.jsonl（标 driver）；ephemeral 用户主动研究不写。涨价/趋势线索仅按自动规则或用户明确 watch 后持久化。
 
 ## 6. 选股回测（闭环）
 
 - **自动选股**（量化+消息面+热度跑出）→ `log_selection` 登记（category=auto，用于因子调参）。
 - **用户关注/持仓** → `log_selection` 登记（category=watch/holding，仅盯盘观察）。
-- **用户临时指定方向的选股**（点名行业/板块/事件）**不登记、不纳入调参**。
-- 定期 `selection_backtest` 出 1/3/7/30 日收益/胜率/超额（分 category、auto 再分 driver/分数桶）→ 调参建议。
+- **用户主动单股/方向/行业事件研究**默认 `ephemeral`：不登记、不写 predictions/daily/观察池、不纳入调参。
+- 仅用户明确要求加入观察/持续跟踪/纳入后续回测时登记 `category=watch`，做 1/3/7/30 日观察性回测；watch 与 auto 分组且不进入自动胜率、`tuning_hints` 或调参。
 - **调参落地（署名+留痕）**：`get_factor_config` → `set_factor_weights`（提交全部因子权重，模型 stock/sector/trend/sentiment；仅微调权重≠0 因子、小步归一；传 `actor`+`reason`）。每次修改生成类 commit 的 `version_id` 落库留痕；情绪权重仅在**回测与情绪指数背离**时调整。可 `get_config_history`/`get_config_version` 定位、`restore_config_version` 回滚。
 
 ## 7. 定时任务表（详见 schedule.md）
 
 初始化时按 `schedule.md` 注册所有定时任务；注册前清理同名旧任务。每条任务首步 `GET /health` + 强制读取当日观察对象记忆。
 
-## 8. Agent→Skill 强制绑定（v1.1.0 补充）
+## 8. Agent→Skill 强制绑定（v1.2.0）
 
-固定 Skill 清单仅有且完整为 11 个：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`。首次及每次任务/角色启动均须完整读取对应 `skills/<name>/SKILL.md`，禁止只凭本索引或角色摘要。角色主绑定见 `agents/TEAM.md`；接口 fallback 与 T1/T6/T7 延迟重试以 `skills/data-service/SKILL.md` 为统一契约。
+固定 Skill 清单仅有且完整为 12 个：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`。首次及每次任务/角色启动均须完整读取对应 `skills/<name>/SKILL.md`，禁止只凭本索引或角色摘要。角色主绑定见 `agents/TEAM.md`；`stock-research` 为用户主动单股调研入口，不加入定时 T1/T6/T7 必执行绑定。
 
 情绪角色 v1.1.0 能力包括：`sentiment_temperature`、`sentiment_extreme_index`、连板生态/连板个股、断板后 1-3 日反包候选；极端指数只消费服务返回，不在 Agent 侧复算，最终风格候选仍按 `skills/priority-framework/SKILL.md` 裁决。
 
-## 9. v1.1.0 报告、候选与业绩池运行期硬约束
+## 9. v1.2.0 报告、候选与业绩池运行期硬约束
 
-1. **详尽报告、精简推送**：T1/T6/T7 报告固定按“核心摘要→目录导读→详细正文”，目录与实际章节一一对应；数据缺失时章节不删除，须写失败接口、fallback、实际日期与缺失字段。推送独立生成，建议≤500字，包含任务/日期、仓位或次日倾向、1~3条主线/事件、重点候选或持仓风险、报告路径、数据降级提示。
-2. **正式候选不能只报分数**：量化/趋势候选逐只执行 `skills/output-format/SKILL.md` 的「正式候选综合理由表」，固定理由链为“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”；没有证据的环节写“无可核验证据”。
-3. **T7 业绩增长参考池**：实际公告日期/接口返回优先判断窗口，基本面分析师调用 `fundamental_forecast`、`fundamental_express`、`news_anns`，必要时 `fundamental_income`、`fundamental_fina_indicator` 复核；正向公告按 `code+report_period+announcement_date` 去重并全量展示真实字段，无数据写“当晚无可核验的增长/预增公告”。
-4. **参考池隔离**：不调用 `log_selection`，不写 `predictions.jsonl`/观察池，不纳入 auto/watch/holding，不进入回测与调参；同股仅在独立通过正式选股流程后由正式流程持久化。业绩增长不等于必然利好，不替代四维和趋势判断；PE/PB 仅作风险背景。
+1. **详尽报告、精简推送**：T1/T6/T7 报告固定按“一眼结论（核心摘要）→目录导读→详细正文”；标题后首屏先给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。动态题材综合消息面、热榜、涨停连板、量能资金识别，不限传统板块。数据缺失时章节不删除，须写失败接口、fallback、实际日期与缺失字段。
+2. **面向用户必须说人话**：报告首屏、结论、正文、推送和表头统一使用通俗中文，直接说明“发生了什么、影响谁、为何关注、何时失效”；不得堆砌英文接口名、参数名、JSON 字段、内部类别或因子代码。技术名称只允许出现在数据来源附录、故障诊断或用户明确要求的参数说明中，并紧邻中文解释。
+3. **正式候选不能只报分数**：量化/趋势候选逐只执行 `skills/output-format/SKILL.md` 的「正式候选综合理由表」，固定理由链为“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”；没有证据的环节写“无可核验证据”。
+4. **T7 业绩增长参考池**：实际公告日期/接口返回优先判断窗口，基本面分析师调用 `fundamental_forecast`、`fundamental_express`、`news_anns`，必要时 `fundamental_income`、`fundamental_fina_indicator` 复核；正向公告按 `code+report_period+announcement_date` 去重并全量展示真实字段，无数据写“当晚无可核验的增长/预增公告”。
+5. **参考池隔离**：不调用 `log_selection`，不写 `predictions.jsonl`/观察池，不纳入 auto/watch/holding，不进入回测与调参；同股仅在独立通过正式选股流程后由正式流程持久化。业绩增长不等于必然利好，不替代四维和趋势判断；PE/PB 仅作风险背景。

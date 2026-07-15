@@ -9,13 +9,13 @@
 
 | 序号 | 时间 | 任务 | 模式 | 绑定 skill / 子Agent | 关键调用 | 产出 |
 |---|---|---|---|---|---|---|
-| T1 | 08:30 | **盘前汇总**：详尽报告按“核心摘要→目录导读→详细正文”，覆盖数据状态、隔夜/宏观/消息、涨价景气、指数与板块趋势、情绪/极端指数/择时、近7日选股复核、今日主线、正式关注完整理由、持仓、风险、来源；推送独立且建议≤500字 | 团队 | `skills/pre-market/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`；宏观/技术/基本面/情绪角色按 TEAM 主绑定 | `news_flash` `news_filter` `overseas_us` `macro_ppi/cpi/pmi` `price_hike_scan` `screen_sector` `sentiment_temperature` `sentiment_extreme_index` `market_timing` `hot_dc/ths` `selection_backtest` | `01-盘前汇总.md`（详尽正文）+ 独立重点推送（含路径/降级） |
+| T1 | 08:30 | **盘前汇总**：报告按“一眼结论（核心摘要）→目录导读→详细正文”；首屏先给今日仓位、动态题材/具体事件 Top N、“题材/事件 → 今日关注个股”、最大风险/证伪和结论表。题材由消息面+热榜+涨停连板+量能资金识别，不限传统板块 | 团队 | `skills/pre-market/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`；宏观/技术/基本面/情绪角色按 TEAM 主绑定 | `news_flash` `news_filter` `overseas_us` `macro_ppi/cpi/pmi` `price_hike_scan` `screen_sector` `sentiment_temperature` `sentiment_extreme_index` `market_timing` `hot_dc/ths` `selection_backtest` | `01-盘前汇总.md`（详尽正文）+ 独立重点推送（含路径/降级） |
 | T2 | 09:25 | **竞价分析**（竞价结束）：昨日选股+关注+持仓+高热度+异常高开+竞价爆量+竞价成交额Top20，判断超预期/抄底 | 主 | `skills/bidding-analysis/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md` | `bidding_analysis` `market_timing` `sentiment_temperature` | `02-竞价分析.md` + 推送 |
 | T3 | 09:35~11:30（每10分钟）| **盘中盯盘**：重点盯关注+持仓+相关板块，捕捉突发板块异动 | 主 | `skills/intraday-watch/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md` | `watch_intraday` | 异动推送 / 静默 |
 | T4 | 12:50 | **盘中消息 + 早盘总结** | 主 | `skills/intraday-watch/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md` | `news_flash` `news_filter` `news_cctv` `market_limit`（新闻按 fallback 链） | `03-早盘总结.md`（+ 有消息影响则推送） |
 | T5 | 13:05~14:55（每10分钟）| 盘中盯盘 | 主 | `skills/intraday-watch/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md` | `watch_intraday` | 异动推送 / 静默 |
-| T6 | 17:30 | **当日总结**：详尽报告按“核心摘要→目录导读→详细正文”，覆盖数据状态、指数成交、板块趋势/主线阶段、情绪/连板/极端指数、资金、涨价链、持仓、明日环境初判、风险、来源；推送独立且建议≤500字 | 主 | `skills/post-market/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md` | `market_index` `sector_dc` `market_limit` `market_lianban` `sentiment_temperature` `sentiment_extreme_index` `market_timing` `money_hsgt` `price_hike_scan`（关键接口按5/15分钟重试及fallback） | `04-当日总结.md`（详尽正文）+ 独立重点推送（含路径/降级） |
-| T7 | 22:00 | **综合复盘 + 正式选股 + 回测 + 业绩增长参考池**：正式候选逐只完整理由链；业绩窗口以公告/接口为准，参考池全量去重并与正式选股、记忆、回测调参隔离；报告详尽，推送独立且建议≤500字 | 团队 | `skills/post-market/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`；基本面分析师执行业绩池，全部角色按 TEAM 主绑定 | `money_toplist` `screen_sector` `screen_quant`(top_n=50) `screen_trend` `fundamental_forecast` `fundamental_express` `news_anns`（必要时 `fundamental_income` `fundamental_fina_indicator`） `predictions_backtest` `selection_backtest`；`log_selection` **仅正式候选调用，业绩池禁用** | `05-综合复盘.md`（含正式候选综合理由表、全量业绩增长参考池表、回测调参）+ 独立重点推送；业绩池不写 predictions/观察池/auto/watch/holding |
+| T6 | 17:30 | **当日总结**：报告按“一眼结论（核心摘要）→目录导读→详细正文”；首屏先给次日倾向、当日最强题材/具体事件及延续初判、“题材/事件 → 代表个股”、最大风险/证伪和结论表；动态题材不限传统板块 | 主 | `skills/post-market/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md` | `market_index` `sector_dc` `market_limit` `market_lianban` `news_filter` `news_anns` `hot_dc` `hot_ths` `hot_kpl_concept` `sentiment_temperature` `sentiment_extreme_index` `market_timing` `money_hsgt` `price_hike_scan`；新闻不足时以 `news_cctv` + 外部可信来源 fallback（关键接口按5/15分钟重试及fallback） | `04-当日总结.md`（详尽正文）+ 独立重点推送（含路径/降级） |
+| T7 | 22:00 | **综合复盘 + 正式选股 + 回测 + 业绩增长参考池**：首屏先给今日题材复盘、晚间新增具体事件、次日候选及风险，按“题材/事件 → 个股”分组；报告顺序为“一眼结论（核心摘要）→目录导读→详细正文”。参考池与正式选股、记忆、回测调参隔离 | 团队 | `skills/post-market/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`；基本面分析师执行业绩池，全部角色按 TEAM 主绑定 | `news_filter` `news_anns` `hot_dc` `hot_ths` `hot_kpl_concept` `market_limit` `market_lianban` `money_toplist` `screen_sector` `screen_quant`(top_n=50) `screen_trend` `fundamental_forecast` `fundamental_express`（新闻不足时 `news_cctv` + 外部可信来源；必要时 `fundamental_income` `fundamental_fina_indicator`） `predictions_backtest` `selection_backtest`；`log_selection` **仅正式候选调用，业绩池禁用** | `05-综合复盘.md`（含首屏结论表、正式候选综合理由表、全量业绩增长参考池表、回测调参）+ 独立重点推送 |
 
 ## 周期任务
 
@@ -33,7 +33,7 @@
 - **W1/M1/D1/P1**必须按绑定列逐个点名并完整执行对应 `skills/<name>/SKILL.md`，不得用“全体子Agent”“回测子Agent”等摘要替代 Skill 绑定。
 - **盯盘（T3/T5）用主 Agent 单跑**，追求时效；重量级（T1/T7/W1/M1/用户分析）才启用团队。
 - **回测→自主微调闭环**（T7/W1/M1，署名+留痕）：回测子Agent 出调参建议 → 主 Agent 复核 → `get_factor_config` 取最新因子列表 → `set_factor_weights` 提交全部因子权重（**仅微调权重≠0 的因子、小步、归一，署名 actor + reason**，缺失/多余/差异/和≠1 会被拒并指引）。综合情绪指数判断确定性，**回测与情绪指数持续背离时**才 `set_factor_weights(model=sentiment)` 微调情绪权重。每次修改返回 `version_id` 写入学习日志（可 `get_config_history`/`get_config_version` 定位、`restore_config_version` 回滚）。
-- 每日 auto/watch/holding 标的用 `log_selection` 登记到服务端供回测。
+- 仅调度器正式候选登记 `category=auto`；既有 watch/holding 按状态维护。用户主动研究默认 ephemeral，明确持久化后才新增 watch，且 watch 不参与 auto 调参。
 
 ## 非交易日
 - T1~T7 遇 `trade_open=false` 直接返回不产出。
@@ -55,4 +55,4 @@
 - **T4 新闻降级链**：`news_flash` 402 → `news_filter(keyword)+news_cctv+外部搜索`；`news_filter` 同源失败 → `news_cctv` + 至少两个可信外部来源；全部失败 → 标“消息面不可用”，不得解释为无风险。
 - **非关键接口**：失败不得阻塞整份报告；在来源表和风险提示中披露缺口即可继续。
 
-> 调度器触发每一条任务时，主 Agent 与被启动角色仍须先完整加载固定 11 个 `skills/*/SKILL.md`；绑定列是主用 Skill 清单，不是免读清单。
+> 调度器触发每一条任务时，主 Agent 与被启动角色仍须先完整加载固定 12 个 `skills/*/SKILL.md`（含 `stock-research`）；绑定列是主用 Skill 清单，不是免读清单。`stock-research` 仅作为用户主动单股调研入口，不加入定时 T1/T6/T7 的必执行绑定。

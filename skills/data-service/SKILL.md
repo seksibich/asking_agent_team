@@ -99,9 +99,9 @@ POST /call
 
 ## Skill 加载约束 / 依赖 Skills
 
-- 所有 Agent 每次任务/角色启动必须完整读取本文件；不得只凭 `/functions` 索引、接口名或角色摘要推断参数、错误语义与 fallback。
+- 所有 Agent 每次任务/角色启动必须完整读取本文件，并确认固定 12 Skills（含 `stock-research`）均已加载；不得只凭 `/functions` 索引、接口名或角色摘要推断参数、错误语义与 fallback。
 - **直接依赖**：无；本 Skill 是全部取数 Skills 的统一底座。
-- **协同 Skills**：`priority-framework`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`。上述 Skill 一旦取数，必须执行本节契约。
+- **协同 Skills**：`priority-framework`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`。上述 Skill 一旦取数，必须执行本节契约。
 
 ## 统一 fallback 与延迟重试（强制）
 

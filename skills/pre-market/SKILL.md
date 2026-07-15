@@ -48,7 +48,7 @@ disable-model-invocation: false
 结合 **情绪择时（market_timing）+ 消息面 + 行业催化（含机构放话/研报观点）** 做初步判断：
 - **具备重仓环境**：情绪健康或**连续冰点后反转** + 明确正向催化（涨价/政策/机构一致看多）+ 主线清晰 → 当日仓位上限上调，出手买入权重上调
 - **需要空仓/降仓**：**连续高热见顶** / 重大利空 / 无主线且情绪退潮 / 催化落空 → 降仓或空仓，不追高
-- 明确写出「今日仓位倾向 + buy_weight_hint + 依据」（非确定性指令）
+- 明确写出「今日仓位倾向 + 建议出手权重 + 依据」（非确定性指令），不得在用户报告中显示内部参数名。
 
 #### 6. 高热度临时观察列表（★）
 - 取 `hot_dc` `hot_ths` `hot_kpl_concept` 热度排行，将高热度个股写入当日观察对象记忆的**临时观察列表**（当日有效，供 09:25 竞价分析与盘中盯盘参考）
@@ -58,21 +58,22 @@ disable-model-invocation: false
 - 交叉核对各子 Agent 关键数据（尤其涨价），并按四维打分 × `buy_weight_hint` 排序。
 - 凡作为正式关注的量化/趋势候选，逐只按 `skills/output-format/SKILL.md` 的「正式候选综合理由表」输出，不得只列四维分或量化分。固定理由链为：**量化信号 → 板块趋势 → 当前主线关系 → 涨价/逻辑/预期催化 → 情绪与择时 → 风险/证伪**。
 - 每只必须写明量化综合分与关键因子、四维分、板块/产业链、板块短中期动量/量能/阶段、主线关系（核心/分支/补涨/非主线）、催化与炒作路径、入选理由链和证伪条件；任一环缺资料写「无可核验证据」，不得省略或臆造。
-- 明确预判写 `predictions.jsonl`（标 driver）；今日 auto/watch/holding 标的按既有规则 `log_selection` 登记，并更新当日观察对象记忆。
+- **定时 T1** 的明确正式预判才写 `predictions.jsonl`（标 driver），正式自动候选才登记 `category=auto` 并更新 daily；用户手动盘前默认 ephemeral，不写自动记忆。既有 watch/holding 只维护状态，新增 watch 必须有用户明确指令。
 
 #### 8. 生成详尽报告与独立推送
-- Markdown 正文严格执行 `skills/output-format/SKILL.md` 的 T1 完整模板：**核心摘要后立即输出目录导读**，并至少覆盖数据状态、隔夜/宏观/消息、涨价与景气、指数与板块趋势、情绪温度/极端指数/择时、近 7 日选股复核、今日主线、今日关注标的完整理由、持仓关注、风险、来源。
-- 报告在可核验范围内尽可能详尽，禁止为了推送字数删减正文。数据不可用时保留章节，写明失败接口、fallback、实际数据日期与缺失项，禁止静默删除。
-- 推送与报告分离，引用 output-format「独立推送摘要模板」，建议不超过 500 字，包含任务/日期、仓位倾向、1~3 条核心主线/事件、重点候选或持仓风险、报告路径、数据降级提示；不得复制全文，也不得只发“报告已生成”。
+- Markdown 正文严格执行 T1 完整模板，标题后第一节为 `## 一眼结论（核心摘要）`，首屏按顺序给出**今日仓位倾向、重点题材/具体事件 Top N、“题材/事件 → 今日关注个股”、最大风险/证伪、题材/事件—个股首屏结论表**，然后才是目录导读和详细证据。
+- 今日题材由消息面、热榜、涨停连板、量能和资金综合识别，不限传统行业板块；具体事件需给驱动时间、热度、首次发酵/加速/分歧/退潮/证伪阶段及证据。
+- 正文至少覆盖数据状态、隔夜/宏观/消息、涨价与景气、指数与板块趋势、情绪温度/极端指数/择时、近 7 日选股复核、今日关注完整理由、持仓、风险和来源。
+- 报告在可核验范围内尽可能详尽；数据不可用时保留章节，写明失败接口、fallback、实际数据日期与缺失项。推送与报告分离，建议不超过 500 字并包含报告路径和降级提示。
 
 ### 常用调用
 `price_hike_scan` `news_flash` `news_filter` `news_cctv` `overseas_us` `macro_ppi/cpi/pmi/m` `money_hsgt` `market_index` `sector_dc` `screen_sector` `sentiment_temperature` `market_timing` `hot_dc` `hot_ths` `hot_kpl_concept` `selection_backtest`
 
 ## Skill 加载约束 / 依赖 Skills
 
-- 盘前任务启动前完整读取本文件，且确认当前角色已完整加载固定 11 Skills；不得仅凭 schedule 或角色摘要执行。
+- 盘前任务启动前完整读取本文件，且确认当前角色已完整加载固定 12 Skills（含 `stock-research`）；不得仅凭 schedule 或角色摘要执行。
 - **直接依赖**：`data-service`、`priority-framework`、`output-format`。
-- **协同 Skills**：`industry-analysis`（涨价/消息）、`stock-screening` 与 `quant-screening`（候选）、`review-learning`（近7日回测）、`bidding-analysis`（临时观察列表交接）、`post-market`（前日结论）。
+- **协同 Skills**：`industry-analysis`（涨价/消息）、`stock-screening` 与 `quant-screening`（候选）、`review-learning`（近7日回测）、`bidding-analysis`（临时观察列表交接）、`post-market`（前日结论）、`stock-research`（仅共享研究证据，不作为 T1 必执行绑定）。
 - T1 必须点名并执行：`skills/pre-market/SKILL.md` + `skills/data-service/SKILL.md` + `skills/priority-framework/SKILL.md` + `skills/output-format/SKILL.md`，并按团队角色调用上述协同 Skill。
 
 ## 盘前 fallback

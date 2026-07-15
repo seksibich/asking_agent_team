@@ -28,6 +28,6 @@
 
 ## Skill 强制加载与主绑定
 
-- **完整加载**：每次角色启动先完整读取 `skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`，禁止只凭摘要执行。
-- **主绑定**：`skills/data-service/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/post-market/SKILL.md`、`skills/output-format/SKILL.md`。
+- **完整加载**：每次角色启动先完整读取固定 12 Skills：`skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/stock-research/SKILL.md`，禁止只凭摘要执行。
+- **主绑定**：`skills/data-service/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/post-market/SKILL.md`、`skills/output-format/SKILL.md`。`stock-research` 仅在用户明确把调研标的持久化为 watch 后协同介入 1/3/7/30 日观察性回测，且不得进入 auto 调参。
 - **职责/流程显式调用**：因子配置与量化候选按 `skills/quant-screening/SKILL.md`，回测和调参闭环按 `skills/review-learning/SKILL.md`，22:00 复盘按 `skills/post-market/SKILL.md`，报告按 `skills/output-format/SKILL.md`，数据错误与降级按 `skills/data-service/SKILL.md`。

@@ -67,15 +67,17 @@
 
 ## Skill 完整加载规则与角色主绑定矩阵（强制）
 
-每次任务启动及每个 Agent/角色启动时，全员必须先逐文件完整读取固定 11 个 Skills：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning` 的 `skills/<name>/SKILL.md`。禁止只凭 `index.md`、本矩阵、角色摘要或历史记忆执行。主绑定仅表示职责优先级，不代表可跳过其他 Skill。
+每次任务启动及每个 Agent/角色启动时，全员必须先逐文件完整读取固定 12 个 Skills：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research` 的 `skills/<name>/SKILL.md`。禁止只凭 `index.md`、本矩阵、角色摘要或历史记忆执行。主绑定仅表示职责优先级，不代表可跳过其他 Skill。
 
 | 角色 | 主绑定 Skills（均指 `skills/<name>/SKILL.md`） |
 |---|---|
-| 主 Agent | `priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning` |
-| 技术面趋势分析师 | `data-service`、`priority-framework`、`quant-screening`、`stock-screening`、`pre-market`、`post-market` |
-| 情绪面分析师 | `data-service`、`priority-framework`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`review-learning` |
-| 研报·基本面·行业预期分析师 | `data-service`、`priority-framework`、`industry-analysis`、`stock-screening`、`pre-market`、`post-market` |
-| 宏观·期货·时事·全球市场分析师 | `data-service`、`priority-framework`、`industry-analysis`、`pre-market`、`post-market` |
-| 回测分析师 | `data-service`、`quant-screening`、`review-learning`、`post-market`、`output-format` |
+| 主 Agent | `priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research` |
+| 技术面趋势分析师 | `data-service`、`priority-framework`、`quant-screening`、`stock-screening`、`stock-research`、`pre-market`、`post-market` |
+| 情绪面分析师 | `data-service`、`priority-framework`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`review-learning`；用户单股调研时协同 `stock-research` |
+| 研报·基本面·行业预期分析师 | `data-service`、`priority-framework`、`industry-analysis`、`stock-screening`、`stock-research`、`pre-market`、`post-market` |
+| 宏观·期货·时事·全球市场分析师 | `data-service`、`priority-framework`、`industry-analysis`、`pre-market`、`post-market`；用户单股调研时协同 `stock-research` |
+| 回测分析师 | `data-service`、`quant-screening`、`review-learning`、`post-market`、`output-format`；仅用户明确将调研结果持久化为 watch 后介入观察性回测 |
+
+`stock-research` 是用户主动单股调研入口，**不加入定时 T1/T6/T7 的必执行绑定**；但全员启动时仍必须完整加载。回测分析师不得将 watch 样本用于 auto 胜率、`tuning_hints` 或调参。
 
 分发任务时必须在任务描述中点名对应 `skills/<name>/SKILL.md`；涉及取数统一执行 `skills/data-service/SKILL.md` 的 fallback、缺失标注与定时延迟重试规则。

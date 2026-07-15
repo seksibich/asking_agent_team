@@ -42,6 +42,6 @@
 
 ## Skill 强制加载与主绑定
 
-- **完整加载**：每次角色启动先完整读取 `skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`，不得仅依赖摘要。
-- **主绑定**：`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`。
+- **完整加载**：每次角色启动先完整读取固定 12 Skills：`skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/stock-research/SKILL.md`，不得仅依赖摘要。
+- **主绑定**：`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/stock-research/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`。
 - **职责/流程显式调用**：行业与涨价链研究按 `skills/industry-analysis/SKILL.md`，候选筛选按 `skills/stock-screening/SKILL.md`，评分按 `skills/priority-framework/SKILL.md`，盘前/盘后分别按 `skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`，所有服务调用及降级按 `skills/data-service/SKILL.md`。

@@ -89,25 +89,33 @@ disable-model-invocation: false
 - PE/PB 仅出现在报告的**风险提示**中：例如「当前 PE 处历史高位/已透支预期」「估值与预期背离」等风险语境，作为背景参考。
 - 成长/预期驱动标的允许阶段性高估值，只要涨价/景气预期未被证伪，不因 PE 高而扣分。
 
-## 择时叠加（选股的重要环节）★
+## 候选综合评分与择时叠加（自动/用户主动双入口统一）★
 
-四维打分决定「买什么」，**择时决定「现在该不该出手、出手多重」**。择时是选股不可分割的一环。
+四维评分用于价值与风险裁决，**四维硬门槛始终生效**；候选横向排序则对调度器自动选股和用户主动方向选股统一使用百分制：
+
+```
+综合选股分 = 利好程度×0.35 + 题材热度×0.25 + 量化横截面分位×0.40
+择时后评分 = 综合选股分 × buy_weight_hint
+```
+
+- 三项输入均为 0~100：
+  - **利好程度**：结合事件强度、直接/间接受益证据、兑现概率及利空反证；
+  - **题材热度**：综合消息密度、热榜、涨停连板、量能和资金，题材不限传统行业板块；
+  - **量化横截面分位**：在当批候选内计算 percentile。原始 score 若为 z-score，必须先转换，禁止直接与百分制混加。
+- **自动入口**：调度器先动态识别题材/具体事件并映射候选，再执行 `screen_quant` / `screen_trend`，按“题材/事件 → 个股”分组后统一评分；符合正式自动候选定义者才可登记 `category=auto`。
+- **用户主动入口**：用户可指定具体事件、行业导向或热门板块，走同一映射、筛选、评分和分组流程；默认 `ephemeral`，仅用户明确要求持久化才转 `watch`。
+- `watch` 可做 1/3/7/30 日观察性回测，但必须与 auto 隔离，不进入自动胜率、`tuning_hints` 或任何因子/情绪调参。
+- **四维硬门槛不因综合选股分或择时放宽**：涨价与逻辑均 <0.4 时仍标“情绪主导，高风险”；强关注仍要求涨价或逻辑至少一项 ≥0.7。
 
 ### 择时来源
 调 `market_timing`（基于情绪温度序列，识别连续冰点/高热）与 `sentiment_temperature`，得到：
 `stance`（仓位倾向）、`buy_weight_hint`（出手买入权重系数）、`cold_streak`/`hot_streak`。
 
 ### 择时对出手的调节
-- **连续冰点（cold_streak≥2）**：超跌/抄底窗口，**提高出手买入权重**（buy_weight_hint 上调，如 1.2~1.5），优先有涨价/逻辑支撑的超跌标的，分批试仓。
-- **连续高热（hot_streak≥2）**：**警惕退潮**，下调买入权重（如 0.5~0.7），不追高、兑现盈利，必要时空仓。
-- **中性**：按常规四维打分出手，仓位适中。
-
-### 综合出手评分
-```
-出手评分 = 四维综合分 × buy_weight_hint
-```
-- 冰点期即使四维分中等，也可因 buy_weight_hint 上调而进入试仓；
-- 高热期即使四维分高，也因 buy_weight_hint 下调而谨慎/不追。
+- **连续冰点（cold_streak≥2）**：超跌/抄底窗口，提高 buy_weight_hint，优先有涨价/逻辑支撑且四维过门槛的标的，分批试仓。
+- **连续高热（hot_streak≥2）**：警惕退潮，下调 buy_weight_hint，不追高，必要时给出降仓或空仓倾向。
+- **中性**：按综合选股分和四维门槛排序，仓位适中。
+- 择时后评分与建议出手权重均为概率性参考，不构成确定性买卖指令。
 
 ### 重仓 / 空仓环境判断（盘前、复盘用）
 结合 **情绪（连续冰点/高热）+ 消息面 + 行业催化（含机构放话/研报观点）** 做初步判断：
@@ -117,7 +125,7 @@ disable-model-invocation: false
 
 ## Skill 加载约束 / 依赖 Skills
 
-- 使用前必须完整读取本文件，不得以 `index.md` 或角色摘要中的“四维打分”简化描述代替。
+- 使用前必须完整读取本文件并确认固定 12 Skills（含 `stock-research`）已加载，不得以 `index.md` 或角色摘要中的“四维打分”简化描述代替。
 - **直接依赖**：`data-service`（评分事实与 fallback）、`output-format`（打分与来源表）。
-- **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening` 提供研究/候选；`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market` 应用排序；`review-learning` 验证评分效果。
+- **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening`、`stock-research` 提供研究/候选；`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market` 应用排序；`review-learning` 验证 auto 与隔离的 watch 效果。
 - 任一评分依据因服务降级而缺失时，按 `skills/data-service/SKILL.md` 标 `degraded` 和缺失来源，不得用估算值补齐。

@@ -45,7 +45,7 @@ async function refreshRole() {
     });
     if (res.ok) {
       const body = await res.json();
-      _role = body.data && body.data.role === "admin" ? "admin" : "user";
+      _role = body.role === "admin" ? "admin" : "user";
     } else {
       _role = "user";
     }

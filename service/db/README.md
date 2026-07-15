@@ -13,7 +13,7 @@ JSONL 适合单机小规模，但上云后有三个痛点：
 2. 多实例部署时文件不共享、无并发控制。
 3. 缺少历史留存与按条件查询能力。
 
-`schema.sql` 给出阿里云 RDS MySQL 8.0 的结构：`selections` / `predictions` / `selection_forward_returns`（收益缓存）/ `backtest_snapshots`（聚合结果留存）。
+`schema.sql` 给出阿里云 RDS MySQL 8.0 的结构：`selections` / `predictions` / `selection_forward_returns`（收益缓存）/ `backtest_snapshots`（聚合结果留存）/ `daily_factors`（全市场个股因子）/ `daily_factor_runs`（预计算任务质量状态）。
 
 ## 部署步骤
 1. 在阿里云 RDS MySQL 实例创建库并执行 DDL：

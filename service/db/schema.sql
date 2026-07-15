@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS selection_forward_returns (
   horizon       SMALLINT        NOT NULL COMMENT '持有交易日数：1/3/7/30',
   ret_pct       DECIMAL(8,2)    NULL COMMENT '前向涨幅 %（前复权）',
   excess_pct    DECIMAL(8,2)    NULL COMMENT '相对沪深300超额 %',
+  matured       TINYINT         NOT NULL DEFAULT 0 COMMENT '是否已满持有期：1=成熟',
   computed_at   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '计算时间',
   PRIMARY KEY (id),
   UNIQUE KEY uk_sel_horizon (selection_id, horizon),
@@ -89,7 +90,24 @@ CREATE TABLE IF NOT EXISTS daily_factors (
   KEY idx_df_date (trade_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='全市场个股因子预计算（每日盘后一次，选股直接读）';
 
--- ---------- 6. 键值配置（因子/指标权重覆盖等可变配置） ----------
+-- ---------- 6. 预计算任务状态 ----------
+CREATE TABLE IF NOT EXISTS daily_factor_runs (
+  trade_date      CHAR(8)         NOT NULL COMMENT '目标交易日 YYYYMMDD',
+  factor_version  VARCHAR(32)     NOT NULL COMMENT '因子公式版本',
+  lookback        INT             NOT NULL COMMENT '回看交易日数',
+  universe_count  INT             NOT NULL DEFAULT 0 COMMENT '剔除 ST/退后的应计算股票数',
+  computed_count  INT             NOT NULL DEFAULT 0 COMMENT '实际计算股票数',
+  coverage_ratio  DECIMAL(8,4)    NOT NULL DEFAULT 0 COMMENT '覆盖率',
+  status          VARCHAR(16)     NOT NULL COMMENT 'success/partial/failed/skipped',
+  errors          JSON            NOT NULL COMMENT '错误和缺失信息',
+  started_at      DATETIME        NOT NULL,
+  finished_at     DATETIME        NOT NULL,
+  PRIMARY KEY (trade_date),
+  KEY idx_dfr_status (status),
+  KEY idx_dfr_finished (finished_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='全市场因子预计算任务状态与质量';
+
+-- ---------- 7. 键值配置（因子/指标权重覆盖等可变配置） ----------
 CREATE TABLE IF NOT EXISTS config_kv (
   k           VARCHAR(64)  NOT NULL COMMENT '配置键，如 factor_weights',
   v           JSON         NOT NULL COMMENT '配置值（JSON）',

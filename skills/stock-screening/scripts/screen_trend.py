@@ -208,10 +208,10 @@ def run(industries: Optional[list[str]] = None, top_n: int = 30) -> dict[str, An
     rows: list[dict[str, Any]] = []
     data_source = "precomputed"
 
-    # 优先读预计算因子（daily_factors）
+    # 仅使用质量合格且公式版本一致的预计算因子。
     db_hit = False
     try:
-        db_hit = db.has_daily_factors(end)
+        db_hit = db.has_usable_daily_factors(end, factors.STOCK_FACTOR_VERSION)
     except Exception:
         db_hit = False
     if db_hit:

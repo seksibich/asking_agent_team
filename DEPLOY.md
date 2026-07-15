@@ -180,15 +180,15 @@ curl -XPOST http://localhost:18901/call \
   -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
   -d '{"function":"precompute_daily_factors","params":{"full":true}}'
 ```
-（全量较慢；日常由定时任务/每日盘后跑增量。未预计算时选股会自动回退实时逐只。）
+（全量较慢；日常由外部定时任务在每日盘后调用默认单日模式。任务失败或部分成功时，按返回的 `retryable_dates` 重跑；未预计算或质量不合格时选股会自动回退实时逐只。）
 
 ---
 
 ## 上云要点（阿里云 ECS + RDS）
 
 1. ECS 安装 Docker，克隆仓库，配 `.env`（`DB_URL` 指向 RDS MySQL）。
-2. RDS 建库并执行 `service/db/schema.sql`（或首启自动建表）。
-3. `docker compose -f docker-compose.yml up -d --build`。
+2. RDS 建库并执行最新版 `service/db/schema.sql`（包含 `daily_factors`、`daily_factor_runs` 和 `selection_forward_returns.matured`；应用首启也会通过 `create_all()` 建立缺失表，并仅对旧表补 `matured` 列）。
+3. `docker compose -f docker-compose.yml up -d --build --force-recreate`。
 4. 安全组仅放行必要来源到 `18901`；建议加反向代理（Nginx/TLS）与 IP 白名单。
 5. Agent 侧把服务基址改为公网地址、更新记忆 `service_state.json` 的 `base_url`。
 
@@ -198,7 +198,7 @@ curl -XPOST http://localhost:18901/call \
 |---|---|
 | `/health` `tushare_ready:false` | `.env` 的 `TUSHARE_TOKEN` 未配置/无效 |
 | 前端提示 unauthorized | Web 设置里未填或填错 `X-API-Key`（=API_KEY 或 USER_API_KEY） |
-| 403 forbidden / 用户 Key 不可改配置 | 用户 Key 只读；改权重/归一窗口、触发回测需用管理员 `API_KEY` |
+| 403 forbidden / 用户 Key 不可改配置 | 用户 Key 只读；改权重/归一窗口、运行全市场预计算需用管理员 `API_KEY`；查看回测不需要管理员 |
 | `/health` `db_ready:false` | `DB_URL` 连接失败；检查 RDS 连通/账号；SQLite 检查 `data/` 可写 |
 | 402 tushare quota | 对应 tushare 接口积分/权限不足 |
 | 构建慢 | 网络拉取镜像/依赖慢；可配国内 Docker registry mirror 与 pip 源 |

@@ -23,8 +23,10 @@ from registry import register
 
 
 def _table_from_db(end: str, code_filter: Optional[set]) -> Optional[pd.DataFrame]:
-    """优先从预计算的 daily_factors 读当日全市场因子，构建因子表。"""
+    """仅读取质量合格且因子版本一致的预计算结果。"""
     try:
+        if not db.has_usable_daily_factors(end, factors.STOCK_FACTOR_VERSION):
+            return None
         rows = db.fetch_daily_factors(end)
     except Exception:
         return None
@@ -36,41 +38,10 @@ def _table_from_db(end: str, code_filter: Optional[set]) -> Optional[pd.DataFram
         if code_filter is not None and code not in code_filter:
             continue
         fac = dict(r["factors"])
+        fac.pop("_meta", None)
         fac["code"] = code
         recs.append(fac)
     return pd.DataFrame(recs) if recs else None
-
-
-def _attach_quotes(rows: list[dict]) -> None:
-    """给候选补最新行情：最新价(最近收盘)、当日涨幅、近3日/近5日涨幅。
-
-    用 daily(historical=True) 永久缓存，同日重复选股命中缓存、不重复打 tushare。
-    """
-    if not rows:
-        return
-    end = common.last_trade_date()
-    start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=15)).strftime("%Y%m%d")
-    for r in rows:
-        code = r.get("code")
-        try:
-            payload = common.cached_call(
-                "daily", {"c": code, "s": start, "e": end},
-                lambda c=code: common.get_pro().daily(ts_code=c, start_date=start, end_date=end),
-                historical=True)
-            df = pd.DataFrame(payload.get("rows", []))
-            if df.empty:
-                continue
-            df = df.sort_values("trade_date")
-            cl = df["close"].astype(float).tolist()
-            r["last"] = round(cl[-1], 2)
-            if "pct_chg" in df.columns:
-                r["chg"] = round(float(df.iloc[-1]["pct_chg"]), 2)
-            if len(cl) >= 4:
-                r["ret3"] = round((cl[-1] / cl[-4] - 1) * 100, 2)
-            if len(cl) >= 6:
-                r["ret5"] = round((cl[-1] / cl[-6] - 1) * 100, 2)
-        except Exception:
-            continue
 
 
 def _attach_quotes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

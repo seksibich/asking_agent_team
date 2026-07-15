@@ -15,7 +15,7 @@
 | 回测聚合快照 | **DB** `backtest_snapshots` | RDS/SQLite | `selection_backtest(save_snapshot)` | 查询/审计 |
 | 因子/指标权重覆盖 | **DB** `config_kv` (key=factor_weights) | RDS/SQLite | `set_factor_weights` | 各 screen_* / sentiment |
 | 情绪归一窗口（3-30天） | **DB** `config_kv` (key=sentiment_window) | RDS/SQLite | `set_sentiment_config` | sentiment_temperature / market_timing |
-| 全市场个股因子（预计算） | **DB** `daily_factors` | RDS/SQLite | `precompute_daily_factors` | `screen_quant`/`screen_trend` |
+| 全市场个股因子（预计算） | **DB** `daily_factors` + `daily_factor_runs` | RDS/SQLite | `precompute_daily_factors` | `screen_quant`/`screen_trend`（仅使用质量合格日期） |
 | 每日情绪原始指标 | **DB** `daily_sentiment` | RDS/SQLite | `sentiment_temperature`/`market_timing` | 二者 |
 | tushare 日级数据（当日） | 文件缓存 | CACHE_DIR/{date}/ | `cached_call` | 全部取数功能 |
 | tushare 历史数据（不可变） | 文件永久缓存 | CACHE_DIR/permanent/ | `cached_call(historical)` | 历史日线/切片 |

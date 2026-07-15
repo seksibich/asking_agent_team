@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 from sqlalchemy import (JSON, Column, Date, DateTime, Integer, MetaData, Numeric,
                         SmallInteger, String, Table, Text, UniqueConstraint,
-                        create_engine, func, select, text)
+                        create_engine, func, inspect, select, text)
 from sqlalchemy.engine import Engine
 
 import common
@@ -116,6 +116,20 @@ daily_factors = Table(
     UniqueConstraint("trade_date", "code", name="uk_df_date_code"),
 )
 
+daily_factor_runs = Table(
+    "daily_factor_runs", metadata,
+    Column("trade_date", String(8), primary_key=True),
+    Column("factor_version", String(32), nullable=False),
+    Column("lookback", Integer, nullable=False),
+    Column("universe_count", Integer, nullable=False, default=0),
+    Column("computed_count", Integer, nullable=False, default=0),
+    Column("coverage_ratio", Numeric(8, 4), nullable=False, default=0),
+    Column("status", String(16), nullable=False),  # success/partial/failed/skipped
+    Column("errors", JSON, nullable=False, default=list),
+    Column("started_at", DateTime, nullable=False, default=datetime.now),
+    Column("finished_at", DateTime, nullable=False, default=datetime.now),
+)
+
 _engine: Optional[Engine] = None
 
 
@@ -139,8 +153,16 @@ def get_engine() -> Engine:
 
 
 def init_db() -> None:
-    """建表（幂等）。启动时调用。"""
-    metadata.create_all(get_engine())
+    """建表并执行当前版本所需的轻量兼容迁移。"""
+    engine = get_engine()
+    metadata.create_all(engine)
+    # 旧版 RDS schema 曾遗漏 matured，create_all 不会给已有表补列。
+    columns = {column["name"] for column in inspect(engine).get_columns("selection_forward_returns")}
+    if "matured" not in columns:
+        sql = "ALTER TABLE selection_forward_returns ADD COLUMN matured "
+        sql += "INTEGER NOT NULL DEFAULT 0" if engine.dialect.name == "sqlite" else "TINYINT NOT NULL DEFAULT 0"
+        with engine.begin() as conn:
+            conn.execute(text(sql))
 
 
 # ---------- selections ----------
@@ -237,6 +259,66 @@ def save_snapshot(kind: str, payload: dict[str, Any]) -> None:
 
 
 # ---------- daily_factors (预计算) ----------
+def delete_daily_factors(trade_date: str) -> None:
+    """替换某交易日的派生因子，避免部分重算残留旧股票记录。"""
+    eng = get_engine()
+    with eng.begin() as conn:
+        conn.execute(daily_factors.delete().where(daily_factors.c.trade_date == trade_date))
+
+
+def upsert_daily_factor_run(record: dict[str, Any]) -> None:
+    """记录预计算任务状态，供选股判断数据是否完整、是否可用。"""
+    eng = get_engine()
+    with eng.begin() as conn:
+        row = conn.execute(select(daily_factor_runs.c.trade_date).where(
+            daily_factor_runs.c.trade_date == record["trade_date"])).first()
+        values = {key: record[key] for key in (
+            "factor_version", "lookback", "universe_count", "computed_count",
+            "coverage_ratio", "status", "errors", "started_at", "finished_at")}
+        if row:
+            conn.execute(daily_factor_runs.update().where(
+                daily_factor_runs.c.trade_date == record["trade_date"]).values(**values))
+        else:
+            conn.execute(daily_factor_runs.insert().values(
+                trade_date=record["trade_date"], **values))
+
+
+def _normalize_daily_factor_run(row: dict[str, Any]) -> dict[str, Any]:
+    """把 SQL Numeric 转为 JSON 可序列化的普通浮点数。"""
+    item = dict(row)
+    if item.get("coverage_ratio") is not None:
+        item["coverage_ratio"] = float(item["coverage_ratio"])
+    return item
+
+
+def get_daily_factor_run(trade_date: str) -> Optional[dict[str, Any]]:
+    eng = get_engine()
+    with eng.connect() as conn:
+        row = conn.execute(select(daily_factor_runs).where(
+            daily_factor_runs.c.trade_date == trade_date)).mappings().first()
+    return _normalize_daily_factor_run(dict(row)) if row else None
+
+
+def has_usable_daily_factors(trade_date: str, factor_version: str,
+                              min_coverage: float = 0.8) -> bool:
+    run = get_daily_factor_run(trade_date)
+    if not run:
+        return False
+    return bool(run.get("status") == "success"
+                and run.get("factor_version") == factor_version
+                and float(run.get("coverage_ratio") or 0) >= min_coverage
+                and fetch_daily_factors(trade_date))
+
+
+def daily_factor_run_status(limit: int = 30) -> list[dict[str, Any]]:
+    eng = get_engine()
+    with eng.connect() as conn:
+        rows = conn.execute(select(daily_factor_runs)
+                            .order_by(daily_factor_runs.c.trade_date.desc())
+                            .limit(limit)).mappings().all()
+    return [_normalize_daily_factor_run(dict(row)) for row in rows]
+
+
 def bulk_upsert_daily_factors(trade_date: str, items: list[dict[str, Any]]) -> int:
     """批量写入某交易日的全市场因子（幂等覆盖）。items: [{code, factors}]"""
     eng = get_engine()

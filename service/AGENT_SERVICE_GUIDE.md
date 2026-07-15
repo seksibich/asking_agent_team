@@ -61,8 +61,7 @@
 - 板块：`sector_dc` `sector_sw_daily` `sector_index_classify`
 - 资金：`money_hsgt` `money_toplist` `money_flow_ind`
 - 涨价/宏观：`price_hike_scan` `macro_ppi` `macro_cpi` `macro_pmi`
-- 选股/盯盘：`screen_trend` `screen_quant` `screen_sector` `watch_intraday`
-- 因子预计算：`precompute_daily_factors`（盘后落库 daily_factors，选股读库提速）
+- 选股/盯盘/预计算：`screen_trend` `screen_quant` `screen_sector` `watch_intraday` `precompute_daily_factors`（盘后计算并校验全市场因子）`precompute_status`（覆盖率/失败日期/因子版本）
 - 因子配置：`get_factor_config` `set_factor_weights`（提交全部因子权重，缺失/多余/和≠1 报错并指引）。
   个股(stock)模型含 7 个默认启用因子 + 7 个默认 0 权重候选因子（mom_6_1/max_lottery/downside_vol/amihud_illiq/small_size/value_bm/earnings_yield，源自学术/机构常用）；screen_quant 仅返回权重≠0 的因子列
 - 配置留痕/版本：`set_factor_weights` 与 `set_sentiment_config` 支持传 `actor`（署名）+ `reason`，每次成功修改生成类 commit 的 `version_id` 并落库留痕（config_versions 表，含 parent/payload）。
@@ -89,7 +88,7 @@
 | 400 | 参数错误 / 未知功能 | 校验 function 与 params；必要时先刷新 `/functions` |
 | 401 | 鉴权失败 | 检查 X-API-Key |
 | 402 | tushare 积分/权限不足 | 跳过该功能或改用替代 |
-| 403 | 权限不足（用户 Key 调用管理员专属功能） | 改用管理员 Key（改权重/窗口、触发回测需管理员） |
+| 403 | 权限不足（用户 Key 调用管理员专属功能） | 改用管理员 Key（改权重/窗口或运行全市场预计算需管理员；回测查看不需要管理员） |
 | 503 | 服务未启动 | 提示启动本地 Docker |
 
 ## 5. 扩展方式（开发者）

@@ -23,7 +23,7 @@
 |---|---|---|---|---|---|---|
 | W1 | 周日 20:00 | **周回测** + 趋势周报 + 下周候选池（量化 `top_n=50`，按主线/产业链分组解读） + 因子调参 | 团队 | `skills/review-learning/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`；回测角色主绑定 | `selection_backtest` `predictions_backtest` `screen_sector/quant`(top_n=50)`/trend` `get_factor_config` `set_factor_weights` | `周报/...周报.md` |
 | M1 | 每月最后交易日 21:00 | **月回测** + 月报 + 用户画像更新 + 因子调参 | 团队 | `skills/review-learning/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`；回测角色主绑定 | `selection_backtest` `get_factor_config` `set_factor_weights` | `月报/...月报.md` |
-| D1 | 交易日 17:45 | **全市场因子预计算**（落库 daily_factors，供次日选股读库提速） | 服务/主 | `skills/quant-screening/SKILL.md`、`skills/data-service/SKILL.md` | `precompute_daily_factors` | daily_factors 更新 |
+| D1 | 交易日 17:45 | **全市场因子预计算**（落库 daily_factors，供次日选股读库提速） | 外部调度器/主 Agent | `skills/quant-screening/SKILL.md`、`skills/data-service/SKILL.md` | `precompute_daily_factors`；失败后按 `retryable_dates` 重跑 | daily_factors + daily_factor_runs 更新 |
 | P1 | 周六 12:00 | 涨价链专项扫描 | 主 | `skills/industry-analysis/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md` | `price_hike_scan` `news_filter` `macro_ppi` | 更新 `观察池.md` |
 
 ## 关键规则

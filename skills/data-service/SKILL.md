@@ -72,6 +72,12 @@ POST /call
 - `market_realtime`：支持 `codes`、`name`/`names`，可混合批量查询；服务端先解析名称再请求实时行情，返回 `resolved`、`missing_codes`、`missing_names` 和 `degraded`。代码和名称都不传时返回参数错误。
 - 关注与持仓中的股票优先直接调用 `market_realtime` 获取行情；名称解析不要自行调用无过滤的 `meta_stock_basic` 后再全量遍历。
 
+### 全市场因子预计算
+
+- `precompute_daily_factors` 只在交易日写入目标日；`full=true` 用于首次补算或断档补算，返回每个日期的成功/部分/失败状态和可重试日期。
+- `precompute_status` 返回覆盖率、任务状态、错误信息和因子公式版本。
+- `screen_quant`/`screen_trend` 只有在任务 `success`、覆盖率达到 80%、因子版本一致时才读取 `daily_factors`；否则自动回退实时路径，禁止把部分数据当成全市场结果。
+
 ## 交易日守卫
 
 任何盘中/盘后任务先看 `/health` 的 `trade_open`。非交易日：不执行盘中/盘后任务、不生成报告、不推送。行业投研类不受此限。

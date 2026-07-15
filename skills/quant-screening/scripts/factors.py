@@ -17,6 +17,9 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+# 个股因子公式版本：公式、字段或计算口径变化时递增，旧预计算不会被新选股误用。
+STOCK_FACTOR_VERSION = "stock-factors-v1"
+
 # ---------------- 个股因子默认权重（sum=1.0） ----------------
 # 侧重回测有效的趋势+反转+低波动组合。
 # 下半部分为「候选因子」，默认权重 0（不参与打分、不在选股列表展示）；

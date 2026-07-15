@@ -114,3 +114,10 @@ disable-model-invocation: false
 - **具备重仓环境**：情绪健康或冰点反转 + 明确正向催化（涨价/政策/机构一致看多）+ 主线清晰
 - **需要空仓/降仓**：连续高热见顶迹象 / 重大利空 / 无主线且情绪退潮 / 催化落空
 判断写入盘前汇总与复盘报告，作为当日仓位上限的依据（非确定性指令）。
+
+## Skill 加载约束 / 依赖 Skills
+
+- 使用前必须完整读取本文件，不得以 `index.md` 或角色摘要中的“四维打分”简化描述代替。
+- **直接依赖**：`data-service`（评分事实与 fallback）、`output-format`（打分与来源表）。
+- **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening` 提供研究/候选；`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market` 应用排序；`review-learning` 验证评分效果。
+- 任一评分依据因服务降级而缺失时，按 `skills/data-service/SKILL.md` 标 `degraded` 和缺失来源，不得用估算值补齐。

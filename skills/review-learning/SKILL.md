@@ -50,15 +50,17 @@ disable-model-invocation: false
 
 > 所有微调经服务端留痕：每次 `set_factor_weights` / `set_sentiment_config` 生成类 commit 的 `version_id`（记录 actor/reason/parent/payload）。用 `get_config_history` 查历史、`get_config_version` 定位某版本、`restore_config_version` 回滚。
 
-## 自我改进逻辑
-- 统计各 driver 维度历史准确率与选股超额，识别 Agent 在哪个维度更可靠
-- 若某维度长期偏差大，提高该维度验证门槛
-- 归纳可复用的「避坑规则」写入学习日志
+## 业绩增长参考池隔离（T7 强制）
 
-### 自我改进逻辑
-- 统计各 driver 维度历史准确率，识别 Agent 在哪个维度更可靠
-- 若某维度长期偏差大，在打分依据中提高该维度的验证门槛（不改四维权重本身）
-- 归纳可复用的「避坑规则」写入学习日志
+- T7 的「业绩增长参考池」仅为公告事实参考，不是自动选股、关注或持仓样本。
+- 参考池记录不得调用 `log_selection`，不得写 `predictions.jsonl` 或观察池，不得映射为 `category=auto|watch|holding`，不得进入 `predictions_backtest`、`selection_backtest`、胜率/超额统计、`tuning_hints` 或任何因子/情绪参数调优依据。
+- 同一股票若独立通过正式 `screen_quant`/`screen_trend` 流程，只允许以正式候选身份按正常规则进入回测；样本理由和来源必须来自正式流程，不能继承“进入业绩参考池”这一事实。
+- 回测报告须声明已排除业绩增长参考池；若发现误入样本，先剔除并披露，不得据此调参。
+
+## 自我改进逻辑
+- 统计各 driver 维度历史准确率与选股超额，识别 Agent 在哪个维度更可靠。
+- 若某维度长期偏差大，在打分依据中提高该维度的验证门槛（不改四维权重本身）。
+- 归纳可复用的「避坑规则」写入学习日志。
 
 ## 二、趋势周报（每周日 20:00）
 
@@ -90,3 +92,10 @@ disable-model-invocation: false
 ## 严谨要求
 - 回测结果基于真实行情数据，禁止美化准确率
 - 失误如实归因，不回避
+
+## Skill 加载约束 / 依赖 Skills
+
+- 回测、调参、周月报前完整读取本文件并确认固定 11 Skills 已完整加载，不得只凭历史调参摘要执行。
+- **直接依赖**：`data-service`（真实行情、错误与重试）、`quant-screening`（因子契约）、`output-format`（回测报告）、`post-market`（每日闭环）。
+- **协同 Skills**：`priority-framework`、`stock-screening`、`industry-analysis`，用于按 driver 解释而不篡改事实。
+- 数据缺失时按 `skills/data-service/SKILL.md` 标 `degraded`，不计算伪准确率；T7 的关键接口执行 5/15 分钟延迟重试，非关键接口失败不阻塞已有样本的复盘。

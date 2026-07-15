@@ -128,3 +128,27 @@ python cli.py call screen_sector '{"top_n":10}'
 ```
 
 Web 面板（与服务同源）：浏览器打开 `http://localhost:18901/ui/`，设置里填 X-API-Key。
+
+## 7. v1.1.0 Agent 接口契约与统一 fallback
+
+### market_index
+
+- `code` 参数允许代码数组或逗号分隔字符串；Agent 必须保存请求 code 集并核对返回完整性。
+- 4xx/5xx、空数据或部分 code 缺失时，对失败/缺失 code 逐个调用 `market_daily(code,start,end)`，取区间最近记录。
+- 降级结果必须标 `degraded=true`、原失败接口/状态、实际 `trade_date`、仍缺失 code；不得将最近历史记录表述为实时或请求日数据。
+
+### 新闻
+
+- `news_flash` 402 → `news_filter(keyword)` + `news_cctv` + 外部搜索。
+- `news_filter` 同源失败 → 继续 `news_cctv` + 至少两个可信外部来源，并标出处/时间。
+- 全部失败 → 标“消息面不可用”与失败来源；不可解释为无消息、无利空或无风险。
+
+### 定时任务重试
+
+T1/T6/T7 关键接口 4xx/5xx/空数据：记录首次失败，首次失败后 5 分钟重试一次、15 分钟再重试一次。401 鉴权及明确参数/配置错误不盲目重试；402 直接进入专属 fallback。最终仍失败时标降级与缺失并继续可完成部分；非关键接口失败不阻塞整份报告，禁止编造。T4 新闻直接使用上述新闻降级链。
+
+## 8. v1.1.0 情绪接口速览
+
+- `sentiment_temperature`：返回 `temperature`、`level`、`indicators`、`weights`、`window_size`；指标/权重以实时返回为准。
+- `sentiment_extreme_index`：参数 `date`、`days`；极端指数固定按含当日最近 7 个交易日归一，平均振幅与成交额缩量子分各 50%，返回 `extreme_index/components/recent/selection_bias`。Agent 只消费接口结果，不自行复算或调整固定规则。
+- `market_lianban` + `market_limit`：用于连板梯队、连板个股、断板及 1-3 日反包分析。极端指数 ≥80 强倾向、60-80 适度倾向、<60 不额外倾斜；这只是风格优先级，不能替代四维逻辑与风险过滤。

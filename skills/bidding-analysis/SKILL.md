@@ -54,3 +54,10 @@ disable-model-invocation: false
 - 竞价数据来自 `bidding_analysis`（服务端 stk_auction_o + 昨日 daily），禁编造；缺字段如实标注。
 - 超预期/抄底为**概率性判断**，需说明依据（情绪+舆情+量价），不给确定性买卖指令。
 - 竞价仅代表开盘意愿，提示"竞价强不等于全天强"的风险。
+
+## Skill 加载约束 / 依赖 Skills
+
+- 使用前完整读取本文件并确认 11 Skills 已完整加载，不得只凭“竞价分析”摘要执行。
+- **直接依赖**：`data-service`（竞价、情绪与错误处理）、`priority-framework`（逻辑/风险约束）、`output-format`（触发来源与报告）。
+- **协同 Skills**：`pre-market`（临时观察列表/盘前预判）、`intraday-watch`（开盘后交接）、`post-market`（偏差复盘）、`review-learning`（预判验证）。
+- 竞价接口缺失时按 `skills/data-service/SKILL.md` 标缺失与 `degraded`，不得用盘口猜测替代。

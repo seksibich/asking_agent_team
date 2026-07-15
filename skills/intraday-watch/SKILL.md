@@ -70,3 +70,14 @@ disable-model-invocation: false
 ## 四、静默原则
 
 **无异动绝不打扰**：不生成文件、不发通知、不主动输出，仅更新服务端快照。
+
+## Skill 加载约束 / 依赖 Skills
+
+- 盘中任务启动前完整读取本文件并确认固定 11 Skills 已完整加载；不得只凭 schedule 摘要执行。
+- **直接依赖**：`data-service`、`priority-framework`、`output-format`。
+- **协同 Skills**：`pre-market`、`bidding-analysis`（观察清单与预判输入）、`post-market`（盘中事实交接）、`stock-screening`（主线标的）。
+- T3/T4/T5 必须点名 `skills/intraday-watch/SKILL.md` 与 `skills/data-service/SKILL.md`；需要报告时同时点名 `skills/output-format/SKILL.md`。
+
+## 盘中新闻与行情 fallback
+
+T4 `news_flash` 402 时使用 `news_filter(keyword)+news_cctv+外部搜索`；`news_filter` 同源失败时继续 `news_cctv` + 至少两个可信外部来源，全部失败标“消息面不可用”，不得推断“无风险”。行情或聚合接口失败时标 `degraded`/缺失来源，非关键接口失败不阻塞早盘总结；401/配置错误不盲目重试。若正文引用 `market_index`，按 `skills/data-service/SKILL.md` 的逐 code `market_daily` fallback 与实际日期标注执行。

@@ -25,3 +25,9 @@
 
 ## 约束
 回测基于真实行情，禁止美化准确率；失误如实归因；调参须公开依据；权重和必须为 1 且覆盖全部因子。
+
+## Skill 强制加载与主绑定
+
+- **完整加载**：每次角色启动先完整读取 `skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`，禁止只凭摘要执行。
+- **主绑定**：`skills/data-service/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/post-market/SKILL.md`、`skills/output-format/SKILL.md`。
+- **职责/流程显式调用**：因子配置与量化候选按 `skills/quant-screening/SKILL.md`，回测和调参闭环按 `skills/review-learning/SKILL.md`，22:00 复盘按 `skills/post-market/SKILL.md`，报告按 `skills/output-format/SKILL.md`，数据错误与降级按 `skills/data-service/SKILL.md`。

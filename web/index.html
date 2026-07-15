@@ -73,50 +73,103 @@
     </section>
 
     <!-- 情绪温度 -->
-    <section id="tab-sentiment" class="panel">
-      <div class="card">
-        <div class="card-title">情绪温度</div>
-        <div class="form-row inline">
-          <input id="s-date" type="text" placeholder="日期 YYYYMMDD（留空=最近交易日）" />
-          <input id="s-days" type="number" value="15" min="3" max="30" title="走势回看交易日数" style="max-width:120px" />
-          <button id="s-run" class="btn-primary">
-            <svg viewBox="0 0 24 24" class="btn-ic"><path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            读取情绪温度
-          </button>
+    <section id="tab-sentiment" class="panel sentiment-panel">
+      <div class="card sentiment-hero">
+        <div class="sentiment-card-header">
+          <div class="sentiment-heading">
+            <span class="sentiment-eyebrow">MARKET SENTIMENT</span>
+            <div class="card-title sentiment-title">情绪温度</div>
+            <p>结合市场宽度、价格行为与量能，判断当前交易情绪和出手节奏。</p>
+          </div>
+          <div class="sentiment-toolbar">
+            <div class="sentiment-meta-group">
+              <span id="s-current-date" class="meta-chip">日期：最近交易日</span>
+              <span id="s-current-window" class="meta-chip">归一窗口：-- 日</span>
+            </div>
+            <button id="s-settings-btn" class="icon-btn sentiment-settings-btn" title="情绪温度设置" aria-label="情绪温度设置">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
+          </div>
         </div>
-        <div class="form-row inline">
-          <label style="min-width:auto">情绪归一窗口（3-30 交易日，服务端持久化）</label>
-          <input id="s-window" type="number" min="3" max="30" value="7" style="max-width:100px" />
-          <button id="s-window-save" class="btn-ghost">应用窗口</button>
-          <span id="s-window-status" class="meta"></span>
+
+        <div class="sentiment-overview-grid">
+          <div class="sentiment-gauge-panel">
+            <div class="section-title-row"><span>当前市场温度</span><span class="section-tag">0—100</span></div>
+            <div class="gauge-block">
+              <div id="s-gauge" class="gauge">
+                <svg viewBox="0 0 200 120" class="gauge-svg">
+                  <path d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="#e8ecf3" stroke-width="16" stroke-linecap="round"/>
+                  <path id="s-arc" d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="url(#g)" stroke-width="16" stroke-linecap="round" stroke-dasharray="251" stroke-dashoffset="251"/>
+                  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3b82f6"/><stop offset="0.5" stop-color="#f59e0b"/><stop offset="1" stop-color="#ef4444"/></linearGradient></defs>
+                </svg>
+                <div class="gauge-center"><span id="s-temp">--</span><small id="s-level">情绪温度</small></div>
+              </div>
+              <div id="s-breadth" class="breadth sentiment-breadth">等待市场宽度数据</div>
+            </div>
+          </div>
+          <div class="sentiment-timing-panel">
+            <div class="section-title-row"><span>择时判断</span><span class="meta">market_timing</span></div>
+            <div id="s-timing" class="timing"><div class="empty">读取后显示连续冰点、高热与出手权重</div></div>
+          </div>
+        </div>
+
+        <div class="sentiment-trend-panel">
+          <div class="section-title-row"><span>温度走势</span><span id="s-trend-meta" class="meta"></span></div>
+          <div id="s-trend" class="chart-wrap sentiment-chart"><div class="empty">读取后显示多日温度折线</div></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-title">情绪温度走势 <span id="s-trend-meta" class="meta"></span></div>
-        <div id="s-trend" class="chart-wrap"><div class="empty">读取后显示多日温度折线</div></div>
-      </div>
-      <div class="card">
-        <div class="card-title">择时判断 <span class="meta">market_timing</span></div>
-        <div id="s-timing" class="timing"><div class="empty">读取后显示连续冰点/高热与出手权重</div></div>
-      </div>
-      <div class="card gauge-card">
-        <div id="s-gauge" class="gauge">
-          <svg viewBox="0 0 200 120" class="gauge-svg">
-            <path d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="#e8ecf3" stroke-width="16" stroke-linecap="round"/>
-            <path id="s-arc" d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="url(#g)" stroke-width="16" stroke-linecap="round" stroke-dasharray="251" stroke-dashoffset="251"/>
-            <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3b82f6"/><stop offset="0.5" stop-color="#f59e0b"/><stop offset="1" stop-color="#ef4444"/></linearGradient></defs>
-          </svg>
-          <div class="gauge-center"><span id="s-temp">--</span><small id="s-level">情绪温度</small></div>
+
+      <div class="sentiment-secondary-grid">
+        <div class="card extreme-card">
+          <div class="sentiment-section-header">
+            <div>
+              <span class="sentiment-eyebrow extreme">RISK PRESSURE</span>
+              <div class="card-title">情绪极端指数</div>
+            </div>
+            <span id="s-extreme-meta" class="meta-chip">固定 7 日归一</span>
+          </div>
+          <div class="extreme-layout">
+            <div class="thermometer" aria-label="情绪极端指数温度计">
+              <div class="thermometer-scale"><span>100</span><span>80</span><span>60</span><span>40</span><span>20</span><span>0</span></div>
+              <div class="thermometer-body">
+                <div class="thermometer-tube"><div id="s-extreme-fill" class="thermometer-fill"></div></div>
+                <div id="s-extreme-bulb" class="thermometer-bulb"></div>
+              </div>
+              <div class="thermometer-value"><b id="s-extreme-value">--</b><small id="s-extreme-level">极端指数</small></div>
+            </div>
+            <div id="s-extreme-summary" class="timing extreme-summary"><div class="empty">读取后显示极端程度及风格倾向</div></div>
+          </div>
+          <div class="extreme-trend-panel">
+            <div class="section-title-row"><span>极端指数走势</span><span class="meta">振幅 × 缩量</span></div>
+            <div id="s-extreme-trend" class="chart-wrap sentiment-chart compact"><div class="empty">读取后显示极端指数折线</div></div>
+          </div>
         </div>
-        <div id="s-breadth" class="breadth"></div>
+
+        <div class="card ranges-card">
+          <div class="sentiment-section-header">
+            <div>
+              <span class="sentiment-eyebrow indicators">INDICATOR RANGE</span>
+              <div class="card-title">指标对比</div>
+            </div>
+            <span class="meta-chip">今值 vs 窗口</span>
+          </div>
+          <p class="section-description">查看各项指标在归一窗口低位、均值和高位之间的相对位置。</p>
+          <div id="s-ranges" class="ranges"><div class="empty">读取后显示指标相对位置</div></div>
+        </div>
       </div>
-      <div class="card">
-        <div class="card-title">指标对比看板 <span class="meta">今值 vs 窗口 低/均/高</span></div>
-        <div id="s-ranges" class="ranges"><div class="empty">读取后显示各指标在窗口中的相对位置</div></div>
-      </div>
-      <div class="card">
-        <div class="card-title">指标分解 <span id="s-meta" class="meta"></span></div>
-        <div id="s-result" class="table-wrap"><div class="empty">点击「读取情绪温度」查看分解</div></div>
+
+      <div class="card breakdown-card">
+        <div class="sentiment-section-header">
+          <div>
+            <span class="sentiment-eyebrow detail">DATA DETAIL</span>
+            <div class="card-title">指标分解</div>
+          </div>
+          <span id="s-meta" class="meta"></span>
+        </div>
+        <div id="s-result" class="table-wrap"><div class="empty">读取情绪温度后查看指标分解</div></div>
       </div>
     </section>
 
@@ -228,6 +281,31 @@
       <div class="card-title"><span id="fm-title">因子说明</span> <span id="fm-key" class="meta"></span></div>
       <div id="fm-body" class="factor-desc"></div>
       <div class="modal-actions"><button id="fm-close" class="btn-primary">知道了</button></div>
+    </div>
+  </div>
+
+  <!-- 情绪温度设置弹层 -->
+  <div id="sentiment-settings" class="modal hidden">
+    <div class="modal-card">
+      <div class="card-title">情绪温度设置</div>
+      <div class="form-row">
+        <label for="s-date">展示日期</label>
+        <input id="s-date" type="text" placeholder="YYYYMMDD（留空=最近交易日）" />
+      </div>
+      <div class="form-row">
+        <label for="s-days">走势回看交易日数</label>
+        <input id="s-days" type="number" value="15" min="3" max="30" />
+      </div>
+      <div class="form-row">
+        <label for="s-window">温度归一窗口（服务端持久化）</label>
+        <input id="s-window" type="number" min="3" max="30" value="7" />
+      </div>
+      <div id="s-window-status" class="status"></div>
+      <div class="modal-actions">
+        <button id="s-settings-cancel" class="btn-ghost">取消</button>
+        <button id="s-refresh" class="btn-ghost">仅刷新看板</button>
+        <button id="s-window-save" class="btn-primary">保存并刷新</button>
+      </div>
     </div>
   </div>
 

@@ -96,3 +96,31 @@ POST /call
 | `401` | API Key 错误 | 提示检查鉴权配置 |
 | `400` | 参数错误/未知功能 | 检查 function 名与参数；必要时先 `/functions` 刷新索引 |
 | `402` | tushare 积分/权限不足 | 告知该功能不可用，改用替代数据或跳过 |
+
+## Skill 加载约束 / 依赖 Skills
+
+- 所有 Agent 每次任务/角色启动必须完整读取本文件；不得只凭 `/functions` 索引、接口名或角色摘要推断参数、错误语义与 fallback。
+- **直接依赖**：无；本 Skill 是全部取数 Skills 的统一底座。
+- **协同 Skills**：`priority-framework`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`。上述 Skill 一旦取数，必须执行本节契约。
+
+## 统一 fallback 与延迟重试（强制）
+
+### market_index 降级链
+
+1. `market_index` 的 `codes` 参数允许**代码数组**或**逗号分隔字符串**；调用前保留原 code 清单用于完整性核验。
+2. 若请求出现可降级的 4xx（**不含 401、明确参数/配置错误**）、5xx、空数据，或返回只覆盖部分 code，则对失败/缺失 code **逐个调用** `market_daily(code,start,end)`；401/配置错误须先修复鉴权或配置，不得盲目调用同服务 fallback。
+3. 每个 code 取区间内最近一条可用记录；输出必须标 `degraded=true`、原失败接口、实际 `trade_date`（不得伪装成请求日/实时值）及仍缺失的 code。
+4. `market_daily` 仍失败时保留缺失项，继续完成其他可用部分，禁止编造指数点位、涨跌幅或日期。
+
+### 新闻降级链
+
+1. `news_flash` 返回 402 时，改用 `news_filter(keyword)` + `news_cctv` + 外部搜索交叉补齐。
+2. 若 `news_filter` 与 `news_flash` 同源失败，继续使用 `news_cctv` + **至少两个可信外部来源**；外部来源标名称、URL/出处与时间，并区分事实/传闻。
+3. 若所有新闻来源均失败，明确标注“消息面不可用”及失败来源；**不得把不可用解释为无消息、无利空或无风险**。
+
+### 定时任务 T1/T6/T7
+
+- 关键接口遇 4xx/5xx/空数据：先记录首次失败；延后 **5 分钟**重试一次，再延后至首次失败后 **15 分钟**重试一次。
+- 401 鉴权失败及明确的参数/配置错误不盲目重试：立即标配置问题并提示修复。402 按对应 fallback 执行。
+- 两次延迟重试后关键接口仍失败：执行上述或接口专属 fallback，标 `degraded`、缺失来源、尝试时间与实际数据日期，继续可完成部分。
+- 非关键接口失败不阻塞整份报告；所有任务坚持“缺失可见、报告继续、禁止编造”。T4 新闻直接执行新闻降级链，不因单一新闻源失败中止早盘总结。

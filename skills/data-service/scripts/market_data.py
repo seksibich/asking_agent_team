@@ -8,6 +8,7 @@ loader 自动发现，/functions 自动索引，data_version 自动变化。
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -30,7 +31,25 @@ G_HOT = "hot"
 G_SEC = "sector"
 G_META = "meta"
 
-DEFAULT_INDEX = "000001.SH,399001.SZ,399006.SZ"
+DEFAULT_INDEX = ["000001.SH", "399001.SZ", "399006.SZ"]
+
+
+def _normalize_codes(value: Any) -> list[str]:
+    """兼容代码数组、逗号字符串与空值，返回去重后的规范代码列表。"""
+    if isinstance(value, list):
+        raw = value
+    elif isinstance(value, str):
+        raw = value.replace("，", ",").split(",")
+    elif value is None:
+        raw = []
+    else:
+        raw = [value]
+    codes: list[str] = []
+    for item in raw:
+        code = str(item).strip().upper()
+        if code and code not in codes:
+            codes.append(code)
+    return codes or list(DEFAULT_INDEX)
 
 
 def _wrap(source: str, df: pd.DataFrame) -> dict[str, Any]:
@@ -44,17 +63,50 @@ def _cached(name: str, params: dict[str, Any], fetch, use_cache: bool = True,
 
 
 # ================= market =================
-@register("market_index", G_MKT, "大盘/指数日线（默认三大指数），返回最近交易日收盘",
-          params=[{"name": "codes", "type": "string", "required": False,
-                   "default": DEFAULT_INDEX, "desc": "逗号分隔指数代码"}],
-          returns="指数 open/high/low/close/pct_chg/vol/amount")
+@register("market_index", G_MKT,
+          "大盘/指数日线（默认三大指数）：codes 兼容数组或逗号字符串；单日为空时回退最近10个自然日的最新记录，部分失败结构化返回",
+          params=[{"name": "codes", "type": "array", "required": False,
+                   "default": DEFAULT_INDEX, "desc": "指数代码数组或逗号分隔字符串"}],
+          returns="rows / requested_codes / requested_date / actual_dates / missing_codes / degraded")
 def market_index(p: dict) -> dict:
     pro = common.get_pro()
-    td = common.last_trade_date()
-    codes = p["codes"]
-    return _cached("index_daily", {"codes": codes, "td": td},
-                   lambda: pd.concat([pro.index_daily(ts_code=c, trade_date=td)
-                                      for c in codes.split(",")], ignore_index=True))
+    requested_date = common.last_trade_date()
+    codes = _normalize_codes(p.get("codes"))
+    range_start = (datetime.strptime(requested_date, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
+
+    def fetch() -> pd.DataFrame:
+        frames: list[pd.DataFrame] = []
+        for code in codes:
+            frame = pd.DataFrame()
+            try:
+                frame = pro.index_daily(ts_code=code, trade_date=requested_date)
+            except Exception:
+                frame = pd.DataFrame()
+            if frame is None or frame.empty:
+                try:
+                    frame = pro.index_daily(ts_code=code, start_date=range_start, end_date=requested_date)
+                except Exception:
+                    frame = pd.DataFrame()
+            if frame is not None and not frame.empty:
+                if "trade_date" in frame.columns:
+                    frame = frame.sort_values("trade_date", ascending=False).head(1)
+                frames.append(frame)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    result = _cached("index_daily_resilient", {"codes": codes, "td": requested_date}, fetch)
+    rows = result.get("rows") or []
+    returned_codes = {str(row.get("ts_code", "")) for row in rows}
+    missing_codes = [code for code in codes if code not in returned_codes]
+    actual_dates = {str(row.get("ts_code", "")): str(row.get("trade_date", "")) for row in rows}
+    used_fallback = any(date and date != requested_date for date in actual_dates.values())
+    result.update({
+        "requested_codes": codes,
+        "requested_date": requested_date,
+        "actual_dates": actual_dates,
+        "missing_codes": missing_codes,
+        "degraded": bool(missing_codes or used_fallback),
+    })
+    return result
 
 
 @register("market_realtime", G_MKT, "实时行情快照（东财源），用于盘中/竞价",
@@ -67,16 +119,42 @@ def market_realtime(p: dict) -> dict:
     return _wrap("realtime_quote", df)
 
 
-@register("market_daily", G_MKT, "个股日线（不复权）",
+@register("market_daily", G_MKT, "个股/指数日线（不复权）；个股接口空数据时自动回退指数日线",
           params=[{"name": "code", "type": "string", "required": True},
                   {"name": "start", "type": "string", "required": True, "desc": "YYYYMMDD"},
                   {"name": "end", "type": "string", "required": True, "desc": "YYYYMMDD"}],
-          returns="日线 OHLC/pct_chg/vol/amount")
+          returns="股票或指数日线 OHLC/pct_chg/vol/amount")
 def market_daily(p: dict) -> dict:
     pro = common.get_pro()
-    return _cached("daily", {"c": p["code"], "s": p["start"], "e": p["end"]},
-                   lambda: pro.daily(ts_code=p["code"], start_date=p["start"], end_date=p["end"]),
-                   historical=True)
+    code = p["code"].strip().upper()
+    start, end = p["start"], p["end"]
+
+    def fetch() -> pd.DataFrame:
+        try:
+            frame = pro.daily(ts_code=code, start_date=start, end_date=end)
+        except Exception:
+            frame = pd.DataFrame()
+        resolved_source = "daily"
+        if frame is None or frame.empty:
+            resolved_source = "index_daily"
+            try:
+                frame = pro.index_daily(ts_code=code, start_date=start, end_date=end)
+            except Exception:
+                frame = pd.DataFrame()
+        frame = frame if frame is not None else pd.DataFrame()
+        if not frame.empty:
+            frame = frame.copy()
+            frame["_resolved_source"] = resolved_source
+        return frame
+
+    result = _cached("daily_with_index_fallback_v2", {"c": code, "s": start, "e": end},
+                     fetch, historical=True)
+    rows = result.get("rows") or []
+    sources = {str(row.pop("_resolved_source", "daily")) for row in rows}
+    resolved_source = next(iter(sources)) if len(sources) == 1 else ("mixed" if sources else "none")
+    result.update({"code": code, "resolved_source": resolved_source,
+                   "degraded": resolved_source != "daily"})
+    return result
 
 
 @register("market_adj_daily", G_MKT, "个股前复权日线（回测/趋势用）",

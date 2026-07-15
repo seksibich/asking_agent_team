@@ -26,3 +26,13 @@
 
 ## 约束
 数据经服务/外部获取并交叉验证、禁编造、标来源时间；传闻标注待证实；重心涨价>逻辑>预期>情绪。
+
+## Skill 强制加载与主绑定
+
+- **完整加载**：每次角色启动先完整读取 `skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`，不得只凭索引或角色摘要。
+- **主绑定**：`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`。
+- **职责/流程显式调用**：新闻与宏观数据按 `skills/data-service/SKILL.md`，事件产业链映射按 `skills/industry-analysis/SKILL.md`，盘前/盘后分发分别按 `skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`，最终驱动排序按 `skills/priority-framework/SKILL.md`。
+
+## 新闻 fallback（强制）
+
+`news_flash` 返回 402 时使用 `news_filter(keyword)` + `news_cctv` + 外部搜索；若 `news_filter` 同源失败，继续 `news_cctv` + 至少两个可信外部来源。全部失败必须写“消息面不可用”及失败来源，绝不能解释为“无利空/无风险”。T1/T6/T7 关键接口失败先记录，并在 5 分钟与 15 分钟后各重试一次；401、参数/配置错误不盲目重试，非关键接口失败不阻塞可完成报告。

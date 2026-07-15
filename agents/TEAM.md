@@ -9,7 +9,7 @@
 |---|---|---|
 | 主 Agent（统合/复核） | `main-orchestrator.md` | 分发任务、汇总子 Agent 意见、二次验证、输出最终结果、写记忆 |
 | 技术面趋势分析师 | `technical-trend-analyst.md` | 大盘、成交量、热门板块、关注/持仓个股的趋势分析 |
-| 情绪面分析师 | `sentiment-analyst.md` | 舆论/热度/成交量/涨跌家数/涨跌停家数 → 情绪温度值 0-100（量化视角） |
+| 情绪面分析师 | `sentiment-analyst.md` | 情绪温度与情绪极端指数 0-100、连板生态/连板个股/断板反包、节奏与仓位（v1.1.0） |
 | 研报·基本面·行业预期分析师 | `fundamental-research-analyst.md` | 涨价链、景气、业绩预期、研报观点、行业逻辑（预期驱动） |
 | 宏观·期货·时事·全球市场分析师 | `macro-news-analyst.md` | 全球市场、期货、宏观数据（PPI/CPI/PMI）、时政与产业事件、北向资金 |
 | 回测分析师 | `backtest-analyst.md` | 跑预判回测与自动选股回测，产出准确率/胜率/超额与调参建议 |
@@ -64,3 +64,18 @@
   "sources": ["功能名/外部来源 + 时间"]
 }
 ```
+
+## Skill 完整加载规则与角色主绑定矩阵（强制）
+
+每次任务启动及每个 Agent/角色启动时，全员必须先逐文件完整读取固定 11 个 Skills：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning` 的 `skills/<name>/SKILL.md`。禁止只凭 `index.md`、本矩阵、角色摘要或历史记忆执行。主绑定仅表示职责优先级，不代表可跳过其他 Skill。
+
+| 角色 | 主绑定 Skills（均指 `skills/<name>/SKILL.md`） |
+|---|---|
+| 主 Agent | `priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning` |
+| 技术面趋势分析师 | `data-service`、`priority-framework`、`quant-screening`、`stock-screening`、`pre-market`、`post-market` |
+| 情绪面分析师 | `data-service`、`priority-framework`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`review-learning` |
+| 研报·基本面·行业预期分析师 | `data-service`、`priority-framework`、`industry-analysis`、`stock-screening`、`pre-market`、`post-market` |
+| 宏观·期货·时事·全球市场分析师 | `data-service`、`priority-framework`、`industry-analysis`、`pre-market`、`post-market` |
+| 回测分析师 | `data-service`、`quant-screening`、`review-learning`、`post-market`、`output-format` |
+
+分发任务时必须在任务描述中点名对应 `skills/<name>/SKILL.md`；涉及取数统一执行 `skills/data-service/SKILL.md` 的 fallback、缺失标注与定时延迟重试规则。

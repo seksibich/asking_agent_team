@@ -110,3 +110,19 @@ curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
 - `.env` 含真实 token，已 gitignore；务必设置强随机 `API_KEY`。
 - **API Key 分级**：`API_KEY` 为管理员 Key（完整权限）；可选配置 `USER_API_KEY` 作为只读用户 Key —— 用户 Key 可查看/选股/读情绪，但**不能修改因子权重、归一化窗口，也不能触发回测**（服务端返回 403，Web 面板对应入口自动禁用）。留空 `USER_API_KEY` 则不启用。
 - 本地/内网使用；迁移公网（ECS）时建议加防火墙白名单或反向代理鉴权。
+
+## Agent→Skill 强制绑定（AGENT_DOC_VERSION v1.1.0）
+
+首次初始化、每次任务启动以及每个 Agent/角色启动时，必须完整读取全部 11 个 `SKILL.md`：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`。`agents/TEAM.md` 的角色主绑定只决定主职责，不允许只凭 `index.md`、矩阵或角色摘要执行。
+
+## 接口契约与统一 fallback 速览
+
+- `market_index.code` 接受数组或逗号分隔字符串；4xx/5xx、空数据或部分 code 缺失时，按 code 逐个调用 `market_daily(code,start,end)` 取最近记录，必须标 `degraded` 与实际 `trade_date`。
+- `news_flash` 402：`news_filter(keyword)+news_cctv+外部搜索`；若 filter 同源失败，继续 CCTV + 至少两个可信外部来源；全部失败标“消息面不可用”，不得推断无风险。
+- T1/T6/T7 关键接口失败：记录后延迟 5 分钟、15 分钟各重试一次；401/明确参数或配置错误不盲目重试；最终失败按 fallback 降级并继续可完成部分，非关键接口不阻塞报告，禁止编造。
+
+## v1.1.0 情绪接口速览
+
+- `sentiment_temperature`：0-100 情绪温度、动态指标与权重，以接口返回为准。
+- `sentiment_extreme_index`：0-100 情绪极端指数，固定最近 7 个交易日归一，振幅/缩量各 50%，Agent 不得自行复算或配置；返回 `components`、`recent`、`selection_bias`。
+- `market_lianban` + `market_limit`：分析连板生态、连板个股、断板与 1-3 日反包候选。极端指数高仅提高分析优先级，最终仍由 `skills/priority-framework/SKILL.md` 复核。

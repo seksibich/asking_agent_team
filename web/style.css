@@ -160,3 +160,102 @@ tbody tr:hover{background:#f7f9ff}
 /* 可排序表头 */
 th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
 th.sortable:hover{color:var(--brand)}
+
+/* 情绪温度看板 */
+.sentiment-panel{gap:18px}
+.sentiment-hero{position:relative;overflow:hidden;padding:24px}
+.sentiment-hero::before{content:"";position:absolute;inset:0 0 auto;height:4px;
+  background:linear-gradient(90deg,var(--brand),#8b5cf6 46%,var(--warn) 72%,var(--bad))}
+.sentiment-card-header,.sentiment-section-header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
+.sentiment-heading{min-width:0}
+.sentiment-eyebrow{display:block;color:var(--brand);font-size:10px;font-weight:800;letter-spacing:.14em;line-height:1.3}
+.sentiment-eyebrow.extreme{color:#e45a44}
+.sentiment-eyebrow.indicators{color:#7c5ce0}
+.sentiment-eyebrow.detail{color:#5d6a7e}
+.sentiment-title{font-size:22px;margin:4px 0 5px}
+.sentiment-heading p,.section-description{margin:0;color:var(--sub);font-size:13px;line-height:1.6}
+.sentiment-toolbar{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex:none}
+.sentiment-meta-group{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.meta-chip{display:inline-flex;align-items:center;min-height:30px;padding:5px 10px;border:1px solid var(--line);
+  border-radius:999px;background:#f8faff;color:var(--sub);font-size:12px;font-weight:500;white-space:nowrap}
+.sentiment-settings-btn{width:40px;height:40px;padding:0;align-items:center;justify-content:center;flex:none}
+.sentiment-settings-btn svg{width:20px;height:20px}
+.sentiment-overview-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:14px;margin-top:22px}
+.sentiment-gauge-panel,.sentiment-timing-panel{border:1px solid var(--line);border-radius:14px;padding:15px 16px;background:#fbfcff;min-width:0}
+.sentiment-gauge-panel{background:linear-gradient(145deg,#f8faff 0%,#fff 70%)}
+.section-title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;font-weight:700}
+.section-tag{padding:3px 8px;border-radius:999px;background:var(--brand-soft);color:var(--brand);font-size:10px;font-weight:700;letter-spacing:.04em}
+.gauge-block{display:flex;flex-direction:column;align-items:center;gap:7px}
+.sentiment-breadth{min-height:28px;padding:6px 10px;border-radius:999px;background:var(--brand-soft);color:var(--brand);text-align:center}
+.sentiment-timing-panel .timing{margin-top:14px}
+.sentiment-timing-panel .timing-badges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:10px}
+.sentiment-timing-panel .badge{min-width:0;background:#fff;padding:11px 12px}
+.sentiment-timing-panel .timing-stance{border-left:3px solid var(--warn);padding:11px 13px}
+.sentiment-trend-panel{margin-top:14px;padding:16px 16px 4px;border:1px solid var(--line);border-radius:14px;background:#fff}
+.sentiment-chart{min-height:200px;margin-top:6px}
+.sentiment-chart.compact{min-height:180px}
+.sentiment-secondary-grid{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr);gap:16px;align-items:stretch}
+.sentiment-secondary-grid>.card{min-width:0;padding:20px}
+.sentiment-section-header{align-items:center;margin-bottom:16px}
+.sentiment-section-header .card-title{font-size:17px;margin:3px 0 0}
+.section-description{margin:-6px 0 18px}
+.breakdown-card{padding:20px}
+.breakdown-card .sentiment-section-header{margin-bottom:8px}
+
+/* 情绪极端指数温度计 */
+.extreme-card{position:relative;overflow:hidden}
+.extreme-card::after{content:"";position:absolute;right:-70px;top:-70px;width:180px;height:180px;border-radius:50%;
+  background:radial-gradient(circle,rgba(239,68,68,.08),rgba(239,68,68,0) 70%);pointer-events:none}
+.extreme-layout{display:grid;grid-template-columns:126px minmax(0,1fr);gap:18px;align-items:center;margin:4px 0 18px}
+.extreme-summary{min-width:0}
+.extreme-summary .timing-badges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.extreme-summary .badge{min-width:0;padding:10px;background:#fffafb;border-color:#f4e4e2}
+.extreme-summary .badge b{font-size:17px}
+.extreme-summary .timing-stance{border-left:3px solid #f97316;padding:11px 12px}
+.thermometer{display:grid;grid-template-columns:32px 50px;justify-content:center;align-items:start;gap:5px;min-width:116px}
+.thermometer-scale{height:198px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;padding:2px 0 29px;color:var(--sub);font-size:10px}
+.thermometer-body{position:relative;width:50px;height:198px}
+.thermometer-tube{position:absolute;left:16px;top:0;bottom:29px;width:18px;border:3px solid #d9deea;border-radius:14px 14px 7px 7px;background:#f7f9ff;overflow:hidden}
+.thermometer-fill{position:absolute;left:0;right:0;bottom:0;height:0;background:#3b82f6;transition:height .45s ease,background .3s ease}
+.thermometer-bulb{position:absolute;left:7px;bottom:0;width:36px;height:36px;border:4px solid #d9deea;border-radius:50%;background:#3b82f6;transition:background .3s ease}
+.thermometer-value{grid-column:1/3;display:flex;flex-direction:column;align-items:center;margin-top:3px}
+.thermometer-value b{font-size:30px;line-height:1}
+.thermometer-value small{color:var(--sub);font-size:12px;margin-top:4px}
+.extreme-trend-panel{padding-top:15px;border-top:1px solid var(--line)}
+.ranges-card .ranges{gap:16px}
+.ranges-card .range-legend{flex-wrap:wrap;gap:12px}
+.ranges-card .range-row{grid-template-columns:minmax(118px,145px) minmax(110px,1fr) 70px;gap:10px}
+.ranges-card .range-name{min-width:0}
+.ranges-card .range-sub b{font-size:15px}
+
+@media (max-width:900px){
+  .sentiment-secondary-grid{grid-template-columns:1fr}
+  .ranges-card .range-row{grid-template-columns:180px minmax(160px,1fr) 84px}
+}
+
+@media (max-width:760px){
+  .sentiment-hero{padding:20px}
+  .sentiment-card-header{flex-direction:column;gap:14px}
+  .sentiment-toolbar{width:100%;justify-content:space-between}
+  .sentiment-meta-group{justify-content:flex-start}
+  .sentiment-overview-grid{grid-template-columns:1fr}
+  .sentiment-timing-panel .timing-badges{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sentiment-chart{overflow-x:auto}
+  .sentiment-chart .chart-svg{min-width:560px}
+  .extreme-layout{grid-template-columns:126px minmax(0,1fr)}
+}
+
+@media (max-width:560px){
+  .content{padding-left:14px;padding-right:14px}
+  .sentiment-toolbar{align-items:flex-end}
+  .sentiment-meta-group{flex-direction:column;align-items:flex-start;gap:5px}
+  .sentiment-section-header{align-items:flex-start;gap:10px}
+  .sentiment-section-header>.meta-chip{white-space:normal;text-align:right}
+  .sentiment-timing-panel .timing-badges{grid-template-columns:1fr 1fr}
+  .extreme-layout{grid-template-columns:1fr}
+  .thermometer{margin:0 auto}
+  .extreme-summary .timing-badges{grid-template-columns:1fr}
+  .ranges-card .range-row{grid-template-columns:minmax(0,1fr) auto;row-gap:18px}
+  .ranges-card .range-track{grid-column:1/3;grid-row:2}
+  .ranges-card .range-sub{grid-column:2;grid-row:1}
+}

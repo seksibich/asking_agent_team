@@ -59,3 +59,10 @@ disable-model-invocation: false
 - **预期驱动**：选股/推荐依据以涨价与景气**预期**为主，不以过往业绩为主（业绩披露期除外）
 - **PE/PB 不作为看多依据**，只放进「风险提示」作为过往业绩对应估值的背景参考（如是否透支预期），不推断上涨动能
 - 结论追加到 `predictions.jsonl`（type=行业预判），线索加入 `观察池`
+
+## Skill 加载约束 / 依赖 Skills
+
+- 使用前完整读取本文件并确认固定 11 Skills 已完整加载，禁止用角色摘要替代行业研究流程。
+- **直接依赖**：`data-service`（新闻、宏观与 fallback）、`priority-framework`（四维裁决）、`output-format`（投研目录与来源表）。
+- **协同 Skills**：`stock-screening`、`quant-screening`（候选与板块）、`pre-market`、`post-market`（时段汇总）、`review-learning`（结论复验）。
+- 新闻/价格源失败时完整执行 `skills/data-service/SKILL.md`，保留缺失与冲突，不以简化描述或单一来源替代。

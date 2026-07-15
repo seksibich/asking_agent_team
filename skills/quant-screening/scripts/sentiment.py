@@ -37,8 +37,11 @@ WINDOW_DEFAULT = 7        # 默认：当天之前 7 个交易日
 WINDOW_MIN, WINDOW_MAX = 3, 30
 WINDOW_CONFIG_KEY = "sentiment_window"
 BENCH_INDEX = "000300.SH"
+EXTREME_WINDOW = 7       # 固定：含当日在内的最近 7 个交易日，不支持配置
+EXTREME_REQUIRED_FIELDS = {"market_amp", "turnover"}
 
 LEVELS = [(80, "高潮"), (60, "回暖"), (40, "分歧"), (20, "退潮"), (0, "冰点")]
+EXTREME_LEVELS = [(80, "高极端"), (60, "偏极端"), (40, "中度波动"), (0, "相对平稳")]
 
 # 反向指标：原始值越大越"冷"，子分取反（100 - minmax），从而拉低温度
 INVERSE_INDICATORS = {"limit_down"}
@@ -78,6 +81,16 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
     adv_dec_ratio = adv / (adv + dec) if (adv + dec) else 0.5
     avg_chg = float(pct.mean())  # 全市场平均涨跌幅（以涨幅锚定，越高越热）
     turnover = float(daily["amount"].astype(float).sum())  # 千元
+
+    # 全市场平均日内振幅：(high-low)/pre_close*100，越大表示市场波动越极端。
+    market_amp = 0.0
+    try:
+        ranges = daily[["high", "low", "pre_close"]].astype(float)
+        ranges = ranges[ranges["pre_close"] > 0]
+        if not ranges.empty:
+            market_amp = float(((ranges["high"] - ranges["low"]) / ranges["pre_close"] * 100.0).mean())
+    except Exception:
+        pass
 
     # 平均股价指数：全市场个股 OHLC 等权平均，构造"平均一只票"的K线，
     # 实体/振幅均按【百分点位】口径（相对平均前收），而非绝对价格数值
@@ -139,6 +152,7 @@ def _collect(pro, date: str) -> Optional[dict[str, float]]:
         "limit_down": limit_down,
         "sector_ratio": round(sector_ratio, 4),
         "turnover": round(turnover, 2),
+        "market_amp": round(market_amp, 4),       # 全市场平均日内振幅（百分点）
         "index_mom": round(index_mom, 4),
         "avg_price_mom": round(avg_chg, 4),  # 全市场平均涨跌幅（涨幅锚定）
         "index_body": index_body,            # 大盘指数实体（百分点，阳正阴负）
@@ -173,11 +187,13 @@ def _minmax_sub(values: list[float], today: float) -> float:
     return round(100 * (today - lo) / (hi - lo), 1)
 
 
-def _ensure_raw(pro, dates: list[str]) -> dict[str, Any]:
-    """确保 dates 的原始指标已落库，缺失则采集并 upsert。返回 {date: indicators}。"""
+def _ensure_raw(pro, dates: list[str], required_fields: Optional[set[str]] = None) -> dict[str, Any]:
+    """确保 dates 的原始指标已落库；缺日期或缺必需字段时重新采集并 upsert。"""
     cache = db.fetch_daily_sentiment(dates)
+    required = required_fields or set()
     for d in dates:
-        if d not in cache:
+        current = cache.get(d, {})
+        if d not in cache or any(field not in current for field in required):
             raw = _collect(pro, d)
             if raw:
                 db.upsert_daily_sentiment(d, raw)
@@ -246,6 +262,96 @@ def sentiment_temperature(p: dict) -> dict:
     return {"source": "sentiment_temperature", "fetched_at": common.now_str(),
             "weights": weights, "window_size": win,
             "note": f"0-100，越高越热；子分按当天之前 {win} 个交易日窗口 min-max 归一", **r}
+
+
+def _extreme_for(cache: dict[str, Any], target: str,
+                 all_dates: list[str]) -> Optional[dict[str, Any]]:
+    """按含当日在内的固定 7 个交易日计算市场情绪极端指数。"""
+    idx = all_dates.index(target) if target in all_dates else -1
+    if idx < EXTREME_WINDOW - 1:
+        return None
+    window_dates = all_dates[idx - EXTREME_WINDOW + 1:idx + 1]
+    if any(d not in cache or any(field not in cache[d] for field in EXTREME_REQUIRED_FIELDS)
+           for d in window_dates):
+        return None
+
+    amplitudes = [float(cache[d]["market_amp"]) for d in window_dates]
+    turnovers = [float(cache[d]["turnover"]) for d in window_dates]
+    amplitude_score = _minmax_sub(amplitudes, amplitudes[-1])
+    volume_shrink_score = round(100.0 - _minmax_sub(turnovers, turnovers[-1]), 1)
+    extreme_index = round((amplitude_score + volume_shrink_score) / 2.0, 1)
+    level = next(name for threshold, name in EXTREME_LEVELS if extreme_index >= threshold)
+
+    if extreme_index >= 80:
+        selection_bias = "行情高度极端：强倾向分析连板股与断板反包股，仍须过滤高位、流动性和逻辑风险"
+    elif extreme_index >= 60:
+        selection_bias = "行情偏极端：适度提高连板股与断板反包股的候选分析优先级"
+    else:
+        selection_bias = "行情极端度有限：不额外提高连板与断板反包候选优先级"
+
+    return {
+        "date": target,
+        "extreme_index": extreme_index,
+        "level": level,
+        "components": {
+            "amplitude": {
+                "raw_today": round(amplitudes[-1], 4),
+                "normalized_7d": amplitude_score,
+                "window_min": round(min(amplitudes), 4),
+                "window_max": round(max(amplitudes), 4),
+            },
+            "volume_shrink": {
+                "raw_today": round(turnovers[-1], 2),
+                "normalized_7d": volume_shrink_score,
+                "window_min": round(min(turnovers), 2),
+                "window_max": round(max(turnovers), 2),
+            },
+        },
+        "window_dates": window_dates,
+        "selection_bias": selection_bias,
+    }
+
+
+@register("sentiment_extreme_index", "sentiment",
+          "市场情绪极端指数 0-100：全市场平均日内振幅越大、成交额越缩小则越极端；"
+          "两项固定各占50%，按含当日在内最近7个交易日归一，不支持配置。"
+          "指数越高，越倾向分析连板股与断板反包股",
+          params=[{"name": "date", "type": "string", "required": False, "desc": "YYYYMMDD，默认最近交易日"},
+                  {"name": "days", "type": "int", "required": False, "default": 15,
+                   "desc": "返回走势的交易日数，3-30；不影响固定7日归一窗口"}],
+          returns="extreme_index / level / components / recent / selection_bias / window_dates")
+def sentiment_extreme_index(p: dict) -> dict:
+    pro = common.get_pro()
+    end = p.get("date") or common.last_trade_date()
+    days = max(3, min(30, int(p.get("days", 15))))
+    dates = _trade_dates(pro, end, days + EXTREME_WINDOW - 1)
+    if not dates:
+        return {"source": "sentiment_extreme_index", "fetched_at": common.now_str(),
+                "error": "无法获取交易日窗口"}
+    cache = _ensure_raw(pro, dates, EXTREME_REQUIRED_FIELDS)
+    available = [d for d in dates
+                 if d in cache and all(field in cache[d] for field in EXTREME_REQUIRED_FIELDS)]
+    effective_end = end if end in available else (available[-1] if available else end)
+    latest = _extreme_for(cache, effective_end, dates)
+    if latest is None:
+        return {"source": "sentiment_extreme_index", "fetched_at": common.now_str(),
+                "error": "数据不足（需要完整7个交易日的振幅与成交额）"}
+
+    recent: list[dict[str, Any]] = []
+    for trade_date in dates:
+        item = _extreme_for(cache, trade_date, dates)
+        if item:
+            recent.append({"date": trade_date, "extreme_index": item["extreme_index"],
+                           "level": item["level"]})
+    return {
+        "source": "sentiment_extreme_index",
+        "fetched_at": common.now_str(),
+        "window_size": EXTREME_WINDOW,
+        "weights": {"amplitude": 0.5, "volume_shrink": 0.5},
+        "recent": recent[-days:],
+        "note": "固定7日归一（含当日）：全市场平均振幅与缩量程度各占50%，不支持配置",
+        **latest,
+    }
 
 
 @register("market_timing", "sentiment",

@@ -412,8 +412,26 @@ async function syncSentimentWindow() {
     $("s-window").value = c.window;
     $("s-window").min = c.range?.[0] ?? 3;
     $("s-window").max = c.range?.[1] ?? 30;
-  } catch (e) { /* 忽略 */ }
+    $("s-current-window").textContent = `归一窗口：${c.window} 日`;
+  } catch (e) { /* 看板读取仍可继续 */ }
 }
+
+function openSentimentSettings() {
+  $("s-window-status").textContent = "";
+  $("s-window-save").disabled = !isAdmin();
+  $("s-window-save").title = isAdmin() ? "保存服务端归一窗口并刷新" : "只读用户不能修改归一窗口";
+  $("sentiment-settings").classList.remove("hidden");
+}
+
+$("s-settings-btn").onclick = openSentimentSettings;
+$("s-settings-cancel").onclick = () => $("sentiment-settings").classList.add("hidden");
+$("sentiment-settings").addEventListener("click", (e) => {
+  if (e.target.id === "sentiment-settings") $("sentiment-settings").classList.add("hidden");
+});
+$("s-refresh").onclick = () => {
+  $("sentiment-settings").classList.add("hidden");
+  runSentiment();
+};
 
 $("s-window-save").onclick = async () => {
   if (!isAdmin()) { toast("用户 Key 不可修改归一化窗口", "bad"); return; }
@@ -423,23 +441,34 @@ $("s-window-save").onclick = async () => {
   st.textContent = "保存中…";
   try {
     const r = await call("set_sentiment_config", { window: w });
-    if (r.applied) { st.textContent = `已应用窗口 ${r.window}`; runSentiment(); }
-    else st.textContent = r.error || "保存失败";
+    if (r.applied) {
+      st.textContent = `已应用窗口 ${r.window}`;
+      $("s-current-window").textContent = `归一窗口：${r.window} 日`;
+      $("sentiment-settings").classList.add("hidden");
+      runSentiment();
+    } else st.textContent = r.error || "保存失败";
   } catch (e) { st.textContent = "保存失败：" + e.message; }
 };
 
-$("s-run").onclick = runSentiment;
 async function runSentiment() {
-  const btn = $("s-run"); btn.disabled = true;
+  const refreshBtn = $("s-refresh");
+  refreshBtn.disabled = true;
   const date = $("s-date").value.trim();
   const days = Number($("s-days").value) || 15;
   $("s-result").innerHTML = '<div class="empty">读取中…</div>';
   $("s-trend").innerHTML = '<div class="empty">读取中…</div>';
+  $("s-extreme-summary").innerHTML = '<div class="empty">读取中…</div>';
+  $("s-extreme-trend").innerHTML = '<div class="empty">读取中…</div>';
+  $("s-extreme-fill").style.height = "0%";
+  $("s-extreme-value").textContent = "--";
+  $("s-extreme-level").textContent = "极端指数";
   // 单日温度 + 指标分解
   try {
     const d = await call("sentiment_temperature", date ? { date } : {});
     if (d.error) throw new Error(d.error);
     setGauge(d.temperature, d.level);
+    $("s-current-date").textContent = `日期：${d.date || "最近交易日"}`;
+    $("s-current-window").textContent = `归一窗口：${d.window_size || $("s-window").value || "--"} 日`;
     $("s-meta").textContent = `${d.date} · 窗口 ${d.window_dates?.length || 0} 日`;
     $("s-breadth").textContent = d.breadth ? `上涨 ${d.breadth.adv} 家 · 下跌 ${d.breadth.dec} 家` : "";
     const inds = d.indicators || {};
@@ -465,8 +494,41 @@ async function runSentiment() {
     $("s-trend").innerHTML = '<div class="empty">走势读取失败：' + e.message + "</div>";
     $("s-timing").innerHTML = '<div class="empty">择时读取失败</div>';
   }
-  btn.disabled = false;
+  // 固定 7 日归一的情绪极端指数（不读取情绪窗口配置）
+  try {
+    const params = { days };
+    if (date) params.date = date;
+    const e = await call("sentiment_extreme_index", params);
+    if (e.error) throw new Error(e.error);
+    const series = (e.recent || []).map((x) => ({ label: fmtDate(x.date), value: x.extreme_index }));
+    $("s-extreme-trend").innerHTML = svgLine(series, { min: 0, max: 100, color: "#ef4444" });
+    $("s-extreme-meta").textContent = `${series.length} 个交易日 · 固定 ${e.window_size || 7} 日归一`;
+    renderExtreme(e);
+  } catch (e) {
+    $("s-extreme-summary").innerHTML = '<div class="empty">极端指数读取失败：' + e.message + "</div>";
+    $("s-extreme-trend").innerHTML = '<div class="empty">极端指数走势读取失败</div>';
+  }
+  refreshBtn.disabled = false;
 };
+
+function renderExtreme(e) {
+  const amplitude = e.components?.amplitude || {};
+  const volume = e.components?.volume_shrink || {};
+  const value = Math.max(0, Math.min(100, Number(e.extreme_index) || 0));
+  const color = value >= 80 ? "#ef4444" : (value >= 60 ? "#f97316" : (value >= 40 ? "#f59e0b" : "#3b82f6"));
+  $("s-extreme-fill").style.height = `${value}%`;
+  $("s-extreme-fill").style.background = color;
+  $("s-extreme-bulb").style.background = color;
+  $("s-extreme-value").textContent = e.extreme_index ?? "--";
+  $("s-extreme-level").textContent = e.level || "极端指数";
+  $("s-extreme-summary").innerHTML = `
+    <div class="timing-badges">
+      <div class="badge"><small>市场振幅</small><b>${amplitude.raw_today ?? "--"}%</b></div>
+      <div class="badge"><small>振幅 7 日归一</small><b>${amplitude.normalized_7d ?? "--"}</b></div>
+      <div class="badge"><small>缩量 7 日归一</small><b>${volume.normalized_7d ?? "--"}</b></div>
+    </div>
+    <div class="timing-stance">${e.selection_bias || ""}</div>`;
+}
 
 function renderTiming(t) {
   const hint = t.buy_weight_hint ?? 1;

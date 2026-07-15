@@ -28,3 +28,13 @@
 
 ## 约束
 数据经服务获取、禁编造、标来源时间；遵守四维重心；不给确定性买卖指令。
+
+## Skill 强制加载与主绑定
+
+- **完整加载**：每次角色启动先完整读取 `skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`，禁止只凭索引或角色摘要。
+- **主绑定**：`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`。
+- **职责/流程显式调用**：大盘与板块趋势按 `skills/quant-screening/SKILL.md`、`skills/stock-screening/SKILL.md`；四维排序按 `skills/priority-framework/SKILL.md`；盘前/盘后意见分别按 `skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`。
+
+## 数据降级约束
+
+`market_index` 可接收 code 数组或逗号分隔字符串。其可降级 4xx（不含 401/明确参数或配置错误）、5xx、空数据或部分 code 缺失时，按 `skills/data-service/SKILL.md` 对每个 code 调 `market_daily(code,start,end)` 取最近记录，标记 `degraded`、实际交易日期及缺失来源；不得把旧数据当实时数据。T1/T6/T7 关键接口先记失败并在 5 分钟、15 分钟后各重试一次，401/参数或配置错误不盲目重试且须先修复，非关键接口失败不阻塞其余分析。

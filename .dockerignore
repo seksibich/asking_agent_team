@@ -6,7 +6,7 @@
 **/.DS_Store
 .git/
 .kiro/
-# agent 文档不进服务镜像，只需 agent/skills/*/scripts 功能脚本
+# 服务镜像仅保留版本解析所需的 agent/init.md，其余 Agent 文档不进入镜像
 agent/memory/
 agent/agents/
 agent/*.md
@@ -14,3 +14,4 @@ agent/skills/**/SKILL.md
 doc/
 profile/CHANGELOG-AGENT.md
 *.md
+!agent/init.md

@@ -30,6 +30,7 @@ import pandas as pd
 
 import common
 import db
+import factor_contract
 import factor_config
 from registry import register
 
@@ -188,16 +189,20 @@ def _minmax_sub(values: list[float], today: float) -> float:
 
 
 def _ensure_raw(pro, dates: list[str], required_fields: Optional[set[str]] = None) -> dict[str, Any]:
-    """确保 dates 的原始指标已落库；缺日期或缺必需字段时重新采集并 upsert。"""
-    cache = db.fetch_daily_sentiment(dates)
+    """只复用当前情绪公式契约的原始指标；旧版或缺字段记录重新采集。"""
+    contract = factor_contract.base_contract("sentiment")
+    db.save_factor_contract(contract)
+    cache = db.fetch_daily_sentiment(
+        dates, contract["factor_version"], contract["schema_hash"])
     required = required_fields or set()
-    for d in dates:
-        current = cache.get(d, {})
-        if d not in cache or any(field not in current for field in required):
-            raw = _collect(pro, d)
+    for date in dates:
+        current = cache.get(date, {})
+        if date not in cache or any(field not in current for field in required):
+            raw = _collect(pro, date)
             if raw:
-                db.upsert_daily_sentiment(d, raw)
-                cache[d] = raw
+                db.upsert_daily_sentiment(
+                    date, raw, contract["factor_version"], contract["schema_hash"])
+                cache[date] = raw
     return cache
 
 
@@ -260,7 +265,8 @@ def sentiment_temperature(p: dict) -> dict:
         return {"source": "sentiment_temperature", "fetched_at": common.now_str(),
                 "error": "数据不足（窗口内有效交易日不足）"}
     return {"source": "sentiment_temperature", "fetched_at": common.now_str(),
-            "weights": weights, "window_size": win,
+            "weights": weights, "factor_contract": factor_config.model_contract("sentiment"),
+            "window_size": win,
             "note": f"0-100，越高越热；子分按当天之前 {win} 个交易日窗口 min-max 归一", **r}
 
 
@@ -417,6 +423,7 @@ def market_timing(p: dict) -> dict:
         "cold_streak": cold_streak,
         "hot_streak": hot_streak,
         "latest_temperature": latest,
+        "factor_contract": factor_config.model_contract("sentiment"),
         "stance": stance,
         "buy_weight_hint": buy_weight_hint,
         "note": "择时结论用于调节选股出手权重与仓位；冰点连续→提高买入权重，高热连续→警惕退潮",

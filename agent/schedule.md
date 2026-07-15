@@ -33,7 +33,8 @@
 - **W1/M1/D1/P1**必须按绑定列逐个点名并完整执行对应 `skills/<name>/SKILL.md`，不得用“全体子Agent”“回测子Agent”等摘要替代 Skill 绑定。
 - **盯盘（T3/T5）用主 Agent 单跑**，追求时效；重量级（T1/T7/W1/M1/用户分析）才启用团队。
 - **回测→自主微调闭环**（T7/W1/M1，署名+留痕）：回测子Agent 出调参建议 → 主 Agent 复核 → `get_factor_config` 取最新因子列表 → `set_factor_weights` 提交全部因子权重（**仅微调权重≠0 的因子、小步、归一，署名 actor + reason**，缺失/多余/差异/和≠1 会被拒并指引）。综合情绪指数判断确定性，**回测与情绪指数持续背离时**才 `set_factor_weights(model=sentiment)` 微调情绪权重。每次修改返回 `version_id` 写入学习日志（可 `get_config_history`/`get_config_version` 定位、`restore_config_version` 回滚）。
-- 仅调度器正式候选登记 `category=auto`；既有 watch/holding 按状态维护。用户主动研究默认 ephemeral，明确持久化后才新增 watch，且 watch 不参与 auto 调参。
+- **D1 每日 17:45**同时计算并持久化 `daily_factors` 与 `daily_sector_scores`；个股因子中的行业强度只读取同交易日行业评分分位，缺失不得臆造。
+- 仅调度器正式候选登记 `category=auto`；用户明确触发正式选股任务并通过完整流程的候选登记 `category=manual`；既有 watch/holding 按状态维护。`manual|watch|holding` 均不参与 auto 调参，普通研究仍为 ephemeral。
 
 ## 非交易日
 - T1~T7 遇 `trade_open=false` 直接返回不产出。
@@ -57,3 +58,11 @@
 - **非关键接口**：失败不得阻塞整份报告；在来源表和风险提示中披露缺口即可继续。
 
 > 调度器触发每一条任务时，主 Agent 与被启动角色仍须先完整加载固定 12 个 `skills/*/SKILL.md`（含 `stock-research`）；绑定列是主用 Skill 清单，不是免读清单。`stock-research` 仅作为用户主动单股调研入口，不加入定时 T1/T6/T7 的必执行绑定。
+
+## v1.6 调度补充规则
+
+- **D1 交易日判定**：统一使用 Tushare `trade_cal`。上海时间交易日15:00后才允许计算当天；收盘前、周末或休市日补最近已完成交易日。当日行情未就绪记失败并进入 `retryable_dates`，历史空缓存允许重取。
+- **D1 发布门禁**：只把 `success`、覆盖率达标、公式版本/结构哈希/完整依赖指纹和 `run_id` 一致的结果视为可用；`partial|failed` 可重试但不得覆盖同契约既有成功快照。预计算状态页收盘前隐藏未完成当天记录与旧终态任务。
+- **T7 正式选股**：先保存 `screen_quant`/`screen_trend` 的 `screening_run_id`，再登记 auto；用户正式选股同理登记 manual。未引用有效筛选运行不得持久化为正式候选。
+- **T7 预判与回测**：当晚预判目标为下一 SSE 交易日；当晚回测默认核验上一交易日登记且目标日已成熟的预判。未成熟、legacy 和行情失败必须披露，不得按预判当天行情补算。
+- **T7/W1/M1 调参**：仅当回测返回 `optimization_gate.eligible=true` 时执行，并传 `backtest_snapshot_id` 与 `expected_parent_version`；否则只记录建议，不修改权重。

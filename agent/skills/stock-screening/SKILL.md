@@ -14,8 +14,8 @@ disable-model-invocation: false
 ## 双入口与流程
 
 - **自动入口**：T7/W1 等调度任务自动识别当期题材/事件并产出正式候选，符合规则者可进入 `auto`。
-- **用户主动入口**：用户可指定具体事件、行业导向或热门板块；默认 `ephemeral`，仅明确要求持久化后转 `watch`。
-- 两个入口共用下列流程、评分和四维门槛，区别只在输出目录与持久化类别。
+- **用户主动入口**：用户可指定具体事件、行业导向或热门板块；通过完整流程形成的正式候选登记为 `manual`，普通研究或未过门槛线索仍为 `ephemeral`。
+- 两个入口共用下列流程、评分和四维门槛；区别在输出目录、持久化类别以及是否进入自动调参（仅 auto 可进入）。
 
 ### 1. 动态题材/事件 → 候选映射
 - 综合消息面（新闻/公告/可信外部来源）、热榜、涨停连板、量能和资金聚类，识别具体事件及题材；不得局限申万、东财、同花顺既有板块。
@@ -42,7 +42,7 @@ disable-model-invocation: false
 
 ### 5. 产出选股报告
 - 调度器正式自动选股写 `选股/yyyyMMdd-趋势选股.md`；用户按事件/行业导向/热门板块主动触发时由团队执行，写 `投研/yyyyMMdd-{主题}选股/研究报告.md`。
-- 用户主动选股默认 ephemeral：不写 predictions、daily、观察池，不调用 `log_selection`，不回测；仅用户明确要求加入观察/持续跟踪/纳入后续回测时更新 `关注与持仓.md` 并 `log_selection(category=watch)`，watch 只做独立观察性回测且不调参。
+- 用户触发选股任务中通过正式门槛的候选逐只调用 `log_selection(category=manual)`；必须保存选股时价格、热点/主线、当时核心事件、炒作路线地位（核心/分支/补涨/非主线）、完整理由链和全部量化因子快照。`manual` 做隔离的 1/3/7/30 日回测但不参与 auto 调参；普通研究、不成体系的线索和未通过门槛者保持 ephemeral。用户要求持续跟踪时再更新 `关注与持仓.md` 并补记 `watch`。
 - 执行 `skills/output-format/SKILL.md` 的首屏结论表、四维打分表、趋势主线表、量化分组表和正式候选表：
 ```markdown
 # 趋势选股 — YYYY-MM-DD
@@ -58,11 +58,11 @@ disable-model-invocation: false
 ```
 正式候选表逐只保留：量化综合分与关键因子、四维分、板块/产业链、板块短中期动量/量能/阶段、主线关系、催化与炒作路径、完整理由链、情绪与择时、风险与证伪。
 
-### 6. 记忆
-- 只有**调度器自动链路**中独立通过本正式量化/趋势流程的候选，才可按自动规则写 `predictions.jsonl`、观察池并调用 `log_selection(category=auto)`。
-- 用户主动方向选股、单股调研或行业/事件研究，无论评分多高都默认 `ephemeral`，不得写 predictions/daily/观察池或调用 `log_selection`；仅用户明确要求加入观察、持续跟踪或纳入后续回测时，才写 `watch`。
-- `watch` 只作 1/3/7/30 日观察性回测，必须排除 auto 胜率、`tuning_hints` 和因子/情绪调参。
-- 业绩增长参考池不是正式选股，其成员不得因进入参考池而持久化；同一股票若独立通过调度器正式流程，只能由该正式流程按上述 auto 规则持久化。
+### 6. 记忆与选股快照
+- **调度器自动链路**中独立通过正式量化/趋势流程的候选，调用 `log_selection(category=auto)`，并按自动规则写 daily/观察池；需要方向性预判时才另写 predictions。
+- **用户明确触发的选股任务**中通过相同正式流程的候选，调用 `log_selection(category=manual)`；不写自动 predictions/daily/观察池，但必须保存热点、事件、短线地位、选股价、完整理由和全部量化因子，供 `selection_dashboard` 与隔离回测使用。
+- 普通单股调研或行业/事件研究仍为 `ephemeral`；用户要求持续跟踪时才另记 `watch`。`manual|watch|holding` 必须排除 auto 胜率、`tuning_hints` 和因子/情绪调参。
+- 业绩增长参考池不是正式选股，其成员不得因进入参考池而持久化；同一股票只有独立通过上述正式流程才可按触发来源写 auto 或 manual。
 
 ## 严谨要求
 - 技术面筛选数据来自 `screen_trend`，禁止编造
@@ -76,3 +76,9 @@ disable-model-invocation: false
 - **直接依赖**：`data-service`、`priority-framework`、`output-format`、`industry-analysis`。
 - **协同 Skills**：`quant-screening`（板块与因子候选）、`stock-research`（单股深挖入口）、`pre-market`/`post-market`（时段策略）、`review-learning`（auto 或明确 watch 的选股回测）。
 - 数据或新闻缺失时按 `skills/data-service/SKILL.md` 降级并标 `degraded`，不得用技术分替代缺失的涨价/逻辑证据。
+
+## v1.6 正式候选运行绑定（强制）
+
+- 正式候选必须来自当日真实 `screen_quant` 或 `screen_trend` 运行，并在 `log_selection(category=auto|manual)` 中携带其 `screening_run_id`。服务端将核对候选代码、排名、原始分、0~1分位、公式/结构/权重版本及上游依赖；运行过期或不匹配时必须重新筛选。
+- 禁止调用方自行填写综合分、因子快照或使用未来最近因子替代筛选证据。因子只允许取选股日或之前的成功预计算快照；选股价只取选股日当天可核验收盘价。
+- 结构化行情或核心因子缺失时失败并披露，不得用技术分补齐缺失的涨价、逻辑或行业证据；仅资讯类可按多源规则外部求证。

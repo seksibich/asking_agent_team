@@ -9,24 +9,28 @@ disable-model-invocation: false
 
 ## 一、每日回测（并入 22:00 综合复盘）
 
-见 post-market。**仅调度器自动链路中的正式方向性预判**可先用 `log_prediction` 登记到 DB（按 日期+标的+方向 幂等），复盘调 `predictions_backtest`（读 DB 正式预判 → 用 `market_daily` 验证 → 分 `driver` 统计准确率）→ 写 `学习日志`。用户主动单股调研、方向选股、行业/事件研究默认 ephemeral，不调用 `log_prediction`、不写 `predictions.jsonl`；转为 watch 后仍只做 selection 观察性回测，不进入 auto 预判胜率。
+见 post-market。**仅调度器自动链路中的正式方向性预判**可先用 `log_prediction` 登记到 DB（按 日期+标的+方向 幂等），复盘调 `predictions_backtest`（读 DB 正式预判 → 用 `market_daily` 验证 → 分 `driver` 统计准确率）→ 写 `学习日志`。用户主动单股调研、方向选股、行业/事件研究不调用 `log_prediction`、不写 `predictions.jsonl`；其中用户触发正式选股只以 `manual` selection 做隔离回测，不进入 auto 预判胜率。
 
-## 一之二、选股回测闭环（ephemeral / watch / auto 严格隔离）★
+## 一之二、选股回测闭环（ephemeral / auto / manual / watch / holding 严格隔离）★
 
 - **auto**：仅调度器正式自动候选，进入自动胜率/超额、`tuning_hints` 与因子/情绪调参。
-- **ephemeral**：用户主动单股调研或按行业/板块/事件选股默认不登记、不回测。
-- **watch**：仅用户明确要求「加入观察/持续跟踪/纳入后续回测」后登记；跟踪 1/3/7/30 日收益，但必须与 auto 分组，只作观察统计，绝不进入自动胜率、`tuning_hints` 或因子/情绪调参。
+- **manual**：用户明确发起选股任务并通过完整正式门槛的候选；保存完整选股快照，跟踪 1/3/7/30 日收益，但不进入 auto 胜率、`tuning_hints` 或调参。
+- **ephemeral**：普通单股调研、行业/事件研究或未通过正式门槛的线索，不登记、不回测。
+- **watch**：用户明确要求持续观察后登记；只作观察统计，不进入 auto 调参。
 - **holding**：用户持仓仅作观察，沿用持仓规则，不进入 auto 调参。
 
 ### 登记（选股当时）
-每次自动选出标的后，调 `log_selection` 登记到服务端 DB（按 日期+代码+category **幂等去重**，重复登记不会重复计数）：
+每只正式候选都调 `log_selection`（按 日期+代码+category **幂等去重**）：
 ```json
-{"function":"log_selection","params":{"code":"600XXX.SH","name":"某某","score":0.79,"driver":"涨价","reason":"...","category":"auto"}}
+{"function":"log_selection","params":{"code":"600XXX.SH","name":"某某","score":79,"driver":"涨价","reason":"完整理由链与证伪条件","category":"auto|manual","selected_price":12.34,"hotspot":"化工涨价","event":"产品报价连续上调","market_role":"核心","factors":{"mom_12_1":0.2,"industry_strength":0.9,"score":1.2}}}
 ```
-用户关注/持仓用 `category=watch|holding`（仅观察）；用户主动指定方向的选股、单股调研和行业/事件研究默认 `ephemeral`、不登记，无论评分多高也不得自动升级。仅用户明确要求加入观察、持续跟踪或纳入后续回测时才持久化为 watch；登记理由/记忆至少包含 `theme_event`、`driver`、直接/间接受益、热度、阶段、证据、证伪、加入来源与日期；服务字段不足时将完整元数据保存在 `关注与持仓.md` 并在 reason 中保留摘要。
+- 调度器候选用 `auto`，用户触发正式选股用 `manual`，关注/持仓用 `watch|holding`。
+- `reason` 必须说明对应热点、当时事件、炒作路线短线地位和实际受益证据；`factors` 应传选股时全部个股因子、行业强度和综合分，禁止只存最终排名。若漏传，服务端会从同日/最近可用 `daily_factors` 自动补齐并标来源；仍取不到则明确记录 `factor_error`，不得伪造。
+- 若调用方拿不到选股时价格，可省略 `selected_price`，由服务端抓最近收盘价；抓取失败必须保留为空并披露，禁止估算。
+- 普通研究及业绩增长参考池保持 ephemeral，不调用 `log_selection`。
 
-### 回测（定期）
-调 `selection_backtest`，分别展示 auto/watch/holding。auto 计算 1/3/7/30 交易日涨幅、胜率、相对沪深300超额，并可按 driver/分数桶生成 `tuning_hints`；watch 同样跟踪 1/3/7/30 日收益，但只作观察统计，必须从自动胜率、`tuning_hints` 和调参输入中过滤。
+### 回测与看板（定期）
+调 `selection_backtest` 分别展示 auto/manual/watch/holding；仅 auto 生成自动胜率、超额和 `tuning_hints`。调 `selection_dashboard` 可全量或按日期、热点、类别查看选股时价格、最新价/涨幅/换手/成交额、选股后涨跌、理由与量化因子快照。
 
 ### 据回测自主微调（每晚，署名 + 留痕）★
 每晚回测后，允许 Agent（回测分析师产出建议 → 主 Agent 复核）**自主微调量化选股中权重不为 0 的因子**，并落库生效：
@@ -54,7 +58,7 @@ disable-model-invocation: false
 ## 业绩增长参考池隔离（T7 强制）
 
 - T7 的「业绩增长参考池」仅为公告事实参考，不是自动选股、关注或持仓样本。
-- 参考池记录不得调用 `log_selection`，不得写 `predictions.jsonl` 或观察池，不得映射为 `category=auto|watch|holding`，不得进入 `predictions_backtest`、`selection_backtest`、胜率/超额统计、`tuning_hints` 或任何因子/情绪参数调优依据。
+- 参考池记录不得调用 `log_selection`，不得写 `predictions.jsonl` 或观察池，不得映射为 `category=auto|manual|watch|holding`，不得进入 `predictions_backtest`、`selection_backtest`、胜率/超额统计、`tuning_hints` 或任何因子/情绪参数调优依据。
 - 同一股票若独立通过正式 `screen_quant`/`screen_trend` 流程，只允许以正式候选身份按正常规则进入回测；样本理由和来源必须来自正式流程，不能继承“进入业绩参考池”这一事实。
 - 回测报告须声明已排除业绩增长参考池；若发现误入样本，先剔除并披露，不得据此调参。
 
@@ -72,15 +76,20 @@ disable-model-invocation: false
 2. 调 `screen_trend` + `screen_quant`（自动跑 `top_n=50`）生成下周候选池，并**按主线/产业链分组解读**（逐股板块/行业/炒作路径 + 消息面/行业新闻/近期主线，见 output-format 表格5）
 3. 复查 `观察池` 所有线索，更新/兑现/淘汰
 4. 统计本周预判准确率（`predictions_backtest`）+ 自动选股表现（`selection_backtest`），产出调参建议
-5. 产出 `周报/yyyy年第NN周周报.md`：
+5. 产出 `周报/yyyy年第NN周周报.md`（首屏先给一眼结论，再展开）：
 ```markdown
-# 第NN周周报 — YYYY-MM-DD
-## 本周主线与轮动
-## 涨价链进展（观察池复查）
-## 趋势主线跟踪表
-## 下周候选池（趋势+量化 top_n=50，四维打分 + 按主线/产业链分组解读）
-## 本周预判复盘（分驱动准确率）
-## 数据来源
+# 📅 第NN周周报 — YYYY-MM-DD
+## 🎯 一眼结论（核心摘要）
+- 📋 本周复盘一句话：<主线演绎 + 预判准确率 + 最值得记住的经验/教训>
+- 🔥 下周重点主线/题材：
+- 🎯 下周重点候选（题材/事件 → 个股）：
+- ⚠️ 最大风险/证伪：
+## 🔥 本周主线与轮动
+## 📈 涨价链进展（观察池复查）
+## 📊 趋势主线跟踪表
+## 🎯 下周候选池（趋势+量化 top_n=50，四维打分 + 按主线/产业链分组解读）
+## 📋 本周预判复盘（分驱动准确率）
+## 🔗 数据来源
 ```
 
 ## 三、月报（每月末）
@@ -88,7 +97,7 @@ disable-model-invocation: false
 1. 汇总当月主线演绎、涨价链兑现情况
 2. 更新 `用户画像.md`
 3. 统计当月准确率与改进项
-4. 产出 `月报/yyyy年MM月月报.md`
+4. 产出 `月报/yyyy年MM月月报.md`（同样首屏先给 `## 🎯 一眼结论（核心摘要）`：📋 当月复盘一句话、🔥 下月主线预判、⚠️ 最大风险，再展开正文；主要章节沿用统一 emoji 图标）
 
 ## 严谨要求
 - 回测结果基于真实行情数据，禁止美化准确率
@@ -100,3 +109,16 @@ disable-model-invocation: false
 - **直接依赖**：`data-service`（真实行情、错误与重试）、`quant-screening`（因子契约）、`output-format`（回测报告）、`post-market`（每日闭环）。
 - **协同 Skills**：`priority-framework`、`stock-screening`、`industry-analysis`、`stock-research`；其中 `stock-research` 仅在用户明确持久化为 watch 后提供观察样本，禁止进入 auto 调参。
 - 数据缺失时按 `skills/data-service/SKILL.md` 标 `degraded`，不计算伪准确率；T7 的关键接口执行 5/15 分钟延迟重试，非关键接口失败不阻塞已有样本的复盘。
+
+## v1.6 可审计回测与自动优化门禁（强制）
+
+### 预判回测
+- `log_prediction` 固化上海时间预测时刻和由 SSE `trade_cal` 确定的下一交易日；同一预判日期+标的记录不可变，反向冲突必须拒绝。
+- `predictions_backtest` 只核验目标交易日已完成的样本。缺目标日的旧记录标 `legacy_unverifiable`，未成熟、停牌/空行情、接口失败分别计数并披露；不得静默缩小样本，更不得用预判当天已发生的涨跌回填。
+- 回测默认保存 `snapshot_id`、计算口径版本、样本哈希、目标日和失败审计；准确率分母只含成熟且行情核验成功样本。
+
+### 选股收益与自动优化
+- 1/3/7/30 日收益使用 SSE 统一交易日；股票只接受 qfq 前复权，股票与沪深300必须同日入场/退出。停牌或精确日期缺价记失败，禁止前后错位或降级原始价。
+- `selection_backtest` 默认保存快照；只有当前因子契约和依赖下、来自可核验 `screen_quant` 运行的 `auto` 样本进入优化门禁，分桶唯一口径为 `score_percentile`。
+- 自动调参至少需要50个成熟30日样本、10个独立选股日、10个时序样本外样本，且样本外平均超额为正、超额胜率>50%。未满足时 `optimization_gate.eligible=false`，严禁自动调参。
+- 调参必须提交 `backtest_snapshot_id`、当前 `expected_parent_version` 和全部因子权重；每因子单次变化≤0.03，不得自动启用当前权重0因子。配置与版本必须单事务发布，CAS 冲突后刷新配置，不得覆盖他人版本。

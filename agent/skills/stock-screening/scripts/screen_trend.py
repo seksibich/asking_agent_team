@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sys
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -15,6 +16,7 @@ import pandas as pd
 
 import common
 import db
+import factor_contract
 import factors
 import factor_config
 from registry import register
@@ -80,6 +82,13 @@ def _sw_industry_codes(pro, term: str) -> list[str]:
                 continue
             col = _members_col(mdf)
             if not mdf.empty and col:
+                # index_member 默认包含历史调入调出记录，只保留当前有效成分；
+                # 否则已调出多年的旧成员也会被误判为当前行业股票。
+                if "is_new" in mdf.columns:
+                    mdf = mdf[mdf["is_new"].astype(str).str.upper().eq("Y")]
+                elif "out_date" in mdf.columns:
+                    out_date = mdf["out_date"].fillna("").astype(str).str.strip()
+                    mdf = mdf[(out_date == "") | (out_date >= common.today_str())]
                 codes.extend(mdf[col].astype(str).tolist())
     return codes
 
@@ -139,23 +148,23 @@ def _dc_concept_codes(pro, term: str) -> list[str]:
 
 
 def _term_members(pro, term: str, bdf: pd.DataFrame) -> set[str]:
-    """单个词条的成分股集合：在各数据源内取**并集**（覆盖粗→细的分级）。
+    """获取单个行业/主题词条的成分股。
 
-      1) stock_basic.industry 模糊匹配（tushare 行业字段，较粗，如“通信设备”）
-      2) 申万 L1/L2/L3 行业（index_classify + index_member；覆盖“PCB/电子布”等三级细分）
-      3) 同花顺概念/行业指数（ths_index + ths_member；覆盖“机器人/PCB铜箔”等主题概念）
-      4) 东财板块（dc_index + dc_member；补充热点概念）
-    某源无权限/积分时自动跳过，不影响其它源；因此即便 stock_basic 无“机器人”行业，
-    也能通过概念源命中该词条。
+    优先采用正式行业分类（stock_basic 行业 + 申万 L1-L3）。正式分类有命中时，
+    不再混入同花顺/东财概念成员，避免宽泛概念或错误概念归属污染行业结果；仅当
+    正式分类完全无命中时，才回退概念源，以保留“机器人”“PCB铜箔”等主题检索能力。
     """
-    s: set[str] = set()
+    classified: set[str] = set()
     if not bdf.empty and "industry" in bdf.columns:
         sel = bdf[bdf["industry"].astype(str).str.contains(term, case=False, regex=False, na=False)]
-        s.update(sel["ts_code"].astype(str).tolist())
-    s.update(_sw_industry_codes(pro, term))
-    s.update(_ths_concept_codes(pro, term))
-    s.update(_dc_concept_codes(pro, term))
-    return s
+        classified.update(sel["ts_code"].astype(str).tolist())
+    classified.update(_sw_industry_codes(pro, term))
+    if classified:
+        return classified
+
+    concepts = set(_ths_concept_codes(pro, term))
+    concepts.update(_dc_concept_codes(pro, term))
+    return concepts
 
 
 def _industry_members(pro, industries: list[str]) -> list[str]:
@@ -196,7 +205,7 @@ def _passes_trend_filter(fac: dict[str, Any]) -> bool:
 def run(industries: Optional[list[str]] = None, top_n: int = 30) -> dict[str, Any]:
     """趋势选股主入口。"""
     pro = common.get_pro()
-    end = common.last_trade_date()
+    end: Optional[str] = None
     if not industries:
         return {
             "source": "screen/trend",
@@ -208,64 +217,87 @@ def run(industries: Optional[list[str]] = None, top_n: int = 30) -> dict[str, An
     rows: list[dict[str, Any]] = []
     data_source = "precomputed"
 
-    # 仅使用质量合格且公式版本一致的预计算因子。
+    stock_contract = factor_contract.base_contract("stock")
+    trend_contract = factor_config.model_contract("trend")
+    sector_dependency = factor_config.model_contract("sector")
+    data_dependencies = factor_contract.stock_data_dependencies(sector_dependency)
+    dependency_hash = factor_contract.fingerprint(data_dependencies)
+    trend_contract["source_factor_contract"] = stock_contract
+    trend_contract["data_dependencies"] = data_dependencies
+    trend_contract["dependency_hash"] = dependency_hash
+    end = db.latest_usable_factor_date(
+        stock_contract["factor_version"], stock_contract["schema_hash"], dependency_hash)
+    if not end:
+        return {"source": "screen/trend", "fetched_at": common.now_str(),
+                "industries": industries, "trade_date": None,
+                "factor_contract": trend_contract, "candidates": [],
+                "error": "没有与当前完整因子契约一致的成功预计算数据"}
+    # 仅使用质量合格、公式版本与结构哈希均一致的完整预计算因子。
     db_hit = False
     try:
-        db_hit = db.has_usable_daily_factors(end, factors.STOCK_FACTOR_VERSION)
+        db_hit = db.has_usable_daily_factors(
+            end, stock_contract["factor_version"], schema_hash=stock_contract["schema_hash"],
+            dependency_hash=dependency_hash)
     except Exception:
         db_hit = False
     if db_hit:
-        fac_map = {r["code"]: r["factors"] for r in db.fetch_daily_factors(end)}
+        fac_map = {row["code"]: row for row in db.fetch_daily_factors(end)}
         for code in ind_codes:
-            fac = fac_map.get(code)
-            if fac and _passes_trend_filter(fac):
-                fac = dict(fac)
+            record = fac_map.get(code)
+            if (not record or record.get("schema_hash") != stock_contract["schema_hash"]
+                    or record.get("dependency_hash") != dependency_hash):
+                continue
+            fac = dict(record["factors"])
+            valid, _ = factor_contract.validate_payload("stock", fac)
+            if valid and _passes_trend_filter(fac):
                 fac["code"] = code
                 rows.append(fac)
 
-    # 回退实时逐只
     if not rows:
-        data_source = "realtime"
-        start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=420)).strftime("%Y%m%d")
-        try:
-            basics = pro.daily_basic(trade_date=end, fields="ts_code,turnover_rate")
-            turnover_map = {r["ts_code"]: r.get("turnover_rate") for r in basics.to_dict(orient="records")}
-        except Exception:
-            turnover_map = {}
-        for code in ind_codes[: max(top_n * 5, 120)]:
-            try:
-                df = pro.daily(ts_code=code, start_date=start, end_date=end)
-            except Exception:
-                continue
-            fac = factors.compute_stock_factors(df, turnover_map.get(code))
-            if fac is None or not _passes_trend_filter(fac):
-                continue
-            fac["code"] = code
-            rows.append(fac)
+        return {"source": "screen/trend", "fetched_at": common.now_str(),
+                "industries": industries, "trade_date": end,
+                "factor_contract": trend_contract, "candidates": [],
+                "error": "没有与当前因子契约一致的合格预计算数据",
+                "note": "为防止缺失行业强度或旧版因子被静默补0，趋势筛选不再降级到不完整实时计算。"}
 
-    if not rows:
-        return {"source": "screen/trend", "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "industries": industries, "candidates": [], "note": "无满足趋势过滤的候选"}
-
-    tbl = factors.composite_score(pd.DataFrame(rows), factor_config.effective_weights("trend"))
+    tbl = factors.composite_score(
+        pd.DataFrame(rows), factor_config.effective_weights("trend"), strict=True)
     tbl = tbl.sort_values("score", ascending=False)
-    cols = ["code", "price", "mom_12_1", "trend_ma", "high_52w", "vol_confirm", "score"]
-    cols = [c for c in cols if c in tbl.columns]
-    _cands = tbl[cols].head(top_n).round(4).to_dict(orient="records")
+    active = trend_contract["active_components"]
+    cols = ["code", "price"] + active + ["score", "score_percentile"]
+    cols = [column for column in cols if column in tbl.columns]
+    candidates = tbl[cols].head(max(1, min(int(top_n), 200))).round(6).to_dict(orient="records")
+    run_id = uuid.uuid4().hex
     try:
-        nm = common.stock_names_map()
-        for r in _cands:
-            r["name"] = nm.get(r.get("code"), "")
+        names = common.stock_names_map()
     except Exception:
-        pass
+        names = {}
+    for rank, row in enumerate(candidates, start=1):
+        row.update({"name": names.get(row.get("code"), ""), "rank": rank,
+                    "score_raw": row["score"], "screening_run_id": run_id,
+                    "factor_version": trend_contract["factor_version"],
+                    "schema_hash": trend_contract["schema_hash"],
+                    "weight_version": trend_contract["weight_version"]})
+    db.save_factor_contract(factor_contract.base_contract("trend"))
+    db.save_screening_run({
+        "run_id": run_id, "function_name": "screen_trend", "trade_date": end,
+        "factor_version": trend_contract["factor_version"],
+        "schema_hash": trend_contract["schema_hash"],
+        "weight_version": trend_contract["weight_version"], "contract": trend_contract,
+        "candidate_codes": [row["code"] for row in candidates],
+        "candidates": candidates,
+        "params": {"industries": industries, "top_n": int(top_n)},
+    })
     return {
         "source": "screen/trend",
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "industries": industries,
         "trade_date": end,
         "data_source": data_source,
-        "candidates": _cands,
-        "note": "趋势初筛候选，需 Agent 按 涨价>逻辑>预期>情绪 四维复核",
+        "screening_run_id": run_id,
+        "factor_contract": trend_contract,
+        "candidates": candidates,
+        "note": "score_raw 为原始横截面分，score_percentile 为0~1分位；正式候选需继续四维复核。",
     }
 
 

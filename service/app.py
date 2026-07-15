@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import common
+import db
 import registry
 import loader
 import version
@@ -53,8 +54,13 @@ ADMIN_ONLY_FUNCTIONS = {
     "set_factor_weights",       # 修改各模型因子权重
     "set_sentiment_config",     # 修改情绪归一窗口
     "restore_config_version",   # 回滚配置到历史版本
-    "precompute_daily_factors", # 写入全市场因子预计算结果
+    "precompute_daily_factors", # 启动全市场因子预计算任务
+    "precompute_status",        # 查看预计算任务进度与错误明细
 }
+
+# 选股读取安全红线：访客不得读取关注或持仓；默认查询由 DB 层自动排除。
+SENSITIVE_SELECTION_CATEGORIES = frozenset({"watch", "holding"})
+SELECTION_CATEGORY_FILTER_FUNCTIONS = frozenset({"selection_dashboard"})
 
 # 动态访客 Key（由管理员在设置页生成/管理）落库 config_kv 的键
 USER_KEYS_CONFIG_KEY = "user_api_keys"
@@ -246,8 +252,17 @@ def call(req: CallReq, x_api_key: Optional[str] = Header(None)):
         raise HTTPException(
             status_code=403,
             detail=f"forbidden: 功能 '{req.function}' 需管理员 Key（用户 Key 不可调用管理员专属功能）")
+    requested_category = str((req.params or {}).get("category") or "").strip()
+    if (role != "admin" and req.function in SELECTION_CATEGORY_FILTER_FUNCTIONS
+            and requested_category in SENSITIVE_SELECTION_CATEGORIES):
+        raise HTTPException(
+            status_code=403,
+            detail=f"forbidden: 选股类别 '{requested_category}' 仅管理员可查看")
     try:
-        data = registry.call(req.function, req.params)
+        # 全部注册函数共享同一请求级读取范围；即使未来新增 DB 查询调用点，
+        # 访客也只能在 SQL 层读取 auto/manual，不能通过省略 category 绕过。
+        with db.selection_read_scope(include_sensitive=role == "admin"):
+            data = registry.call(req.function, req.params)
     except registry.ParamError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except common.ServiceError as e:

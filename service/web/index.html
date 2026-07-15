@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>盯盘 · 量化面板</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="auth-locked">
@@ -28,6 +29,14 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       量化选股
     </button>
+    <button class="tab" data-tab="industry">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 17V9h4v8m2 0V4h4v13m2 0v-6h3v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      行业分析
+    </button>
+    <button class="tab" data-tab="selections">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      选股看板
+    </button>
     <button class="tab" data-tab="sentiment">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9M12 12l5-5M3 12h2m14 0h2M12 3v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       情绪温度
@@ -49,26 +58,90 @@
   <main class="content">
     <!-- 量化选股 -->
     <section id="tab-quant" class="panel active">
-      <div class="card">
-        <div class="card-title">选股参数</div>
-        <div class="form-row">
-          <label>行业/主线/概念（可空，逗号分隔）</label>
-          <input id="q-industries" type="text" placeholder="如 光伏,半导体,机器人,PCB铜箔（留空=全市场）" />
-          <p class="hint">多源模糊匹配：tushare 行业 + 申万 L1/L2/L3 + 同花顺/东财概念，支持“机器人/PCB铜箔/电子布”等细分主题。多个词条取<b>交集</b>层层收窄（如“通信,PCB,铜箔”=同时属于三者）；留空则全市场（剔除 ST）。</p>
+      <div class="card quant-hero">
+        <div class="card-title-row">
+          <div>
+            <span class="sentiment-eyebrow">量化筛选</span>
+            <div class="card-title quant-title">选股参数</div>
+          </div>
+          <button id="q-help" class="icon-btn help-btn" type="button" title="查看筛选说明" aria-label="查看筛选说明">?</button>
         </div>
-        <div class="form-row">
-          <label>返回数量 Top N</label>
-          <input id="q-topn" type="number" value="30" min="5" max="100" />
-          <p class="hint">个股因子：12-1 动量 + 1月反转 + 低波动 + 低换手 + 均线多头/距52周高 + 量能，横截面标准化后按权重合成综合分，取 Top N。权重可在「权重配置」页调整。</p>
+        <div class="quant-filter-grid">
+          <div class="form-row primary-filter">
+            <label for="q-stock-names">个股名称 <span class="priority-tag">优先</span></label>
+            <input id="q-stock-names" type="text" placeholder="如 贵州茅台,宁德时代" />
+          </div>
+          <div class="form-row">
+            <label for="q-industries">行业 / 主线 / 概念</label>
+            <input id="q-industries" type="text" placeholder="如 医药 或 通信,PCB" />
+          </div>
         </div>
-        <button id="q-run" class="btn-primary">
-          <svg viewBox="0 0 24 24" class="btn-ic"><path d="M5 3l14 9-14 9V3Z" fill="currentColor"/></svg>
-          运行量化选股
-        </button>
+        <div class="quant-actions">
+          <div class="form-row inline topn-control">
+            <label for="q-topn">返回数量</label>
+            <input id="q-topn" type="number" value="30" min="5" max="100" />
+          </div>
+          <span class="compact-note">个股名称非空时优先；均留空则筛全市场</span>
+          <button id="q-run" class="btn-primary">
+            <svg viewBox="0 0 24 24" class="btn-ic"><path d="M5 3l14 9-14 9V3Z" fill="currentColor"/></svg>
+            运行量化选股
+          </button>
+        </div>
       </div>
       <div class="card">
         <div class="card-title">选股结果 <span id="q-meta" class="meta"></span></div>
         <div id="q-result" class="table-wrap"><div class="empty">点击「运行量化选股」查看结果</div></div>
+      </div>
+
+      <div id="quant-help-modal" class="modal hidden">
+        <div class="modal-card help-modal-card" role="dialog" aria-modal="true" aria-labelledby="quant-help-title">
+          <div id="quant-help-title" class="card-title">量化选股说明</div>
+          <div class="factor-desc help-content">
+            <section><b>筛选优先级</b><p>填写个股名称后，只筛这些股票，板块条件不再生效；多个名称用逗号分隔并取并集。完整名称优先精确匹配，简称支持模糊匹配。</p></section>
+            <section><b>板块匹配</b><p>多个板块词条取交集。先匹配基础行业与申万行业；正式行业无结果时，才回退同花顺、东财概念，减少宽泛概念造成的误选。</p></section>
+            <section><b>量化评分</b><p>综合中期动量、短期反转、低波动、低换手、趋势、量能和行业强度。权重可在「权重配置」调整；结果仅作候选，不代表收益承诺。</p></section>
+          </div>
+          <div class="modal-actions"><button id="quant-help-close" class="btn-primary">知道了</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 行业量化分析 -->
+    <section id="tab-industry" class="panel">
+      <div class="card industry-hero">
+        <div class="card-title">行业强度排名 <span id="i-meta" class="meta"></span></div>
+        <p class="hint">按申万一级行业的中期趋势、20 日与 5 日动量、量能确认和低波动综合评分。优先读取每日盘后持久化结果，并作为个股量化选股的“行业强度”因子。</p>
+        <div class="form-row inline compact-controls">
+          <label for="i-topn">展示数量</label>
+          <input id="i-topn" type="number" value="31" min="5" max="100" />
+          <button id="i-run" class="btn-primary">刷新行业排名</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">行业评分明细</div>
+        <div id="i-result" class="table-wrap"><div class="empty">进入页面后自动加载</div></div>
+      </div>
+    </section>
+
+    <!-- 量化选股看板 -->
+    <section id="tab-selections" class="panel">
+      <div class="card selection-hero">
+        <div class="card-title">量化选股看板 <span id="sl-meta" class="meta"></span></div>
+        <p class="hint">汇总 Agent 每日自动选股与用户触发正式选股，展示选股时价格、当前行情、热点事件、短线地位和完整理由。最新行情口径为最近交易日收盘。</p>
+        <div class="filter-grid">
+          <div class="form-row"><label for="sl-from">起始日期</label><input id="sl-from" type="date" /></div>
+          <div class="form-row"><label for="sl-to">结束日期</label><input id="sl-to" type="date" /></div>
+          <div class="form-row"><label for="sl-hotspot">热点/事件</label><input id="sl-hotspot" type="text" placeholder="如 AI、创新药、涨价" /></div>
+          <div class="form-row"><label for="sl-category">选股来源</label>
+            <select id="sl-category"><option value="">全部可见类别</option><option value="auto">每日自动选股</option><option value="manual">用户触发选股</option><option value="watch" data-admin-only-category>关注</option><option value="holding" data-admin-only-category>持仓</option></select>
+          </div>
+        </div>
+        <button id="sl-run" class="btn-primary">查询选股记录</button>
+      </div>
+      <div id="sl-hotspots" class="hotspot-strip"></div>
+      <div class="card">
+        <div class="card-title">选股列表</div>
+        <div id="sl-result" class="selection-list"><div class="empty">进入页面后自动加载</div></div>
       </div>
     </section>
 
@@ -219,10 +292,10 @@
 
     <!-- 预计算状态 -->
     <section id="tab-precompute" class="panel admin-only">
-      <div class="card">
+      <div class="card pc-hero">
         <div class="card-title">全市场因子预计算 <span id="pc-meta" class="meta"></span></div>
-        <p class="hint">选股（screen_quant/screen_trend）优先读 daily_factors；若最新交易日缺失，点下方按钮做增量预计算（盘后自动跑，手动仅用于补算/验证）。</p>
-        <div class="form-row inline">
+        <p class="hint">任务在服务端后台运行，全服务同一时刻只会有一个。重复点击或多个管理员同时发起时会复用当前任务，可离开页面后再回来查看进度。</p>
+        <div class="form-row inline pc-actions">
           <button id="pc-refresh" class="btn-ghost">刷新状态</button>
           <button id="pc-run" class="btn-primary">
             <svg viewBox="0 0 24 24" class="btn-ic"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -232,11 +305,15 @@
         </div>
       </div>
       <div class="card">
+        <div class="card-title">当前任务</div>
+        <div id="pc-task" class="pc-task"><div class="empty">正在读取任务状态…</div></div>
+      </div>
+      <div class="card">
         <div class="card-title">各交易日覆盖股票数</div>
         <div id="pc-chart" class="chart-wrap"><div class="empty">点击「刷新状态」</div></div>
       </div>
       <div class="card">
-        <div class="card-title">覆盖明细</div>
+        <div class="card-title">最近计算质量</div>
         <div id="pc-table" class="table-wrap"><div class="empty">—</div></div>
       </div>
     </section>
@@ -284,7 +361,7 @@
       </div>
 
       <!-- 访客 Key 管理（仅管理员可见） -->
-      <div id="userkeys" class="userkeys hidden">
+      <div id="userkeys" class="userkeys admin-only hidden">
         <div class="card-title">访客 Key 管理 <span class="meta">访客：可查看/选股/读情绪/查看回测结果，不能改配置或预计算</span></div>
         <div class="form-row inline">
           <input id="uk-label" type="text" placeholder="备注（如：张三 / 演示）" />
@@ -310,7 +387,7 @@
       <div class="card-title">情绪温度设置</div>
       <div class="form-row">
         <label for="s-date">展示日期</label>
-        <input id="s-date" type="text" placeholder="YYYYMMDD（留空=最近交易日）" />
+        <input id="s-date" type="date" />
       </div>
       <div class="form-row">
         <label for="s-days">走势回看交易日数</label>

@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any, Optional
+import uuid
 
 import pandas as pd
 
 import common
+import db
+import factor_contract
 import factors
 import factor_config
 from registry import register
@@ -50,23 +53,19 @@ def _sector_history(pro, code: str, start: str, end: str) -> Optional[pd.DataFra
         return None
 
 
-def run(weights: Optional[dict[str, float]] = None, top_n: int = 10,
-        with_stocks: bool = False, stocks_per_sector: int = 5) -> dict[str, Any]:
-    """板块轮动选择主入口。"""
-    pro = common.get_pro()
-    end = common.last_trade_date()
+def compute_sector_scores(pro, end: str,
+                          weights: Optional[dict[str, float]] = None) -> list[dict[str, Any]]:
+    """计算某交易日全部申万一级行业评分，并给出 0~1 横截面分位。"""
     start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=420)).strftime("%Y%m%d")
     w = factor_config.effective_weights("sector")
-    if weights:
-        w.update(weights)
-
-    industries = _sw_l1_industries(pro)
-    if not industries:
-        return {"source": "screen/sector", "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "sectors": [], "note": "无法获取行业指数（检查 index_classify/sw_daily 权限）"}
-
+    if weights is not None:
+        if set(weights) != set(w):
+            raise ValueError("自定义行业权重必须包含契约中的全部因子")
+        w = {name: float(weights[name]) for name in w}
+        if abs(sum(w.values()) - 1.0) > 0.01:
+            raise ValueError("自定义行业权重之和必须为1.0")
     rows: list[dict[str, Any]] = []
-    for ind in industries:
+    for ind in _sw_l1_industries(pro):
         hist = _sector_history(pro, ind["code"], start, end)
         fac = factors.compute_sector_factors(hist) if hist is not None else None
         if fac is None:
@@ -74,29 +73,105 @@ def run(weights: Optional[dict[str, float]] = None, top_n: int = 10,
         fac["code"] = ind["code"]
         fac["name"] = ind["name"]
         rows.append(fac)
-
     if not rows:
-        return {"source": "screen/sector", "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "sectors": [], "note": "行业历史数据不足"}
-
-    tbl = factors.composite_score(pd.DataFrame(rows), w)
-    tbl = tbl.sort_values("score", ascending=False)
+        return []
+    tbl = factors.composite_score(pd.DataFrame(rows), w, strict=True)
+    tbl["percentile"] = tbl["score_percentile"]
     cols = ["code", "name", "sec_mom_12_1", "sec_mom_20d", "sec_mom_5d",
-            "sec_vol_confirm", "sec_low_vol", "score"]
-    cols = [c for c in cols if c in tbl.columns]
-    top_sectors = tbl[cols].head(top_n).round(4).to_dict(orient="records")
+            "sec_vol_confirm", "sec_low_vol", "last_close", "score", "percentile"]
+    return tbl[[c for c in cols if c in tbl.columns]].sort_values(
+        "score", ascending=False).round(6).to_dict(orient="records")
 
+
+def run(weights: Optional[dict[str, float]] = None, top_n: int = 10,
+        with_stocks: bool = False, stocks_per_sector: int = 5) -> dict[str, Any]:
+    """行业轮动评分入口：优先读取最近完成交易日的合格持久化结果，未命中才实时计算。"""
+    end: Optional[str] = None
+    w = factor_config.effective_weights("sector")
+    if weights is not None:
+        if set(weights) != set(w):
+            return {"source": "screen/sector", "fetched_at": common.now_str(),
+                    "trade_date": end, "sectors": [],
+                    "error": "自定义行业权重必须包含契约中的全部因子"}
+        try:
+            w = {name: float(weights[name]) for name in w}
+            if abs(sum(w.values()) - 1.0) > 0.01:
+                raise ValueError("权重之和必须为1.0")
+        except (TypeError, ValueError) as exc:
+            return {"source": "screen/sector", "fetched_at": common.now_str(),
+                    "trade_date": end, "sectors": [], "error": str(exc)}
+    contract = factor_contract.weighted_contract(
+        "sector", w, factor_config.current_weight_version("sector") or "default")
+    if weights is not None:
+        contract["weight_version"] = f"request:{contract['weight_hash'][:12]}"
+
+    dependency_summary = factor_contract.stock_data_dependencies(contract)
+    dependency_hash = factor_contract.fingerprint(dependency_summary)
+    contract["data_dependencies"] = dependency_summary
+    contract["dependency_hash"] = dependency_hash
+    if weights is None:
+        stock_contract = factor_contract.base_contract("stock")
+        end = db.latest_usable_factor_date(
+            stock_contract["factor_version"], stock_contract["schema_hash"], dependency_hash)
+    if not end:
+        try:
+            end = common.last_completed_trade_date()
+        except Exception:
+            end = db.latest_sector_score_date()
+    if not end:
+        return {"source": "screen/sector", "fetched_at": common.now_str(),
+                "trade_date": None, "data_source": "unavailable", "sectors": [],
+                "note": "无法确定最近已完成交易日且没有合格持久化行业评分"}
+
+    data_source = "persisted"
+    persisted = [] if weights else db.fetch_usable_daily_sector_scores(
+        end, contract["factor_version"], contract["schema_hash"], dependency_hash)
+    if persisted:
+        sectors: list[dict[str, Any]] = []
+        for row in persisted:
+            item = {"code": row["code"], "name": row.get("name", ""),
+                    "score": row["score"], "percentile": row["percentile"]}
+            item.update(row.get("factors") or {})
+            sectors.append(item)
+    else:
+        data_source = "realtime"
+        try:
+            pro = common.get_pro()
+            sectors = compute_sector_scores(pro, end, weights)
+        except Exception as exc:
+            return {"source": "screen/sector", "fetched_at": common.now_str(),
+                    "trade_date": end, "data_source": data_source, "sectors": [],
+                    "note": f"行业评分实时计算失败：{type(exc).__name__}: {exc}"[:500]}
+
+    if not sectors:
+        return {"source": "screen/sector", "fetched_at": common.now_str(),
+                "trade_date": end, "data_source": data_source, "sectors": [],
+                "note": "无法获取行业指数或行业历史数据不足（检查 index_classify/sw_daily 权限）"}
+
+    top_sectors = sectors[:max(1, min(int(top_n), 100))]
+    run_id = uuid.uuid4().hex
+    db.save_factor_contract(factor_contract.base_contract("sector"))
+    db.save_screening_run({
+        "run_id": run_id, "function_name": "screen_sector", "trade_date": end,
+        "factor_version": contract["factor_version"], "schema_hash": contract["schema_hash"],
+        "weight_version": contract["weight_version"], "contract": contract,
+        "candidate_codes": [row["code"] for row in top_sectors],
+        "candidates": top_sectors,
+        "params": {"top_n": int(top_n), "custom_weights": weights is not None},
+    })
     result: dict[str, Any] = {
         "source": "screen/sector",
-        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "fetched_at": common.now_str(),
         "trade_date": end,
+        "data_source": data_source,
+        "screening_run_id": run_id,
+        "factor_contract": contract,
         "weights": w,
-        "factor_note": "板块层面动量为正：sec_mom_12_1/20d/5d + 量能确认 + 低波动",
+        "factor_note": "行业层面动量为正：12-1/20日/5日动量 + 量能确认 + 低波动；percentile 为行业横截面强度分位",
         "sectors": top_sectors,
-        "note": "板块轮动候选，须由 Agent 叠加涨价/景气逻辑交叉验证",
+        "note": "行业轮动量化排名，仍须由 Agent 叠加涨价、景气周期与事件催化交叉验证",
     }
 
-    # 可选：在强势板块内选个股
     if with_stocks:
         import quant_screen
         picks = {}

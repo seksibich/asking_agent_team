@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import sys
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -17,28 +18,39 @@ import pandas as pd
 
 import common
 import db
+import factor_contract
 import factors
 import factor_config
 from registry import register
 
 
-def _table_from_db(end: str, code_filter: Optional[set]) -> Optional[pd.DataFrame]:
-    """仅读取质量合格且因子版本一致的预计算结果。"""
+def _table_from_db(end: str, code_filter: Optional[set],
+                   contract: dict[str, Any], dependency_hash: str) -> Optional[pd.DataFrame]:
+    """仅加载质量合格且行级公式版本、结构哈希和完整成分均一致的预计算结果。"""
     try:
-        if not db.has_usable_daily_factors(end, factors.STOCK_FACTOR_VERSION):
+        if not db.has_usable_daily_factors(
+                end, contract["factor_version"], schema_hash=contract["schema_hash"],
+                dependency_hash=dependency_hash):
             return None
         rows = db.fetch_daily_factors(end)
     except Exception:
         return None
-    if not rows:
-        return None
     recs = []
-    for r in rows:
-        code = r["code"]
+    for row in rows:
+        code = row["code"]
         if code_filter is not None and code not in code_filter:
             continue
-        fac = dict(r["factors"])
-        fac.pop("_meta", None)
+        if (row.get("factor_version") != contract["factor_version"]
+                or row.get("schema_hash") != contract["schema_hash"]
+                or row.get("dependency_hash") != dependency_hash):
+            continue
+        fac = dict(row["factors"])
+        valid, _ = factor_contract.validate_payload("stock", fac)
+        if not valid:
+            continue
+        meta = fac.pop("_meta", None) or {}
+        fac["industry_name"] = meta.get("industry_name", "未映射")
+        fac["industry_score"] = meta.get("industry_score", 0.0)
         fac["code"] = code
         recs.append(fac)
     return pd.DataFrame(recs) if recs else None
@@ -104,95 +116,176 @@ def _build_factor_table(pro, codes: list[str], end: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _stock_name_members(pro, stock_names: list[str]) -> set[str]:
+    """按个股名称匹配上市股票；多个名称取并集，精确名称优先于模糊名称。"""
+    from screen_trend import _norm_terms
+
+    terms = _norm_terms(stock_names)
+    if not terms:
+        return set()
+    try:
+        payload = common.cached_call(
+            "stock_basic_ind", {"d": common.today_str()},
+            lambda: pro.stock_basic(exchange="", list_status="L", fields="ts_code,name,industry"))
+        basic = pd.DataFrame(payload.get("rows", []))
+    except Exception:
+        return set()
+    if basic.empty or "ts_code" not in basic.columns or "name" not in basic.columns:
+        return set()
+
+    valid = basic[~basic["name"].astype(str).str.contains("ST|退", na=False)].copy()
+    names = valid["name"].astype(str)
+    codes: set[str] = set()
+    for term in terms:
+        exact = valid[names.str.casefold() == term.casefold()]
+        matched = exact if not exact.empty else valid[names.str.contains(term, case=False, regex=False, na=False)]
+        codes.update(matched["ts_code"].astype(str).tolist())
+    return codes
+
+
 def run(industries: Optional[list[str]] = None,
+        stock_names: Optional[list[str]] = None,
         weights: Optional[dict[str, float]] = None,
         top_n: int = 30) -> dict[str, Any]:
-    """量化选股主入口。industries 指定则限定范围，否则全市场（剔除 ST）。
+    """量化选股主入口；个股名称非空时优先，否则按板块过滤或筛全市场。
 
     优先读预计算 daily_factors（全市场路径可完全不依赖 tushare）；未命中回退实时逐只。
     """
-    w = factor_config.effective_weights("stock")
-    if weights:
-        w.update(weights)
+    base_weights = factor_config.effective_weights("stock")
+    if weights is not None:
+        if set(weights) != set(base_weights):
+            return {"source": "screen/quant", "fetched_at": common.now_str(),
+                    "candidates": [], "error": "自定义权重必须包含契约中的全部因子（含权重0因子）",
+                    "expected_factors": list(base_weights)}
+        try:
+            w = {name: float(weights[name]) for name in base_weights}
+            if abs(sum(w.values()) - 1.0) > 0.01:
+                raise ValueError("权重之和必须为1.0")
+            contract = factor_contract.weighted_contract("stock", w, "request")
+            contract["weight_version"] = f"request:{contract['weight_hash'][:12]}"
+        except (TypeError, ValueError) as exc:
+            return {"source": "screen/quant", "fetched_at": common.now_str(),
+                    "candidates": [], "error": f"自定义权重无效：{exc}"}
+    else:
+        w = base_weights
+        contract = factor_config.model_contract("stock")
 
-    # 解析交易日：优先 tushare 最近交易日；不可用则用 daily_factors 最新日期
-    try:
-        end = common.last_trade_date()
-    except Exception:
-        end = db.latest_factor_date()
+    sector_dependency = factor_config.model_contract("sector")
+    data_dependencies = factor_contract.stock_data_dependencies(sector_dependency)
+    dependency_hash = factor_contract.fingerprint(data_dependencies)
+    contract["data_dependencies"] = data_dependencies
+    contract["dependency_hash"] = dependency_hash
+
+    end = db.latest_usable_factor_date(
+        contract["factor_version"], contract["schema_hash"], dependency_hash)
     if not end:
         return {"source": "screen/quant", "fetched_at": common.now_str(),
-                "candidates": [], "note": "无法确定交易日且无预计算数据"}
+                "candidates": [], "note": "没有与当前完整因子契约一致的成功预计算数据"}
 
-    # 行业过滤需要成分股映射（用 tushare stock_basic，已缓存）
-    code_filter = None
-    if industries:
-        from screen_trend import _industry_members
-        code_filter = set(_industry_members(common.get_pro(), industries))
+    from screen_trend import _industry_members, _norm_terms
+    name_terms = _norm_terms(stock_names)
+    industry_terms = _norm_terms(industries)
+    code_filter: Optional[set[str]] = None
+    filter_type = "market"
+    filter_terms: list[str] = []
+    if name_terms:
+        filter_type = "stock_names"
+        filter_terms = name_terms
+        code_filter = _stock_name_members(common.get_pro(), name_terms)
+    elif industry_terms:
+        filter_type = "industries"
+        filter_terms = industry_terms
+        code_filter = set(_industry_members(common.get_pro(), industry_terms))
 
-    # 优先读预计算因子（daily_factors），命中则本地排序、不打 tushare
+    if code_filter is not None and not code_filter:
+        label = "个股名称" if filter_type == "stock_names" else "行业/主线/概念"
+        return {
+            "source": "screen/quant", "fetched_at": common.now_str(), "trade_date": end,
+            "filter_type": filter_type, "filter_terms": filter_terms, "candidates": [],
+            "note": f"未找到匹配的{label}，请检查名称或缩短关键词",
+        }
+
     data_source = "precomputed"
-    tbl = _table_from_db(end, code_filter)
+    tbl = _table_from_db(end, code_filter, contract, dependency_hash)
     if tbl is None or tbl.empty:
-        data_source = "realtime"
-        pro = common.get_pro()
-        if industries:
-            codes = list(code_filter) if code_filter else []
-        else:
-            try:
-                basic = pro.stock_basic(list_status="L", fields="ts_code,name,market")
-                codes = [r["ts_code"] for r in basic.to_dict(orient="records")
-                         if "ST" not in str(r["name"]) and "退" not in str(r["name"])]
-            except Exception:
-                codes = []
-        codes = codes[:800]  # 实时兜底：控制 tushare 频率
-        tbl = _build_factor_table(pro, codes, end)
-    if tbl is None or tbl.empty:
-        return {"source": "screen/quant", "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "candidates": [], "note": "无有效候选或数据不足（可先跑 precompute_daily_factors）"}
+        return {
+            "source": "screen/quant", "fetched_at": common.now_str(),
+            "trade_date": end, "filter_type": filter_type, "filter_terms": filter_terms,
+            "factor_contract": contract, "candidates": [],
+            "error": "没有与当前因子公式版本和结构哈希完全一致的合格预计算数据",
+            "note": "为防止缺失行业因子或旧版成分被静默补0，量化筛选不再用不完整实时数据降级；请先补算。",
+        }
 
-    tbl = factors.composite_score(tbl, w)
+    try:
+        tbl = factors.composite_score(tbl, w, strict=True)
+    except ValueError as exc:
+        return {"source": "screen/quant", "fetched_at": common.now_str(),
+                "trade_date": end, "factor_contract": contract,
+                "candidates": [], "error": str(exc)}
     tbl = tbl.sort_values("score", ascending=False)
 
-    # 仅展示权重不为 0 的因子列（0 权重的候选因子不参与打分也不展示）
-    active = [f for f in w if float(w.get(f, 0) or 0) != 0.0]
-    cols = ["code", "price"] + active + ["score"]
-    cols = [c for c in cols if c in tbl.columns]
-    out = tbl[cols].head(top_n).round(4).to_dict(orient="records")
+    active = contract["active_components"]
+    cols = (["code", "price", "industry_name", "industry_score"] + active
+            + ["score", "score_percentile"])
+    cols = [column for column in cols if column in tbl.columns]
+    out = tbl[cols].head(max(1, min(int(top_n), 200))).round(6).to_dict(orient="records")
+    run_id = uuid.uuid4().hex
     try:
-        nm = common.stock_names_map()
-        for r in out:
-            r["name"] = nm.get(r.get("code"), "")
+        names = common.stock_names_map()
+        for rank, row in enumerate(out, start=1):
+            row["name"] = names.get(row.get("code"), "")
+            row["rank"] = rank
+            row["score_raw"] = row["score"]
+            row["screening_run_id"] = run_id
+            row["factor_version"] = contract["factor_version"]
+            row["schema_hash"] = contract["schema_hash"]
+            row["weight_version"] = contract["weight_version"]
     except Exception:
-        pass
+        for rank, row in enumerate(out, start=1):
+            row.update({"rank": rank, "score_raw": row["score"],
+                        "screening_run_id": run_id,
+                        "factor_version": contract["factor_version"],
+                        "schema_hash": contract["schema_hash"],
+                        "weight_version": contract["weight_version"]})
     _attach_quotes(out)
+    db.save_factor_contract(factor_contract.base_contract("stock"))
+    db.save_screening_run({
+        "run_id": run_id, "function_name": "screen_quant", "trade_date": end,
+        "factor_version": contract["factor_version"], "schema_hash": contract["schema_hash"],
+        "weight_version": contract["weight_version"], "contract": contract,
+        "candidate_codes": [row["code"] for row in out],
+        "candidates": out,
+        "params": {"filter_type": filter_type, "filter_terms": filter_terms,
+                   "top_n": int(top_n), "custom_weights": weights is not None},
+    })
     return {
         "source": "screen/quant",
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "trade_date": end,
         "data_source": data_source,
+        "filter_type": filter_type,
+        "filter_terms": filter_terms,
+        "screening_run_id": run_id,
+        "factor_contract": contract,
         "weights": w,
-        "factor_note": "默认启用：mom_12_1(趋势)+reversal_1m(短期反转)+low_ivol/low_turnover(情绪)+trend_ma/high_52w(趋势)+vol_confirm(量能)；"
-                       "候选因子(默认权重0，可在权重配置启用)：mom_6_1/max_lottery/downside_vol/amihud_illiq/small_size/value_bm/earnings_yield。"
-                       "仅权重≠0 的因子参与打分并在结果中展示",
+        "factor_note": "响应展示启用因子，但契约和落库快照始终保存全部因子，包括当前权重为0的候选因子。",
         "candidates": out,
-        "note": "量化候选，须由 Agent 叠加 涨价>逻辑>预期>情绪 四维交叉验证复核",
+        "note": "score_raw 为横截面标准化原始分；score_percentile 为0~1分位，跨样本分桶统一使用分位。",
     }
 
 
 @register("screen_quant", "screening",
-          "量化多因子选股（默认：12-1动量+1月反转+低波动+低换手+趋势+量能；另有 7 个默认0权重候选因子"
-          "mom_6_1/max_lottery/downside_vol/amihud_illiq/small_size/value_bm/earnings_yield 可在权重配置启用，"
-          "仅权重≠0 的因子参与打分与展示）。候选须四维复核",
+          "量化多因子选股；支持按个股名称或行业/主线/概念限定范围，个股名称非空时优先。"
+          "候选须按涨价、逻辑、预期、情绪四维复核",
           params=[{"name": "industries", "type": "array", "required": False,
-                   "desc": "限定行业/主线/概念名（单词条多源模糊匹配：stock_basic行业+申万L1/L2/L3+同花顺/东财概念，"
-                           "支持'机器人''PCB铜箔''电子布'等细分主题；传多词条取交集层层收窄，"
-                           "如['通信','PCB','铜箔']=同时属于三者），省略则全市场"},
+                   "desc": "限定行业/主线/概念名；正式行业分类优先，无命中时回退概念；多词条取交集"},
+                  {"name": "stock_names", "type": "array", "required": False,
+                   "desc": "限定个股名称；支持逗号分隔，多个名称取并集；非空时优先于 industries"},
                   {"name": "weights", "type": "object", "required": False, "desc": "自定义因子权重"},
                   {"name": "top_n", "type": "int", "required": False, "default": 30}],
           returns="candidates（含各因子值与合成 score）")
 def screen_quant(p: dict) -> dict:
-    return run(p.get("industries"), p.get("weights"), p.get("top_n", 30))
+    return run(p.get("industries"), p.get("stock_names"), p.get("weights"), p.get("top_n", 30))
 
 
 if __name__ == "__main__":

@@ -34,6 +34,56 @@
 
 ## 版本记录（最新在上）
 
+### v1.6.1 — 2026-07-16（输出规约人性化：首屏重心前置 + emoji 高亮）
+
+- **摘要**：只润色面向用户报告的表达与信息重心，不改任何取数/筛选/回测/调参/持久化行为。统一「一眼结论（核心摘要）」首屏，把复盘总结、关键消息面、选股/持仓/关注结论前置，数据口径与来源清单靠后；为一眼结论四类关键信息（📊 仓位、🔥 题材/事件、🎯 个股/候选、⚠️ 风险）与主要章节标题引入统一 emoji 图标做视觉锚点。覆盖 T1/T6/T7、竞价、早盘、周报、月报模板。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`（版本→v1.6.1；新增「v1.6.1 补充执行约束（输出规约人性化）」）
+  - `agent/skills/output-format/SKILL.md`（报告通用结构信息重心铁律、首屏任务语义、T1/T6/T7 完整模板与推送模板加 emoji、新增 emoji 约定与信息重心前置两条硬约束）
+  - `agent/skills/pre-market/SKILL.md`、`agent/skills/post-market/SKILL.md`（T1/T6/T7 首屏与章节 emoji 图标约定）
+  - `agent/skills/review-learning/SKILL.md`（周报新增一眼结论首屏 + emoji，月报首屏复盘总结前置）
+  - `agent/skills/bidding-analysis/SKILL.md`、`agent/skills/intraday-watch/SKILL.md`（竞价分析、早盘总结报告首屏与章节 emoji）
+- **agent 动作**：
+  1. 重读上述文件；此后所有面向用户报告首屏固定为 `## 🎯 一眼结论（核心摘要）`，按 📊 仓位 / 🔥 题材事件 / 🎯 个股候选 / ⚠️ 风险顺序先给结论，复盘总结、消息面、选股持仓关注结论前置。
+  2. 一眼结论关键信息与主要章节标题按 output-format 的 emoji 约定加统一图标；同类信息全局同图标，不堆砌。
+  3. 本版本不改变任何数据、筛选、回测、调参与持久化逻辑，无需刷新 `/functions` 或重算因子。
+
+### v1.6.0 — 2026-07-16（因子契约闭环 + 无未来泄漏回测）
+
+- **摘要**：建立可审计的量化筛选、正式选股、前向收益、预测回测和自动调参闭环。因子契约区分公式版本、完整成分（含权重0候选）、结构哈希、权重版本及上游行业/成分/股票池依赖；预计算结果按 `run_id` 强绑定并禁止部分重算覆盖既有成功快照；正式选股必须引用筛选运行；选股收益统一交易日与前复权；预判改为不可变的下一交易日口径；自动调参增加样本量、时序样本外、快照和父版本门禁。数据协议升级为 schema v2，旧数据保留为 legacy/NULL，不伪造版本。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`（版本→v1.6.0；正式选股、预测回测和自动调参门禁）
+  - `agent/schedule.md`、`agent/agents/main-orchestrator.md`（D1 成功口径、T7 预测目标日、筛选运行与调参证据）
+  - `agent/skills/quant-screening/SKILL.md`、`agent/skills/stock-screening/SKILL.md`、`agent/skills/review-learning/SKILL.md`（因子契约、筛选运行、收益与预测回测、自优化门禁）
+  - `agent/memory/MEMORY.md`（manual 分类、不可变预判与目标交易日审计）
+  - `doc/AGENT_SERVICE_GUIDE.md`（schema v2、契约字段、预计算可用条件和回测协议）
+  - 服务端（非 agent 文档，一并记录）：`service/db.py`、`service/db/schema.sql`、`service/registry.py`、`service/web/app.js`、`agent/skills/quant-screening/scripts/factor_contract.py`、`factor_config.py`、`factors.py`、`precompute.py`、`quant_screen.py`、`screen_sector.py`、`sentiment.py`、`agent/skills/stock-screening/scripts/screen_trend.py`、`agent/skills/review-learning/scripts/selection_backtest.py`、`predictions_backtest.py`
+- **agent 动作**：
+  1. 刷新 `/functions` 并确认 `schema_version=2`；D1 重新生成当前契约因子，旧 NULL/legacy 数据不得进入筛选。
+  2. 正式候选先调用 `screen_quant`/`screen_trend`，登记时原样携带其 `screening_run_id`；统一使用 `score_percentile` 做跨样本分桶。
+  3. 只有 `selection_backtest.optimization_gate.eligible=true` 才允许自动调参，并提交 `backtest_snapshot_id`、`expected_parent_version` 与全部因子权重。
+  4. `log_prediction` 只登记下一 SSE 交易日预判；`predictions_backtest` 的 legacy、未成熟和失败样本必须披露，不得按同日行情补算。
+
+### v1.5.0 — 2026-07-16（行业评分因子 + 正式选股持久化看板）
+
+- **摘要**：完成量化链路与看板整套改造：①修复行业筛选污染，正式行业分类命中时不再混入宽泛概念，并新增个股名称多选且优先于行业条件；②新增每日行业量化评分持久化和行业分析 Tab，把行业横截面强度聚合进个股量化因子；③重构自动/用户触发正式选股链路，新增 `manual` 隔离类别、标准化选股快照与 `selection_dashboard` 看板；④预计算改为全服务唯一后台任务并持续暴露进度；⑤新增网页 favicon，访客彻底隐藏 Key 管理入口。自动样本与用户触发样本严格隔离。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`（版本→v1.5.0；行业因子、正式选股链路、auto/manual/watch/holding 分类与看板约束）
+  - `agent/index.md`、`agent/schedule.md`（输出目录、D1 行业评分预计算、选股持久化和回测分类）
+  - `agent/skills/quant-screening/SKILL.md`、`agent/skills/stock-screening/SKILL.md`、`agent/skills/priority-framework/SKILL.md`（行业强度因子；热点→强势股→量化→理由链；正式候选快照字段）
+  - `agent/skills/review-learning/SKILL.md`、`agent/skills/output-format/SKILL.md`（manual 隔离回测、selection_dashboard 与用户选股输出规则）
+  - `agent/agents/main-orchestrator.md`、`agent/agents/ORCHESTRATION.md`、`agent/memory/MEMORY.md`（编排与记忆分类同步）
+  - `doc/AGENT_SERVICE_GUIDE.md`（新增行业评分表、industry_strength、manual 与 selection_dashboard 协议）
+  - 服务端/前端（非 agent 文档，一并记录）：`service/db.py`、`service/db/schema.sql`、`service/app.py`、`agent/skills/quant-screening/scripts/factors.py`、`precompute.py`、`screen_sector.py`、`quant_screen.py`、`agent/skills/stock-screening/scripts/screen_trend.py`、`agent/skills/review-learning/scripts/selection_backtest.py`、`service/web/index.html`、`service/web/app.js`、`service/web/style.css`、`service/web/favicon.svg`、`Dockerfile`、`.dockerignore`
+- **agent 动作**：
+  1. 重新读取本条列出的 Agent 文档；刷新 `/functions`，确认 `stock_names`（优先于 industries）、`industry_strength`、`selection_dashboard`、预计算任务状态与 `log_selection` 新参数。
+  2. D1 盘后运行 `precompute_daily_factors`，确认同时写入个股与行业评分；旧 `stock-factors-v1` 结果不再供新选股读取。
+  3. 每日自动正式候选登记 `auto`；用户明确触发的正式选股候选登记 `manual`。逐只保存选股价、热点、事件、短线地位、完整理由链和全部量化因子；只有 auto 可用于调参。
+  4. 普通研究保持 ephemeral；用户要求持续跟踪时使用 watch，持仓使用 holding；通过 `selection_dashboard` 按日期/热点/类别核对记录与最近行情。
+
 ### v1.4.0 — 2026-07-15（health 版本对齐 + 增量文档更新）
 
 - **摘要**：`/health` 新增 `agent_doc_version`（语义版本）与 `git_revision`（部署 commit）两个字段；agent 常驻运行，在每次对话/任务开场比对 `/health` 版本，发现 `agent_doc_version` 变高时按本变更日志的「变更文件清单」**只重读变动文件**（增量，省 token），并按目标 `git_revision` 取文档内容（本地优先、回退 GitHub raw 公开仓库免 token）。前后端一致由同仓库同 commit 部署保证，agent 侧为会话级最终一致。

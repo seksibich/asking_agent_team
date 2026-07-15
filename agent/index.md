@@ -102,11 +102,11 @@
 
 ## 4. 输出目录规范（详见 output-format）
 
-- 定时任务日报 → `盯盘/yyyy年MM月dd日/`（并写自动记忆：daily 快照 / log_selection auto）
+- 定时任务日报 → `盯盘/yyyy年MM月dd日/`（并写自动记忆：daily 快照 / `log_selection(category=auto)`）
 - **用户主动行业/主题/事件研究 → `投研/yyyyMMdd-xx研究报告/`，默认 ephemeral**
-- **用户主动方向选股 → `投研/yyyyMMdd-{主题}选股/`，默认 ephemeral**
+- **用户主动方向选股 → `投研/yyyyMMdd-{主题}选股/`；通过完整流程形成的正式候选调用 `log_selection(category=manual)`**
 - **用户主动单股调研 → `投研/yyyyMMdd-{股票名}个股调研/`，默认 ephemeral**
-- 仅用户明确要求加入观察/持续跟踪/纳入后续回测时转 `watch`；watch 仅做 1/3/7/30 日观察性回测，不参与 auto 胜率、`tuning_hints` 或调参
+- `manual` 仅做隔离的 1/3/7/30 日回测，不参与 auto 胜率、`tuning_hints` 或调参；用户进一步要求持续跟踪时再转/补记 `watch`
 - **用户手动触发时段类技能（盘前/竞价/盘中/盘后）→ `投研/yyyyMMdd-手动xx/`**，不进日期目录、不写自动记忆、不以 category=auto 登记选股
 - 调度器正式候选才可为 `auto`；选股 → `盯盘/选股/`；周报/月报 → `盯盘/周报|月报/`；记忆 → `盯盘/agent记忆/`
 
@@ -115,14 +115,15 @@
 - **service_state.json**：服务端 `base_url` + 版本号 + 功能索引（必须）。
 - **关注与持仓.md**（持久）：用户关注/持仓 + 相关板块，重点盯，直到用户明确取消才移除。
 - **daily/yyyyMMdd.md**（★强制读取）：每日观察对象快照（自动选股 + 关注 + 持仓 + 当日重点题材/事件/板块）。**任何盯盘/复盘/回测开工前必须先读**。
-- 仅调度器正式方向性预判写 predictions.jsonl（标 driver）；ephemeral 用户主动研究不写。涨价/趋势线索仅按自动规则或用户明确 watch 后持久化。
+- 仅调度器正式方向性预判写 predictions.jsonl（标 driver）；普通用户研究不写。正式用户选股只写 selections 的 `manual` 样本，不写自动 predictions/daily/观察池；涨价/趋势线索仅按自动规则或用户明确 watch 后进入持续记忆。
 
 ## 6. 选股回测（闭环）
 
-- **自动选股**（量化+消息面+热度跑出）→ `log_selection` 登记（category=auto，用于因子调参）。
-- **用户关注/持仓** → `log_selection` 登记（category=watch/holding，仅盯盘观察）。
-- **用户主动单股/方向/行业事件研究**默认 `ephemeral`：不登记、不写 predictions/daily/观察池、不纳入调参。
-- 仅用户明确要求加入观察/持续跟踪/纳入后续回测时登记 `category=watch`，做 1/3/7/30 日观察性回测；watch 与 auto 分组且不进入自动胜率、`tuning_hints` 或调参。
+- **自动选股**（量化+消息面+热度跑出）→ `log_selection(category=auto)`（用于自动回测与因子调参）。
+- **用户触发正式选股**（明确要求筛选/推荐候选，且通过完整题材→强势股→量化→理由链流程）→ `log_selection(category=manual)`；保存选股价、热点、事件、短线地位和全部量化因子快照，仅隔离回测。
+- **用户关注/持仓** → `log_selection(category=watch|holding)`（持续盯盘观察）。
+- **普通单股/行业事件研究**默认 `ephemeral`：不登记；只有明确形成正式选股候选时才进入 `manual`。
+- `manual|watch|holding` 与 auto 分组，不进入自动胜率、`tuning_hints` 或调参；用 `selection_dashboard` 按日期/热点/类别查看记录与最新行情。
 - **调参落地（署名+留痕）**：`get_factor_config` → `set_factor_weights`（提交全部因子权重，模型 stock/sector/trend/sentiment；仅微调权重≠0 因子、小步归一；传 `actor`+`reason`）。每次修改生成类 commit 的 `version_id` 落库留痕；情绪权重仅在**回测与情绪指数背离**时调整。可 `get_config_history`/`get_config_version` 定位、`restore_config_version` 回滚。
 
 ## 7. 定时任务表（详见 schedule.md）

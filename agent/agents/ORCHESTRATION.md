@@ -39,7 +39,7 @@
 >> 合并输出：
    · 生成 01-盘前汇总.md（含四维打分表、数据来源表、今日关注板块与个股）
    · 仅调度器正式方向性预判写 predictions.jsonl；正式自动候选登记 category=auto
-   · 既有 watch/holding 仅维护状态；用户主动研究默认 ephemeral，明确持久化后才新增 watch
+   · 既有 watch/holding 仅维护状态；用户明确触发的正式选股候选登记 category=manual，保存选股快照并与 auto 调参隔离；普通研究保持 ephemeral
    · 更新 daily/yyyyMMdd.md 的“当日重点题材/事件/板块”
    · 推送摘要（核心方向 1~2 + 关注/持仓提示）
 ```

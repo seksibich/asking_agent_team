@@ -6,6 +6,9 @@ const cfg = {
 };
 
 const $ = (id) => document.getElementById(id);
+const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+}[ch]));
 const toast = (msg, type = "") => {
   const t = $("toast");
   t.textContent = msg; t.className = "toast " + type;
@@ -41,6 +44,7 @@ async function health() {
 const ADMIN_ONLY_TABS = new Set(["precompute"]);
 let _role = "user";
 let _authReady = false;
+let _selectionsLoaded = false;
 const isAdmin = () => _role === "admin";
 
 function setAppLocked(locked) {
@@ -143,9 +147,24 @@ function applyRoleUI() {
   const sw = $("s-window"), sws = $("s-window-save");
   if (sw) sw.disabled = !admin;
   if (sws) { sws.disabled = !admin; sws.title = admin ? "" : "访客不能修改归一化窗口"; }
-  // 回测结果对管理员和访客均可查看
+  // 选股来源：关注和持仓仅管理员可见；服务端仍是最终安全边界
+  const category = $("sl-category");
+  category?.querySelectorAll("[data-admin-only-category]").forEach((option) => {
+    option.hidden = !admin;
+    option.disabled = !admin;
+  });
+  if (!admin && category && ["watch", "holding"].includes(category.value)) {
+    category.value = "";
+  }
+  if (!admin) {
+    _selectionsLoaded = false;
+    if ($("sl-meta")) $("sl-meta").textContent = "";
+    if ($("sl-hotspots")) $("sl-hotspots").innerHTML = "";
+    if ($("sl-result")) $("sl-result").innerHTML = '<div class="empty">进入页面后自动加载</div>';
+  }
+  // 回测结果对管理员和访客均可查看，但访客结果由服务端排除关注和持仓
   const br = $("b-run");
-  if (br) { br.disabled = false; br.title = "加载回测结果"; }
+  if (br) { br.disabled = false; br.title = "加载当前权限可见的回测结果"; }
   // 顶部角色徽标
   const badge = $("role-badge");
   if (badge) {
@@ -176,6 +195,8 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "backtest") loadBacktest();
     if (btn.dataset.tab === "precompute") loadPrecompute();
     if (btn.dataset.tab === "sentiment") loadSentiment();
+    if (btn.dataset.tab === "industry") loadIndustry();
+    if (btn.dataset.tab === "selections") loadSelections();
   });
 });
 
@@ -227,17 +248,17 @@ async function loadUserKeys() {
     list.innerHTML = keys.map((k) => `
       <div class="uk-item ${k.disabled ? "off" : ""}">
         <div class="uk-info">
-          <b>${k.label || "访客"}</b>${k.disabled ? '<span class="uk-tag">已停用</span>' : ""}
-          <code class="uk-key">${k.key}</code>
-          <small>${k.created_at || ""}</small>
+          <b>${esc(k.label || "访客")}</b>${k.disabled ? '<span class="uk-tag">已停用</span>' : ""}
+          <code class="uk-key">${esc(k.key || "")}</code>
+          <small>${esc(k.created_at || "")}</small>
         </div>
         <div class="uk-ops">
-          <button class="btn-ghost" data-uk-copy="${k.key}">复制</button>
-          <button class="btn-ghost" data-uk-toggle="${k.id}">${k.disabled ? "启用" : "停用"}</button>
-          <button class="btn-ghost uk-del" data-uk-del="${k.id}">删除</button>
+          <button class="btn-ghost" data-uk-copy="${esc(k.key || "")}">复制</button>
+          <button class="btn-ghost" data-uk-toggle="${esc(k.id || "")}">${k.disabled ? "启用" : "停用"}</button>
+          <button class="btn-ghost uk-del" data-uk-del="${esc(k.id || "")}">删除</button>
         </div>
       </div>`).join("");
-  } catch (e) { list.innerHTML = '<div class="empty">加载失败：' + e.message + "</div>"; }
+  } catch (e) { list.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + "</div>"; }
 }
 
 $("uk-create").onclick = async () => {
@@ -274,6 +295,8 @@ function reloadActiveTab() {
   else if (t === "backtest") loadBacktest(true);
   else if (t === "precompute") loadPrecompute(true);
   else if (t === "sentiment") { _sentLoaded = false; loadSentiment(); }
+  else if (t === "industry") loadIndustry(true);
+  else if (t === "selections") loadSelections(true);
 }
 
 $("cfg-save").onclick = async () => {
@@ -308,19 +331,29 @@ $("cfg-test").onclick = async () => {
 };
 
 /* ---------- 量化选股 ---------- */
+const splitSearchTerms = (value) => value.split(/[，,]/).map((s) => s.trim()).filter(Boolean);
+const quantHelpModal = $("quant-help-modal");
+$("q-help").onclick = () => quantHelpModal.classList.remove("hidden");
+$("quant-help-close").onclick = () => quantHelpModal.classList.add("hidden");
+quantHelpModal.addEventListener("click", (e) => {
+  if (e.target === quantHelpModal) quantHelpModal.classList.add("hidden");
+});
+
 $("q-run").onclick = async () => {
   const btn = $("q-run"); btn.disabled = true;
+  const stockNames = $("q-stock-names").value.trim();
   const industries = $("q-industries").value.trim();
   const params = { top_n: Number($("q-topn").value) || 30 };
-  if (industries) params.industries = industries.split(/[，,]/).map((s) => s.trim()).filter(Boolean);
+  if (stockNames) params.stock_names = splitSearchTerms(stockNames);
+  else if (industries) params.industries = splitSearchTerms(industries);
   $("q-result").innerHTML = '<div class="empty">运行中…</div>';
   try {
     const d = await call("screen_quant", params);
     const rows = d.candidates || [];
-    $("q-meta").textContent = `${d.trade_date || ""} · ${rows.length} 只`;
-    // renderCandidates 内部直接写入 #q-result（drawQuant），不返回值；
-    // 不能用其返回值(undefined)覆盖已渲染表格
+    const scope = d.filter_type === "stock_names" ? "个股" : d.filter_type === "industries" ? "板块" : "全市场";
+    $("q-meta").textContent = `${d.trade_date || ""} · ${scope} · ${rows.length} 只`;
     renderCandidates(rows);
+    if (!rows.length && d.note) toast(d.note, "bad");
   } catch (e) { $("q-result").innerHTML = ""; toast("选股失败：" + e.message, "bad"); }
   btn.disabled = false;
 };
@@ -349,6 +382,9 @@ const QUANT_COLS = [
   { key: "last", label: "最新价" },
   { key: "chg", label: "当日涨幅", pct: true },
   { key: "ret5", label: "近5日", pct: true },
+  { key: "industry_name", label: "所属行业" },
+  { key: "industry_strength", label: "行业强度" },
+  { key: "industry_score", label: "行业原始分" },
   { key: "mom_12_1", label: "12-1动量" },
   { key: "reversal_1m", label: "1月反转" },
   { key: "trend_ma", label: "均线多头" },
@@ -412,6 +448,101 @@ $("q-result").addEventListener("click", (e) => {
   if (_quantSort.key === k) _quantSort.dir = _quantSort.dir === "asc" ? "desc" : "asc";
   else _quantSort = { key: k, dir: k === "code" ? "asc" : "desc" };
   drawQuant();
+});
+
+/* ---------- 行业量化分析 ---------- */
+let _industryLoaded = false;
+async function loadIndustry(force = false) {
+  if (_industryLoaded && !force) return;
+  _industryLoaded = true;
+  const box = $("i-result");
+  box.innerHTML = '<div class="empty">加载行业评分中…</div>';
+  try {
+    const d = await call("screen_sector", { top_n: Number($("i-topn").value) || 31 });
+    const sectors = d.sectors || [];
+    $("i-meta").textContent = `${d.trade_date || ""} · ${d.data_source === "persisted" ? "盘后持久化" : "实时计算"} · ${sectors.length} 个行业`;
+    const rows = sectors.map((r, index) => ({
+      排名: index + 1, 行业: r.name, 代码: r.code,
+      行业强度: r.percentile == null ? null : r.percentile * 100,
+      综合分: r.score, "12-1动量": r.sec_mom_12_1,
+      "20日动量": r.sec_mom_20d, "5日动量": r.sec_mom_5d,
+      量能确认: r.sec_vol_confirm, 低波动: r.sec_low_vol,
+    }));
+    box.innerHTML = rows.length ? renderTable(rows) : '<div class="empty">暂无行业评分，请先在盘后运行因子预计算</div>';
+  } catch (e) {
+    box.innerHTML = '<div class="empty">行业评分加载失败：' + esc(e.message) + "</div>";
+  }
+}
+$("i-run").onclick = () => loadIndustry(true);
+
+/* ---------- 量化选股看板 ---------- */
+const CATEGORY_LABEL = { auto: "每日自动", manual: "用户触发", watch: "关注", holding: "持仓" };
+const fmtMaybe = (value, digits = 2) => value == null ? "—" : Number(value).toFixed(digits);
+const pctText = (value) => value == null ? "—" : `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(2)}%`;
+
+function drawSelections(data) {
+  const rows = data.rows || [];
+  $("sl-meta").textContent = `${data.quote_trade_date || "行情不可用"} · ${rows.length} 条${data.quote_errors?.length ? " · 行情有缺失" : ""}`;
+  const hotspots = data.hotspots || [];
+  $("sl-hotspots").innerHTML = hotspots.map((h) =>
+    `<button class="hotspot-pill" data-hotspot="${esc(h.name)}">${esc(h.name)} <b>${h.count}</b></button>`).join("");
+  if (!rows.length) {
+    $("sl-result").innerHTML = '<div class="empty">没有符合条件的选股记录</div>';
+    return;
+  }
+  $("sl-result").innerHTML = rows.map((r) => {
+    const sinceCls = r.since_selection_pct == null ? "" : (r.since_selection_pct >= 0 ? "pos" : "neg");
+    const chgCls = r.latest_chg_pct == null ? "" : (r.latest_chg_pct >= 0 ? "pos" : "neg");
+    const amountYi = r.amount == null ? "—" : `${(Number(r.amount) / 100000).toFixed(2)} 亿`;
+    const factorEntries = Object.entries(r.factors || {}).filter(([key]) => key !== "_meta");
+    const factors = r.factor_error
+      ? `因子快照缺失：${esc(r.factor_error)}`
+      : (factorEntries.length
+        ? factorEntries.map(([key, value]) => `${esc(factorLabel(key))}：${typeof value === "number" ? value.toFixed(4) : esc(value)}`).join(" ｜ ")
+        : "未保存量化因子快照");
+    return `<article class="selection-item">
+      <div class="selection-head">
+        <div class="selection-ticker"><b>${esc(r.name || "-")}</b><span>${esc(r.code)}</span></div>
+        <div class="selection-tags"><span>${esc(CATEGORY_LABEL[r.category] || r.category)}</span><span>${esc(r.hotspot)}</span><span>${esc(r.market_role || "地位未标注")}</span></div>
+        <div class="selection-date">${esc(r.date)}<small>${esc(r.logged_at || "")}</small></div>
+      </div>
+      <div class="selection-metrics">
+        <div><small>选股价</small><b>${fmtMaybe(r.selected_price)}</b></div>
+        <div><small>最新价</small><b>${fmtMaybe(r.latest_price)}</b></div>
+        <div><small>选股后</small><b class="${sinceCls}">${pctText(r.since_selection_pct)}</b></div>
+        <div><small>当日涨幅</small><b class="${chgCls}">${pctText(r.latest_chg_pct)}</b></div>
+        <div><small>换手率</small><b>${pctText(r.turnover_rate)}</b></div>
+        <div><small>成交额</small><b>${amountYi}</b></div>
+        <div><small>综合分</small><b>${fmtMaybe(r.score, 3)}</b></div>
+      </div>
+      <div class="selection-context"><b>核心事件：</b>${esc(r.event || "未标注")}<br><b>入选理由：</b>${esc(r.reason || "未填写")}</div>
+      <details><summary>查看选股时量化因子快照</summary><p>${factors}</p></details>
+    </article>`;
+  }).join("");
+}
+
+async function loadSelections(force = false) {
+  if (_selectionsLoaded && !force) return;
+  _selectionsLoaded = true;
+  $("sl-result").innerHTML = '<div class="empty">加载选股记录与最新行情…</div>';
+  const params = { limit: 500 };
+  const from = $("sl-from").value.replaceAll("-", "");
+  const to = $("sl-to").value.replaceAll("-", "");
+  const hotspot = $("sl-hotspot").value.trim();
+  const category = $("sl-category").value;
+  if (from) params.date_from = from;
+  if (to) params.date_to = to;
+  if (hotspot) params.hotspot = hotspot;
+  if (category) params.category = category;
+  try { drawSelections(await call("selection_dashboard", params)); }
+  catch (e) { $("sl-result").innerHTML = '<div class="empty">选股看板加载失败：' + esc(e.message) + "</div>"; }
+}
+$("sl-run").onclick = () => loadSelections(true);
+$("sl-hotspots").addEventListener("click", (e) => {
+  const pill = e.target.closest("[data-hotspot]");
+  if (!pill) return;
+  $("sl-hotspot").value = pill.getAttribute("data-hotspot");
+  loadSelections(true);
 });
 
 /* ---------- 轻量 SVG 图表（无外部依赖） ---------- */
@@ -506,7 +637,9 @@ async function setSentimentDefaultDate() {
   try {
     const h = await health();
     const serverDate = String(h.date || "").trim();
-    if (/^\\d{8}$/.test(serverDate) && h.trade_open !== false) input.value = serverDate;
+    if (/^\d{8}$/.test(serverDate) && h.trade_open !== false) {
+      input.value = `${serverDate.slice(0, 4)}-${serverDate.slice(4, 6)}-${serverDate.slice(6, 8)}`;
+    }
   } catch (e) { /* 健康检查失败时保留空值，由服务端选择最近交易日 */ }
 }
 
@@ -557,7 +690,7 @@ $("s-window-save").onclick = async () => {
 async function runSentiment() {
   const refreshBtn = $("s-refresh");
   refreshBtn.disabled = true;
-  const date = $("s-date").value.trim();
+  const date = $("s-date").value.trim().replaceAll("-", "");
   const days = Number($("s-days").value) || 15;
   $("s-result").innerHTML = '<div class="empty">读取中…</div>';
   $("s-trend").innerHTML = '<div class="empty">读取中…</div>';
@@ -801,6 +934,7 @@ const FACTOR_LABEL = {
   low_ivol: "低特质波动",
   low_turnover: "低换手",
   vol_confirm: "量能确认（温和放量）",
+  industry_strength: "行业强度（申万一级行业评分分位）",
   // 候选因子（默认权重 0）
   mom_6_1: "6-1 动量（中期趋势）",
   max_lottery: "MAX 彩票效应（反向）",
@@ -839,6 +973,7 @@ const FACTOR_DESC = {
   low_ivol: "近 60 日日收益标准差取负（低特质波动）。低波动异象：波动越低、风险调整后收益越优。值越大（波动越低）越好。正向。",
   low_turnover: "换手率取负。高换手往往对应过度交易/情绪过热，未来收益偏低；低换手更稳健。值越大（换手越低）越好。正向。",
   vol_confirm: "近 5 日均量 / 前 20 日均量，衡量温和放量（已截断防爆量）。适度放量确认趋势。正向。",
+  industry_strength: "所属申万一级行业的每日量化评分横截面分位。行业评分由 12-1、20 日、5 日动量、量能确认和低波动综合得到；越接近 1 代表行业趋势排名越靠前，用于让个股筛选顺应行业轮动。",
   mom_6_1: "6-1 中期动量：过去约 126 个交易日、剔除最近 21 日的累计收益（Jegadeesh-Titman 1993）。比 12-1 更贴近中短期趋势延续，与 12-1 互补。默认权重 0，需要时启用。",
   max_lottery: "MAX 彩票效应（Bali, Cakici & Whitelaw 2011）：过去 21 日最大单日涨幅取负。高“博彩性”（近期出现暴涨）的个股因投资者偏好而被高估、未来收益偏低，故取负对齐为越大越好。默认权重 0。",
   downside_vol: "下行波动率（Ang, Chen & Xing 2006）：近 60 日仅负收益部分的标准差，取负。下行风险越低越优（低下行波动溢价）。区别于总波动，只惩罚亏损端波动。默认权重 0。",
@@ -911,7 +1046,7 @@ function modelBlock(model, info) {
     const weights = {};
     inputs().forEach((i) => (weights[i.dataset.f] = parseFloat(i.value) || 0));
     try {
-      const r = await call("set_factor_weights", { model, weights });
+      const r = await call("set_factor_weights", { model, weights, actor: "user", reason: "管理员在权重配置页手工调整" });
       if (r.applied) { toast(`已保存 ${model} 权重`, "ok"); loadWeights(); }
       else {
         let msg = r.error || "保存失败";
@@ -925,40 +1060,124 @@ function modelBlock(model, info) {
   return wrap;
 }
 
-/* ---------- 预计算状态 ---------- */
+/* ---------- 预计算后台任务与质量看板 ---------- */
 let _pcLoaded = false;
+let _pcLoading = false;
+let _pcPollTimer = null;
+const PC_ACTIVE = new Set(["queued", "running"]);
+const PC_STATUS = {
+  queued: "等待执行", running: "运行中", success: "成功",
+  partial: "部分完成", failed: "失败", skipped: "已跳过",
+};
+
+function schedulePrecomputePoll(active) {
+  if (_pcPollTimer) clearTimeout(_pcPollTimer);
+  _pcPollTimer = active && isAdmin()
+    ? setTimeout(() => loadPrecompute(true), 1500) : null;
+}
+
+function renderPrecomputeTask(task) {
+  const box = $("pc-task");
+  const btn = $("pc-run");
+  if (!task) {
+    box.innerHTML = '<div class="empty">尚无任务记录，运行后可在这里持续查看进度</div>';
+    btn.disabled = false;
+    $("pc-status").textContent = "";
+    return false;
+  }
+  const active = PC_ACTIVE.has(task.status);
+  const progress = Math.max(0, Math.min(100, Number(task.progress) || 0));
+  const label = PC_STATUS[task.status] || task.status || "未知";
+  const params = task.params || {};
+  const mode = params.full ? "全量补算" : "增量预计算";
+  const count = task.total_count ? `${task.completed_count || 0} / ${task.total_count}` : "待确定";
+  const error = task.error ? `<div class="pc-message bad">${esc(task.error)}</div>` : "";
+  box.innerHTML = `
+    <div class="pc-task-head">
+      <div><div class="pc-task-title">${esc(mode)}<span class="pc-state ${esc(task.status)}">${esc(label)}</span></div>
+        <code class="pc-task-id">任务 ${esc(task.job_id)}</code></div>
+      <span class="meta">${esc(task.started_at || "")}</span>
+    </div>
+    <div class="pc-progress-row"><div class="pc-progress"><i style="width:${progress}%"></i></div><span class="pc-progress-value">${progress}%</span></div>
+    <div class="pc-task-grid">
+      <div class="pc-task-stat"><small>当前阶段</small><b>${esc(task.stage || "—")}</b></div>
+      <div class="pc-task-stat"><small>当前交易日</small><b>${esc(task.current_date || "—")}</b></div>
+      <div class="pc-task-stat"><small>日期进度</small><b>${esc(count)}</b></div>
+      <div class="pc-task-stat"><small>最近心跳</small><b>${esc(task.heartbeat_at || "—")}</b></div>
+    </div>
+    <div class="pc-message">${esc(task.message || "等待任务更新")}</div>${error}`;
+  btn.disabled = active;
+  const status = $("pc-status");
+  status.textContent = active ? `${label} · ${progress}%` : `${label}${task.finished_at ? ` · ${task.finished_at}` : ""}`;
+  status.className = "status " + (task.status === "success" ? "ok" : task.status === "failed" ? "bad" : "");
+  return active;
+}
+
+function renderPrecompute(d) {
+  const cov = (d.coverage || []).slice().reverse();
+  const latest = d.latest_date ? `最新覆盖日 ${d.latest_date}` : "暂无覆盖数据";
+  const usable = d.latest_usable_date ? ` · 最新可用 ${d.latest_usable_date}` : "";
+  $("pc-meta").textContent = `${latest}${usable} · 因子版 ${d.factor_version || "—"}`;
+  const series = cov.map((row) => ({ label: fmtDate(row.trade_date), value: row.count }));
+  $("pc-chart").innerHTML = series.length ? svgLine(series, { min: 0, color: "#16a34a" })
+    : '<div class="empty">暂无因子数据，请运行预计算</div>';
+
+  const runs = d.runs || [];
+  if (!runs.length) {
+    $("pc-table").innerHTML = '<div class="empty">暂无计算质量记录</div>';
+  } else {
+    const rows = runs.map((run) => {
+      const label = PC_STATUS[run.status] || run.status || "未知";
+      const errors = Array.isArray(run.errors) ? run.errors.join("；") : (run.errors || "");
+      return `<tr><td>${esc(run.trade_date)}</td>
+        <td><span class="pc-quality ${esc(run.status)}">${esc(label)}</span></td>
+        <td>${((Number(run.coverage_ratio) || 0) * 100).toFixed(1)}%</td>
+        <td>${esc(run.computed_count ?? 0)} / ${esc(run.universe_count ?? 0)}</td>
+        <td title="${esc(errors)}">${esc(errors || "—")}</td>
+        <td>${esc(run.finished_at || "—")}</td></tr>`;
+    }).join("");
+    $("pc-table").innerHTML = `<table><thead><tr><th>交易日</th><th>质量</th><th>覆盖率</th><th>已计算 / 股票池</th><th>异常</th><th>完成时间</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  return renderPrecomputeTask(d.task);
+}
+
 async function loadPrecompute(force = false) {
-  if (_pcLoaded && !force) return;
-  _pcLoaded = true;
-  $("pc-chart").innerHTML = '<div class="empty">加载中…</div>';
-  $("pc-table").innerHTML = '<div class="empty">加载中…</div>';
+  if (!isAdmin() || _pcLoading || (_pcLoaded && !force)) return;
+  _pcLoading = true;
+  if (!_pcLoaded) {
+    $("pc-chart").innerHTML = '<div class="empty">加载中…</div>';
+    $("pc-table").innerHTML = '<div class="empty">加载中…</div>';
+  }
   try {
     const d = await call("precompute_status", { limit: 30 });
-    const cov = (d.coverage || []).slice().reverse(); // 升序便于折线
-    $("pc-meta").textContent = d.latest_date ? `最新覆盖日 ${d.latest_date} · 共 ${cov.length} 日` : "暂无预计算数据";
-    const series = cov.map((r) => ({ label: fmtDate(r.trade_date), value: r.count }));
-    $("pc-chart").innerHTML = series.length ? svgLine(series, { min: 0, color: "#16a34a" })
-      : '<div class="empty">daily_factors 为空，请运行预计算</div>';
-    const rows = (d.coverage || []).map((r) => ({ 交易日: r.trade_date, 覆盖股票数: r.count }));
-    $("pc-table").innerHTML = rows.length ? renderTable(rows) : '<div class="empty">无数据</div>';
+    _pcLoaded = true;
+    schedulePrecomputePoll(renderPrecompute(d));
   } catch (e) {
-    $("pc-chart").innerHTML = ""; $("pc-table").innerHTML = "";
+    _pcLoaded = false;
+    schedulePrecomputePoll(false);
     toast("预计算状态加载失败：" + e.message, "bad");
+  } finally {
+    _pcLoading = false;
   }
 }
 
 $("pc-refresh").onclick = () => loadPrecompute(true);
 $("pc-run").onclick = async () => {
-  const btn = $("pc-run"); btn.disabled = true;
-  const s = $("pc-status"); s.textContent = "预计算中（首次较慢，请稍候）…"; s.className = "status";
+  const btn = $("pc-run");
+  const status = $("pc-status");
+  btn.disabled = true;
+  status.textContent = "正在创建后台任务…";
+  status.className = "status";
   try {
-    const d = await call("precompute_daily_factors", {});
-    const dates = d.dates_computed || [];
-    const n = dates.length ? d.stocks_per_date[dates[0]] : 0;
-    s.textContent = `完成：${dates.join(",")} 写入 ${n} 只`; s.className = "status ok";
-    loadPrecompute(true);
-  } catch (e) { s.textContent = "失败：" + e.message; s.className = "status bad"; }
-  btn.disabled = false;
+    const data = await call("precompute_daily_factors", {});
+    status.textContent = data.already_running ? "已有任务运行中，已接入其进度" : "后台任务已启动";
+    _pcLoaded = false;
+    await loadPrecompute(true);
+  } catch (e) {
+    status.textContent = "启动失败：" + e.message;
+    status.className = "status bad";
+    btn.disabled = false;
+  }
 };
 
 /* 首屏：没有本地 Key 时必须先登录；已有 Key 仍需重新向服务端验证 */

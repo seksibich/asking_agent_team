@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 后端框架 + Web 前端（service/web，同源部署）+ 各技能脚本（功能模块，位于 agent/skills/*/scripts）
 COPY service ./service
 COPY agent/skills ./agent/skills
+# /health 文档版本对齐：init.md 提供语义版本，VERSION 由部署脚本/本地构建流程生成。
+COPY agent/init.md ./agent/init.md
+COPY VERSION ./VERSION
 
 RUN mkdir -p /app/cache /app/data
 

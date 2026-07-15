@@ -18,22 +18,23 @@ import numpy as np
 import pandas as pd
 
 # 个股因子公式版本：公式、字段或计算口径变化时递增，旧预计算不会被新选股误用。
-STOCK_FACTOR_VERSION = "stock-factors-v1"
+STOCK_FACTOR_VERSION = "stock-factors-v2"
 
 # ---------------- 个股因子默认权重（sum=1.0） ----------------
-# 侧重回测有效的趋势+反转+低波动组合。
+# 侧重回测有效的趋势+反转+低波动组合，并叠加每日持久化的行业强度。
 # 下半部分为「候选因子」，默认权重 0（不参与打分、不在选股列表展示）；
 # 依据前沿学术论文 / 量化机构常用 / A股回测经验预置，需要时在「权重配置」页调高权重启用。
 # 所有因子均已对齐为「值越大越好（预期收益越高）」，故合成权重恒为正。
 STOCK_FACTOR_WEIGHTS: dict[str, float] = {
     # —— 默认启用（sum=1.0）——
-    "mom_12_1": 0.16,        # 12-1 动量（趋势，剔除最近1个月避免短期反转污染）
-    "trend_ma": 0.14,        # 均线多头排列强度（趋势）
+    "mom_12_1": 0.15,        # 12-1 动量（趋势，剔除最近1个月避免短期反转污染）
+    "trend_ma": 0.13,        # 均线多头排列强度（趋势）
     "high_52w": 0.09,        # 距52周高点接近度（趋势，52周高点因子）
-    "reversal_1m": 0.22,     # 1个月反转（情绪，近月超跌反弹，A股显著）
-    "low_turnover": 0.13,    # 低换手（情绪/流动性，高换手未来收益低）
-    "low_ivol": 0.20,        # 低波动（特质波动率，低波动异象）
+    "reversal_1m": 0.18,     # 1个月反转（情绪，近月超跌反弹，A股显著）
+    "low_turnover": 0.11,    # 低换手（情绪/流动性，高换手未来收益低）
+    "low_ivol": 0.14,        # 低波动（特质波动率，低波动异象）
     "vol_confirm": 0.06,     # 量能确认（温和放量）
+    "industry_strength": 0.14,  # 所属申万一级行业每日量化评分分位（板块轮动顺势）
     # —— 候选因子（默认 0，学术/机构常用，按需启用）——
     "mom_6_1": 0.0,          # 6-1 中期动量（Jegadeesh-Titman 1993；中短期趋势延续）
     "max_lottery": 0.0,      # MAX 彩票效应反向（Bali/Cakici/Whitelaw 2011；高博彩性未来收益低）
@@ -56,13 +57,14 @@ SECTOR_FACTOR_WEIGHTS: dict[str, float] = {
 
 # ---------------- 趋势选股权重（sum=1.0，侧重趋势因子，弱化反转） ----------------
 TREND_FACTOR_WEIGHTS: dict[str, float] = {
-    "mom_12_1": 0.28,
-    "trend_ma": 0.24,
-    "high_52w": 0.18,
+    "mom_12_1": 0.25,
+    "trend_ma": 0.21,
+    "high_52w": 0.15,
     "reversal_1m": 0.05,
-    "low_turnover": 0.08,
-    "low_ivol": 0.10,
+    "low_turnover": 0.07,
+    "low_ivol": 0.08,
     "vol_confirm": 0.07,
+    "industry_strength": 0.12,
 }
 
 # ---------------- 情绪温度指标权重（sum=1.0，0-100 温度合成） ----------------
@@ -256,12 +258,14 @@ def zscore(s: pd.Series) -> pd.Series:
     return (s - s.mean()) / std
 
 
-def composite_score(table: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
-    """对因子表做横截面 z-score 后加权合成，新增 z_* 列与 score 列。"""
+def composite_score(table: pd.DataFrame, weights: dict[str, float],
+                    strict: bool = True) -> pd.DataFrame:
+    """横截面 z-score 加权；默认严格要求完整因子契约，并同时生成 0~1 分位分。"""
+    missing = [name for name in weights if name not in table.columns]
+    if missing and strict:
+        raise ValueError(f"因子数据缺少契约成分：{','.join(missing)}")
     for f in weights:
-        if f in table.columns:
-            table[f"z_{f}"] = zscore(table[f])
-        else:
-            table[f"z_{f}"] = 0.0
+        table[f"z_{f}"] = zscore(table[f]) if f in table.columns else 0.0
     table["score"] = sum(table[f"z_{f}"] * w for f, w in weights.items())
+    table["score_percentile"] = table["score"].rank(method="average", pct=True)
     return table

@@ -26,7 +26,7 @@
    - 动态题材综合消息面、热榜、涨停连板、量能和资金识别，不限传统板块；数据不可用仍保留章节并写明缺失、fallback、重试轨迹和实际日期。
    - 报告与推送强制分离。推送建议不超过 500 字，只含任务/日期、仓位或次日倾向、1~3 条主线/事件、重点候选或持仓风险、报告路径、数据降级提示；不得复制全文，也不得只发“报告已生成”。
    - 对每只正式量化/趋势候选检查「正式候选综合理由表」是否完整：量化综合分与关键因子、四维分、板块/产业链、板块短中期动量/量能/阶段、主线关系、催化与炒作路径、固定理由链、情绪与择时、风险/证伪。任一环缺证据必须写「无可核验证据」，缺项不得发布为正式候选。
-5. 写记忆前先判定来源：调度器正式预判可写 `predictions.jsonl`，调度器正式自动候选可 `log_selection(category=auto)`；用户主动单股调研、方向选股、行业/事件研究默认 ephemeral，不写 predictions/daily/观察池且不登记。仅用户明确要求持久化时转 watch，补齐题材事件字段并做隔离的 1/3/7/30 日观察性回测，绝不进入 auto 调参。
+5. 写记忆前先判定来源：调度器正式预判可写 `predictions.jsonl`，调度器正式自动候选逐只 `log_selection(category=auto)`；用户明确发起的正式选股任务逐只 `log_selection(category=manual)`，必须补齐选股价、热点、核心事件、主线地位、完整理由链与全部量化因子快照。普通单股调研、行业/事件研究仍为 ephemeral；manual 不写自动 predictions/daily/观察池，只做隔离回测，绝不进入 auto 调参；用户要求持续跟踪时再补记 watch。
 6. T7 单独执行**业绩增长参考池隔离检查**：
    - 确认窗口判定以实际公告日期/接口返回优先，基本面分析师已调用 `fundamental_forecast`、`fundamental_express`（公司公告经外部多源核验），必要时用 `fundamental_income`、`fundamental_fina_indicator` 复核。
    - 确认按 `code+report_period+announcement_date` 去重、全量表未因重点说明而丢记录、无数据时写明「当晚无可核验的增长/预增公告」。
@@ -48,3 +48,10 @@
 - **完整加载**：首次及每次任务/角色启动，先逐文件完整读取固定 12 个 Skills：`skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/stock-research/SKILL.md`；不得只读索引或角色摘要。
 - **主绑定**：全部 12 个 Skills。盘前显式执行 `skills/pre-market/SKILL.md`；竞价执行 `skills/bidding-analysis/SKILL.md`；盘中执行 `skills/intraday-watch/SKILL.md`；盘后执行 `skills/post-market/SKILL.md`；选股执行 `skills/stock-screening/SKILL.md` 与 `skills/quant-screening/SKILL.md`；用户主动单股调研执行 `skills/stock-research/SKILL.md`；回测执行 `skills/review-learning/SKILL.md`；所有任务同时执行 `skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`。`stock-research` 不加入定时 T1/T6/T7 的必执行绑定。
 - **职责/流程要求**：分发给子 Agent 时必须点名其主绑定 `skills/<name>/SKILL.md`，汇总前检查其是否完整加载 12 Skills。接口失败统一按 `skills/data-service/SKILL.md` 降级；T1/T6/T7 关键接口按 5 分钟、15 分钟延迟重试。
+
+## v1.6 证据链复核职责
+
+- 汇总正式候选前核对每只股票均有当日 `screening_run_id`，且候选代码、排名、`score_raw`、`score_percentile`、完整因子契约和上游依赖一致；任一不一致必须重筛，不得手工补值。
+- D1/T7 先核对任务级与日级状态：只有成功、覆盖达标、契约/依赖/`run_id` 一致才可消费；失败或部分结果不做数据类降级推断。
+- 回测分析师提出调参后，主 Agent 必须复核 `optimization_gate.eligible`、`snapshot_id`、样本哈希、当前父权重版本和样本外指标；任一缺失即禁止执行。
+- T7 方向预判登记时确认目标为下一 SSE 交易日；回测报告必须列出未成熟、legacy 和失败数量，禁止把这些样本静默排除后美化准确率。

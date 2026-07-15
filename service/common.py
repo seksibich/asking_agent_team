@@ -11,6 +11,7 @@ import hashlib
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -101,7 +102,10 @@ def cached_call(
     do_cache = use_cache or historical
     if do_cache and path.exists():
         with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            cached = json.load(f)
+        # 历史接口偶尔会在盘后数据尚未发布时返回空集，空结果不能永久固化。
+        if not historical or cached.get("rows"):
+            return cached
 
     df = fetch_fn()
     rows = df.to_dict(orient="records") if isinstance(df, pd.DataFrame) else df
@@ -110,7 +114,7 @@ def cached_call(
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "rows": rows,
     }
-    if do_cache:
+    if do_cache and (not historical or rows):
         atomic_write_json(path, payload)
     return payload
 
@@ -152,7 +156,7 @@ def is_trade_open(day: Optional[str] = None) -> bool:
 
 
 def last_trade_date(day: Optional[str] = None) -> str:
-    """返回最近一个交易日（含今日）。
+    """返回最近一个交易日（含指定日期）。
 
     注意：tushare trade_cal 返回顺序不保证升序，必须显式排序取最大交易日，
     否则会误取区间内最早的交易日。回看 30 天避免月初边界问题。
@@ -163,6 +167,17 @@ def last_trade_date(day: Optional[str] = None) -> str:
     df = pro.trade_cal(exchange="SSE", start_date=start, end_date=day)
     open_days = sorted(df[df["is_open"] == 1]["cal_date"].astype(str).tolist())
     return open_days[-1] if open_days else day
+
+
+def last_completed_trade_date(now: Optional[datetime] = None) -> str:
+    """按上海时间15:00收盘线返回最近已完成交易日，盘前不得把当天当成完整行情日。"""
+    current = now or datetime.now(ZoneInfo(TZ))
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=ZoneInfo(TZ))
+    else:
+        current = current.astimezone(ZoneInfo(TZ))
+    cutoff = current.date() if current.hour >= 15 else current.date() - timedelta(days=1)
+    return last_trade_date(cutoff.strftime("%Y%m%d"))
 
 
 # ---- 统一错误 ----

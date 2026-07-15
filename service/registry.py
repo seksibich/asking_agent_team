@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 from typing import Any, Callable, Optional
 
-SCHEMA_VERSION = 1  # 破坏性协议变更时手工 +1
+SCHEMA_VERSION = 2  # 正式选股运行绑定、预测下一交易日口径等破坏性协议变更
 
 # name -> {name, group, description, params, returns, fn}
 _REGISTRY: dict[str, dict[str, Any]] = {}

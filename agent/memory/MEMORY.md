@@ -108,7 +108,7 @@
 ```
 - `driver` 必填，标注主导维度，供回测分驱动统计准确率。
 - **写入时机**：仅调度器自动链路中的正式方向性预判（盘前/竞价/盘中/T7 正式候选）调用 `log_prediction`/写本日志；写入前确认不是 ephemeral 用户主动研究、不是 watch 观察样本、不是业绩增长参考池。
-- **禁止写入**：用户主动单股调研、方向选股、行业/事件研究默认 ephemeral，不能因报告有方向性结论自动写 predictions；用户明确持久化为 watch 后仍只做 selection 观察性回测，不进入 predictions auto 统计。
+- **禁止写入 predictions**：用户主动单股调研、方向选股、行业/事件研究不进入自动预判统计。用户触发正式选股只调用 `log_selection(category=manual)` 保存选股快照并做隔离回测；用户要求持续跟踪后可再记 watch，但两者都不进入 predictions auto 统计。
 - 读取时机：综合复盘回测、周月报。
 
 ## 3. 学习日志（学习日志-yyyy年MM月.md）
@@ -137,3 +137,10 @@
 - 只记可核验事实与自身预判，不记编造内容
 - 每条带时间戳；冲突保留最新并注明修正历史
 - 涨价/逻辑类线索优先保留（符合分析重心：涨价>逻辑>预期>情绪）
+
+## v1.6 持久化证据补充
+
+- DB 选股类别完整为 `auto|manual|watch|holding`；`auto/manual` 是不可变正式快照并必须关联 `screening_run_id`，`watch/holding` 才可随状态更新。旧记录保持 legacy，不补造契约或版本。
+- `predictions.jsonl` 仅作运行期可读镜像，权威记录在 DB。新预判必须保存 `predicted_at`、`target_trade_date`、`calc_version`、方向、driver、理由和来源；同一预判日期+标的不允许相反方向并存或覆盖。
+- T7 22:00 的“次日预判”目标必须是 `trade_cal` 的下一 SSE 交易日。回测按目标日成熟状态读取；旧日志没有目标日时标 `legacy_unverifiable`，禁止用同日行情回填。
+- 学习日志同时记录预测回测 `snapshot_id`、样本哈希、已评估/未成熟/失败/legacy 数量，以及选股回测的优化门禁、快照和权重父版本；不得只记录表面准确率。

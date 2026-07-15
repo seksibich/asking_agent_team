@@ -15,10 +15,12 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 import common
 import db
+import factor_contract
 import factors
 from registry import register
 
@@ -60,6 +62,19 @@ def effective_weights(model: str) -> dict[str, float]:
     return dict(DEFAULTS[model])
 
 
+def current_weight_version(model: str) -> str | None:
+    """返回当前覆盖权重版本；默认权重没有数据库版本，返回 None。"""
+    entry = _load_overrides().get(model, {})
+    weights = entry.get("weights") or {}
+    return entry.get("version_id") if set(weights) == set(DEFAULTS.get(model, {})) else None
+
+
+def model_contract(model: str) -> dict[str, Any]:
+    """返回公式结构与当前完整权重的可复现契约，包括默认权重为 0 的因子。"""
+    return factor_contract.weighted_contract(
+        model, effective_weights(model), current_weight_version(model) or "default")
+
+
 @register("get_factor_config", "screening",
           "获取因子/指标权重配置：各模型(stock/sector/trend/sentiment)的规范因子列表、当前生效权重与来源",
           params=[{"name": "model", "type": "string", "required": False,
@@ -74,6 +89,7 @@ def get_factor_config(p: dict) -> dict:
             continue
         has_ov = bool(ov.get(m, {}).get("weights")) and \
             set(ov[m]["weights"].keys()) == set(DEFAULTS[m].keys())
+        contract = model_contract(m)
         out[m] = {
             "canonical_factors": canonical_factors(m),
             "weights": effective_weights(m),
@@ -81,66 +97,101 @@ def get_factor_config(p: dict) -> dict:
             "updated_at": ov.get(m, {}).get("updated_at") if has_ov else None,
             "version_id": ov.get(m, {}).get("version_id") if has_ov else None,
             "actor": ov.get(m, {}).get("actor") if has_ov else None,
+            "factor_version": contract["factor_version"],
+            "schema_hash": contract["schema_hash"],
+            "weight_version": contract["weight_version"],
+            "active_components": contract["active_components"],
+            "contract": contract,
         }
     return {"source": "factor_config", "fetched_at": common.now_str(), "models": out}
 
 
 @register("set_factor_weights", "screening",
-          "更新某模型的全部因子/指标权重（必须传全部且权重和=1）。缺失/多余/差异/和≠1 时返回错误并指引。"
-          "每次成功修改都会留痕为一个类 commit 的 version_id（署名 actor），可用 get_config_history/get_config_version 定位",
+          "原子更新某模型全部因子权重。服务端校验完整契约、非负有限值、权重和、并发父版本；"
+          "Agent 自动调参还必须绑定达到样本外门槛的回测快照并遵守小步与零权重锁定。",
           params=[{"name": "model", "type": "string", "required": True, "desc": "stock|sector|trend|sentiment"},
                   {"name": "weights", "type": "object", "required": True,
-                   "desc": "全部规范因子的权重字典，权重和须=1.0"},
-                  {"name": "actor", "type": "string", "required": False, "default": "agent",
-                   "desc": "修改者身份署名，如 回测分析师/main-orchestrator/user"},
-                  {"name": "reason", "type": "string", "required": False, "default": "",
-                   "desc": "修改原因（回测证据/背离说明等），建议附回测 version 或关键指标"}],
-          returns="applied 是否成功 + version_id（留痕版本）；失败含 expected_factors/missing/unexpected/hint")
+                   "desc": "全部规范因子的权重字典，含权重为0的候选因子"},
+                  {"name": "actor", "type": "string", "required": False, "default": "agent"},
+                  {"name": "reason", "type": "string", "required": False, "default": ""},
+                  {"name": "expected_parent_version", "type": "string", "required": False,
+                   "desc": "get_factor_config 返回的当前 weight_version；用于防并发覆盖"},
+                  {"name": "backtest_snapshot_id", "type": "int", "required": False,
+                   "desc": "Agent 自动调参必须绑定的合格回测快照"}],
+          returns="applied/version_id；拒绝时返回契约、并发或优化门禁原因")
 def set_factor_weights(p: dict) -> dict:
     model = p["model"]
-    weights = p["weights"] or {}
-    actor = p.get("actor") or "agent"
-    reason = p.get("reason") or ""
+    weights = p.get("weights") or {}
+    actor = str(p.get("actor") or "agent")
+    reason = str(p.get("reason") or "")
     if model not in DEFAULTS:
         return {"applied": False, "error": f"unknown model: {model}",
-                "valid_models": list(DEFAULTS.keys())}
+                "valid_models": list(DEFAULTS)}
 
-    expected = set(DEFAULTS[model].keys())
-    got = set(weights.keys())
-    missing = sorted(expected - got)
-    unexpected = sorted(got - expected)
+    expected = set(DEFAULTS[model])
+    got = set(weights)
+    missing, unexpected = sorted(expected - got), sorted(got - expected)
     if missing or unexpected:
-        return {
-            "applied": False,
-            "error": "因子列表不匹配：必须提交该模型的全部规范因子且不能有多余因子",
-            "model": model,
-            "expected_factors": canonical_factors(model),
-            "missing": missing,
-            "unexpected": unexpected,
-            "hint": "先调用 get_factor_config 获取最新规范因子列表，补齐/去除后重试",
-        }
-
+        return {"applied": False, "error": "必须提交契约中的全部因子，含权重为0的候选因子",
+                "model": model, "expected_factors": canonical_factors(model),
+                "missing": missing, "unexpected": unexpected}
     try:
-        total = sum(float(v) for v in weights.values())
+        normalized = {name: round(float(weights[name]), 6) for name in canonical_factors(model)}
     except (TypeError, ValueError):
         return {"applied": False, "error": "权重值必须为数值", "model": model}
+    if any(not math.isfinite(value) or value < 0 for value in normalized.values()):
+        return {"applied": False, "error": "权重必须是非负有限数", "model": model}
+    total = sum(normalized.values())
     if abs(total - 1.0) > TOL:
-        return {"applied": False, "error": f"权重之和必须为 1.0（当前 {round(total, 4)}）",
-                "model": model, "expected_factors": canonical_factors(model)}
+        return {"applied": False, "error": f"权重之和必须为1.0（当前 {round(total, 6)}）",
+                "model": model}
+    if max(normalized.values(), default=0) > 0.40:
+        return {"applied": False, "error": "单因子权重不得超过0.40", "model": model}
 
-    norm_weights = {k: round(float(v), 6) for k, v in weights.items()}
-    # 留痕为一个版本（类 commit），署名 actor
-    ver = db.record_config_version(f"factor_weights:{model}", norm_weights, actor, reason)
-    ov = _load_overrides()
-    ov[model] = {"weights": norm_weights, "updated_at": common.now_str(),
-                 "version_id": ver["version_id"], "actor": actor, "reason": reason,
-                 "parent_version": ver.get("parent_version")}
-    _save_overrides(ov)
-    return {"applied": True, "model": model, "weights": norm_weights,
-            "version_id": ver["version_id"], "parent_version": ver.get("parent_version"),
-            "actor": actor, "reason": reason,
-            "note": "已保存并留痕；后续 screen_quant/screen_sector/screen_trend 将使用新权重。"
-                    "可用 get_config_history / get_config_version 定位或 restore_config_version 回滚"}
+    manual = bool(p.get("manual_override")) or actor.casefold() in {
+        "user", "用户", "admin", "管理员"
+    }
+    snapshot_id = p.get("backtest_snapshot_id")
+    current = effective_weights(model)
+    if not manual:
+        if "expected_parent_version" not in p:
+            return {"applied": False, "error": "Agent 调参必须提交 expected_parent_version 防止并发覆盖"}
+        changed_too_much = [name for name in normalized
+                            if abs(normalized[name] - float(current[name])) > 0.030001]
+        activated = [name for name in normalized if float(current[name]) == 0 and normalized[name] != 0]
+        if changed_too_much:
+            return {"applied": False, "error": "Agent 单次每个因子调整不得超过0.03",
+                    "factors": changed_too_much}
+        if activated:
+            return {"applied": False, "error": "Agent 不得自动启用当前权重为0的候选因子",
+                    "factors": activated}
+        snapshot = db.get_snapshot(int(snapshot_id)) if snapshot_id is not None else None
+        gate = (snapshot or {}).get("payload", {}).get("optimization_gate", {})
+        if not snapshot or snapshot.get("kind") != "selection" or not gate.get("eligible"):
+            return {"applied": False, "error": "Agent 调参必须绑定通过样本量与样本外验证的选股回测快照"}
+        if gate.get("schema_hash") != factor_contract.base_contract(model)["schema_hash"]:
+            return {"applied": False, "error": "回测快照因子契约与当前模型不一致"}
+        if model == "stock":
+            dependency_hash = factor_contract.fingerprint(
+                factor_contract.stock_data_dependencies(model_contract("sector")))
+            if gate.get("dependency_hash") != dependency_hash:
+                return {"applied": False, "error": "回测快照的行业公式或权重依赖已过期"}
+
+    contract = factor_contract.weighted_contract(
+        model, normalized, p.get("expected_parent_version") or current_weight_version(model) or "default")
+    published = db.publish_factor_weights(
+        model=model, weights=normalized, actor=actor, reason=reason,
+        expected_parent_version=p.get("expected_parent_version"),
+        entry_metadata={"schema_hash": contract["schema_hash"],
+                        "factor_version": contract["factor_version"],
+                        "backtest_snapshot_id": snapshot_id})
+    if not published.get("applied"):
+        published["error"] = "配置已被其他请求更新，请刷新 get_factor_config 后重试"
+        return published
+    return {**published, "actor": actor, "reason": reason,
+            "contract": factor_contract.weighted_contract(
+                model, normalized, published["version_id"]),
+            "note": "权重与版本已在同一事务原子发布；后续筛选使用新版本。"}
 
 
 @register("get_config_history", "screening",
@@ -191,7 +242,9 @@ def restore_config_version(p: dict) -> dict:
     payload = v.get("payload") or {}
     reason = p.get("reason") or f"restore from {p['version_id']}"
     return set_factor_weights({"model": model, "weights": payload,
-                               "actor": p.get("actor") or "agent", "reason": reason})
+                               "actor": p.get("actor") or "agent", "reason": reason,
+                               "expected_parent_version": current_weight_version(model),
+                               "manual_override": True})
 
 
 if __name__ == "__main__":

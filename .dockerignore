@@ -6,7 +6,6 @@
 **/.DS_Store
 .git/
 memory/
-python-packages/
 agents/
 *.md
 skills/**/SKILL.md

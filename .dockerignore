@@ -5,7 +5,12 @@
 .env
 **/.DS_Store
 .git/
-memory/
-agents/
+.kiro/
+# agent 文档不进服务镜像，只需 agent/skills/*/scripts 功能脚本
+agent/memory/
+agent/agents/
+agent/*.md
+agent/skills/**/SKILL.md
+doc/
+profile/CHANGELOG-AGENT.md
 *.md
-skills/**/SKILL.md

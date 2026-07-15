@@ -58,7 +58,7 @@ ADMIN_ONLY_FUNCTIONS = {
 # 动态访客 Key（由管理员在设置页生成/管理）落库 config_kv 的键
 USER_KEYS_CONFIG_KEY = "user_api_keys"
 
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+WEB_DIR = Path(__file__).resolve().parent / "web"
 
 app = FastAPI(title="Stock Data Service", version="1.0.0")
 

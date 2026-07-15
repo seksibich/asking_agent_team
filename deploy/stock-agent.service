@@ -1,0 +1,22 @@
+[Unit]
+Description=Stock Data Service (FastAPI/uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 以下路径由 remote_deploy.sh 用实际值渲染后安装到 /etc/systemd/system/
+User=__RUN_USER__
+WorkingDirectory=__APP_DIR__/service
+EnvironmentFile=__APP_DIR__/.env
+Environment=CACHE_DIR=__APP_DIR__/cache
+Environment=DATA_DIR=__APP_DIR__/data
+ExecStart=__VENV__/bin/uvicorn app:app --host 0.0.0.0 --port __PORT__
+Restart=on-failure
+RestartSec=3
+# 优雅停止，给 uvicorn 时间释放端口
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

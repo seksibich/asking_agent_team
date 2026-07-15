@@ -11,3 +11,6 @@ __pycache__/
 
 # 系统
 .DS_Store
+
+# Kiro/辅助开发产出（审计、报告、临时分析等，不入库）
+.kiro-work/

@@ -1,5 +1,5 @@
 # 数据服务镜像（前后端同源 + DB）
-# 构建上下文为仓库根目录（含 service/ 后端、skills/ 功能脚本、web/ 前端）。
+# 构建上下文为仓库根目录（含 service/ 后端与 service/web 前端、agent/skills/*/scripts 功能脚本）。
 FROM python:3.11-slim
 
 ENV TZ=Asia/Shanghai
@@ -7,13 +7,12 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 WORKDIR /app
 
-COPY requirements.txt ./requirements.txt
+COPY profile/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 后端框架 + 各技能脚本（功能模块）+ Web 前端（同源部署）
+# 后端框架 + Web 前端（service/web，同源部署）+ 各技能脚本（功能模块，位于 agent/skills/*/scripts）
 COPY service ./service
-COPY skills ./skills
-COPY web ./web
+COPY agent/skills ./agent/skills
 
 RUN mkdir -p /app/cache /app/data
 

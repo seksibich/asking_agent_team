@@ -1,6 +1,6 @@
 """功能模块自动发现与加载。
 
-扫描 skills/*/scripts/ 与 service/ 下的功能模块并 import，触发 @register。
+扫描 agent/skills/*/scripts/ 与 service/ 下的功能模块并 import，触发 @register。
 所有 scripts 目录都会加入 sys.path，因此模块间可用扁平方式互相 import
 （如 quant_screen 可 `import factors`，research_report 可 `import price_hike`）。
 """
@@ -11,8 +11,9 @@ import sys
 from pathlib import Path
 
 # 镜像内工程根：/app（COPY 整个工程到 /app）
+# 目录重组后，技能脚本位于 agent/skills/*/scripts（agent 相关内容统一收拢到 agent/ 下）
 APP_ROOT = Path(__file__).resolve().parent.parent
-SKILLS_DIR = APP_ROOT / "skills"
+SKILLS_DIR = APP_ROOT / "agent" / "skills"
 SERVICE_DIR = APP_ROOT / "service"
 
 # 不作为功能模块导入的纯库（仍会因在 sys.path 上而可被 import）

@@ -92,7 +92,7 @@ cp .env.example .env
 # 编辑 .env：
 #   TUSHARE_TOKEN=<你的 tushare token>
 #   API_KEY=<强随机字符串，管理员 Key，用作 X-API-Key，完整权限>
-#   USER_API_KEY=<可选，只读用户 Key：不能改权重/归一窗口、不能触发回测；留空则不启用>
+#   USER_API_KEY=<可选：访客 Key，可查看/选股/读情绪/查看回测结果，不能改权重/窗口/预计算；留空则不启用>
 #   DB_URL=            # 留空=本地 SQLite；上云填 mysql+pymysql://user:pwd@host:3306/stock_agent?charset=utf8mb4
 ```
 
@@ -142,7 +142,7 @@ python3 -c 'import fastapi, uvicorn, tushare, pandas, numpy, sqlalchemy, pymysql
 # 2) 环境变量（读 .env 或直接 export）
 export TUSHARE_TOKEN=xxx
 export API_KEY=xxx            # 管理员 Key（完整权限）
-export USER_API_KEY=xxx       # 可选：只读用户 Key（禁改权重/窗口、禁回测）
+export USER_API_KEY=xxx       # 可选：访客 Key（可查看回测，禁改权重/窗口/预计算）
 export CACHE_DIR=$(pwd)/cache
 export DATA_DIR=$(pwd)/data
 # 可选：export DB_URL=mysql+pymysql://user:pwd@host:3306/stock_agent?charset=utf8mb4

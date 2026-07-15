@@ -13,7 +13,7 @@
       <span>盯盘 · 量化面板</span>
     </div>
     <div class="topbar-right">
-      <span id="role-badge" class="role-badge admin" title="当前 API Key 角色">管理员</span>
+      <span id="role-badge" class="role-badge user" title="当前 API Key 角色">访客</span>
       <button id="settingsBtn" class="icon-btn" title="设置">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3"/>
@@ -36,11 +36,11 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16M8 16l3-4 3 2 4-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       回测复盘
     </button>
-    <button class="tab" data-tab="precompute">
+    <button class="tab admin-only" data-tab="precompute">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16M8 4v16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       预计算
     </button>
-    <button class="tab" data-tab="weights">
+    <button class="tab admin-only" data-tab="weights">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h6M4 18h13M18 4v6m-6 0v8m10-14v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       权重配置
     </button>
@@ -218,7 +218,7 @@
     </section>
 
     <!-- 预计算状态 -->
-    <section id="tab-precompute" class="panel">
+    <section id="tab-precompute" class="panel admin-only">
       <div class="card">
         <div class="card-title">全市场因子预计算 <span id="pc-meta" class="meta"></span></div>
         <p class="hint">选股（screen_quant/screen_trend）优先读 daily_factors；若最新交易日缺失，点下方按钮做增量预计算（盘后自动跑，手动仅用于补算/验证）。</p>
@@ -242,7 +242,7 @@
     </section>
 
     <!-- 权重配置 -->
-    <section id="tab-weights" class="panel">
+    <section id="tab-weights" class="panel admin-only">
       <div class="card">
         <div class="card-title">因子 / 指标权重配置</div>
         <p class="hint">每个模型的权重之和须为 1.0；保存时若因子列表不匹配（服务端已增改因子），会提示并自动刷新。</p>
@@ -265,7 +265,7 @@
 
       <!-- 访客 Key 管理（仅管理员可见） -->
       <div id="userkeys" class="userkeys hidden">
-        <div class="card-title">访客 Key 管理 <span class="meta">只读用户：可查看/选股/读情绪，不能改配置或回测</span></div>
+        <div class="card-title">访客 Key 管理 <span class="meta">访客：可查看/选股/读情绪/查看回测结果，不能改配置或预计算</span></div>
         <div class="form-row inline">
           <input id="uk-label" type="text" placeholder="备注（如：张三 / 演示）" />
           <button id="uk-create" class="btn-primary">生成访客 Key</button>
@@ -296,7 +296,7 @@
         <label for="s-days">走势回看交易日数</label>
         <input id="s-days" type="number" value="15" min="3" max="30" />
       </div>
-      <div class="form-row">
+      <div class="form-row admin-only">
         <label for="s-window">温度归一窗口（服务端持久化）</label>
         <input id="s-window" type="number" min="3" max="30" value="7" />
       </div>
@@ -304,7 +304,7 @@
       <div class="modal-actions">
         <button id="s-settings-cancel" class="btn-ghost">取消</button>
         <button id="s-refresh" class="btn-ghost">仅刷新看板</button>
-        <button id="s-window-save" class="btn-primary">保存并刷新</button>
+        <button id="s-window-save" class="btn-primary admin-only">保存并刷新</button>
       </div>
     </div>
   </div>

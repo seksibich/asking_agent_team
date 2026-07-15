@@ -17,7 +17,7 @@ disable-model-invocation: false
 - **当前：本地 Mac Docker**，基址 `http://localhost:18901`
 - **后续上云**：部署云服务器后改为公网 API 基址（协议/鉴权/功能不变），同步更新记忆 `service_state.json` 的 `base_url`
 - 鉴权：请求头 `X-API-Key: {service_api_key}`（值见 `init.md` / `.env`）
-- Key 分级：管理员 Key(`API_KEY`) 全权限；用户 Key(`USER_API_KEY`) 只读，不能改权重/归一窗口、不能触发回测（否则 403）。智能体用的是管理员 Key
+- Key 分级：管理员 Key(`API_KEY`) 全权限；访客 Key(`USER_API_KEY`) 可查看/选股/读情绪/查看回测结果，但不能改权重/归一窗口、不能运行全市场预计算（否则 403）。智能体用的是管理员 Key
 - 详细服务文档见 `service/AGENT_SERVICE_GUIDE.md`
 
 ## 三个核心端点

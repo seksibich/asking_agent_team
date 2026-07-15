@@ -33,8 +33,9 @@ async function health() {
 }
 
 /* ---------- 角色 / 权限（管理员 vs 用户） ---------- */
-// 未知/未连接时默认按管理员对待（本地开发或旧服务无 /whoami 时不误伤）
-let _role = "admin";
+// 未输入 token、角色接口失败或服务未连接时均按访客处理，禁止前端误显管理员入口
+const ADMIN_ONLY_TABS = new Set(["precompute", "weights"]);
+let _role = "user";
 const isAdmin = () => _role === "admin";
 
 async function refreshRole() {
@@ -44,37 +45,49 @@ async function refreshRole() {
     });
     if (res.ok) {
       const body = await res.json();
-      _role = (body.data && body.data.role) || "admin";
+      _role = body.data && body.data.role === "admin" ? "admin" : "user";
     } else {
-      _role = "admin"; // 老服务无 /whoami：不降级，保持原行为
+      _role = "user";
     }
   } catch (e) {
-    _role = "admin";
+    _role = "user";
   }
   applyRoleUI();
   return _role;
 }
 
-// 依据角色控制页面：用户 Key 禁止改权重/归一窗口、禁止触发回测
+// 依据角色隐藏管理员入口，并保留服务端鉴权作为最终安全边界
 function applyRoleUI() {
   const admin = isAdmin();
-  // 情绪归一窗口
+  document.querySelectorAll(".admin-only").forEach((el) => {
+    el.classList.toggle("hidden", !admin);
+  });
+  // 角色切换时若当前正停留在管理员 Tab，回到普通选股页
+  const activeTab = document.querySelector(".tab.active");
+  if (!admin && activeTab && ADMIN_ONLY_TABS.has(activeTab.dataset.tab)) {
+    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+    const fallbackTab = document.querySelector('.tab[data-tab="quant"]');
+    fallbackTab?.classList.add("active");
+    $("tab-quant")?.classList.add("active");
+  }
+  // 情绪归一窗口：访客不可修改，但仍可调整展示日期和走势天数
   const sw = $("s-window"), sws = $("s-window-save");
   if (sw) sw.disabled = !admin;
-  if (sws) { sws.disabled = !admin; sws.title = admin ? "" : "用户 Key 不可修改归一化窗口"; }
-  // 回测按钮
+  if (sws) { sws.disabled = !admin; sws.title = admin ? "" : "访客不能修改归一化窗口"; }
+  // 回测结果对管理员和访客均可查看
   const br = $("b-run");
-  if (br) { br.disabled = !admin; br.title = admin ? "" : "用户 Key 不可触发回测"; }
+  if (br) { br.disabled = false; br.title = "加载回测结果"; }
   // 顶部角色徽标
   const badge = $("role-badge");
   if (badge) {
-    badge.textContent = admin ? "管理员" : "只读用户";
+    badge.textContent = admin ? "管理员" : "访客";
     badge.className = "role-badge " + (admin ? "admin" : "user");
   }
   // 权重配置页若已渲染，禁用其输入与保存
   document.querySelectorAll("#w-models input[data-f]").forEach((i) => (i.disabled = !admin));
   document.querySelectorAll("#w-models [data-save]").forEach((b) => {
-    b.disabled = !admin; b.title = admin ? "" : "用户 Key 不可修改权重";
+    b.disabled = !admin; b.title = admin ? "" : "访客不可修改权重";
   });
   // 访客 Key 管理面板（仅管理员，且设置弹窗打开时）
   refreshUserKeysPanel();
@@ -192,7 +205,7 @@ $("cfg-save").onclick = async () => {
     if (h.status === "ok") {
       $("settings").classList.add("hidden");
       await refreshRole();
-      toast(`已连接：功能数 ${h.functions}（${isAdmin() ? "管理员" : "只读用户"}）`, "ok");
+      toast(`已连接：功能数 ${h.functions}（${isAdmin() ? "管理员" : "访客"}）`, "ok");
       reloadActiveTab();
       return;
     }
@@ -207,7 +220,7 @@ $("cfg-test").onclick = async () => {
   try {
     const h = await health();
     await refreshRole();
-    s.textContent = `连通 ✓ 角色=${isAdmin() ? "管理员" : "只读用户"} 交易日=${h.trade_open} 功能数=${h.functions} 版本=${h.data_version}`;
+    s.textContent = `连通 ✓ 角色=${isAdmin() ? "管理员" : "访客"} 交易日=${h.trade_open} 功能数=${h.functions} 版本=${h.data_version}`;
     s.className = "status ok";
   } catch (e) { s.textContent = "连接失败：" + e.message; s.className = "status bad"; }
 };
@@ -402,8 +415,17 @@ let _sentLoaded = false;
 function loadSentiment() {
   if (_sentLoaded || !cfg.key) return;
   _sentLoaded = true;
-  syncSentimentWindow();
-  runSentiment();
+  setSentimentDefaultDate().then(() => Promise.all([syncSentimentWindow(), runSentiment()]));
+}
+
+async function setSentimentDefaultDate() {
+  const input = $("s-date");
+  if (!input || input.value.trim()) return;
+  try {
+    const h = await health();
+    const serverDate = String(h.date || "").trim();
+    if (/^\\d{8}$/.test(serverDate) && h.trade_open !== false) input.value = serverDate;
+  } catch (e) { /* 健康检查失败时保留空值，由服务端选择最近交易日 */ }
 }
 
 async function syncSentimentWindow() {
@@ -419,7 +441,7 @@ async function syncSentimentWindow() {
 function openSentimentSettings() {
   $("s-window-status").textContent = "";
   $("s-window-save").disabled = !isAdmin();
-  $("s-window-save").title = isAdmin() ? "保存服务端归一窗口并刷新" : "只读用户不能修改归一窗口";
+  $("s-window-save").title = isAdmin() ? "保存服务端归一窗口并刷新" : "访客不能修改归一窗口";
   $("sentiment-settings").classList.remove("hidden");
 }
 
@@ -434,7 +456,7 @@ $("s-refresh").onclick = () => {
 };
 
 $("s-window-save").onclick = async () => {
-  if (!isAdmin()) { toast("用户 Key 不可修改归一化窗口", "bad"); return; }
+  if (!isAdmin()) { toast("访客不可修改归一化窗口", "bad"); return; }
   const w = Number($("s-window").value);
   const st = $("s-window-status");
   if (!(w >= 3 && w <= 30)) { st.textContent = "窗口须 3-30"; return; }
@@ -598,13 +620,6 @@ $("b-run").onclick = () => loadBacktest(true);
 let _btLoaded = false;
 async function loadBacktest(force = false) {
   if (_btLoaded && !force) return;
-  if (!isAdmin()) {
-    _btLoaded = false;
-    const tip = '<div class="empty">只读用户 Key 不可触发回测，请使用管理员 Key</div>';
-    ["b-auto-ret", "b-auto-win", "b-driver", "b-pred-acc", "b-detail", "b-hints"].forEach((id) => ($(id).innerHTML = tip));
-    $("b-meta").textContent = "";
-    return;
-  }
   _btLoaded = true;
   const setLoading = (id) => ($(id).innerHTML = '<div class="empty">加载中…</div>');
   ["b-auto-ret", "b-auto-win", "b-driver", "b-pred-acc", "b-detail"].forEach(setLoading);
@@ -685,7 +700,7 @@ async function loadWeights() {
     if (!isAdmin()) {
       const tip = document.createElement("p");
       tip.className = "hint";
-      tip.textContent = "当前为只读用户 Key，权重仅供查看，不可修改。";
+      tip.textContent = "当前为访客，权重仅供查看，不可修改。";
       box.prepend(tip);
     }
     applyRoleUI();
@@ -810,7 +825,7 @@ function modelBlock(model, info) {
   inputs().forEach((i) => i.addEventListener("input", refreshSum));
   refreshSum();
   wrap.querySelector("[data-save]").onclick = async () => {
-    if (!isAdmin()) { toast("用户 Key 不可修改权重", "bad"); return; }
+    if (!isAdmin()) { toast("访客不可修改权重", "bad"); return; }
     const weights = {};
     inputs().forEach((i) => (weights[i.dataset.f] = parseFloat(i.value) || 0));
     try {
@@ -865,6 +880,7 @@ $("pc-run").onclick = async () => {
 };
 
 /* 首屏：未配置 key 时自动弹出设置框，引导填写；已配置则识别角色以控制权限 UI */
+applyRoleUI();
 if (!cfg.key) {
   setTimeout(() => {
     $("cfg-base").value = cfg.base;

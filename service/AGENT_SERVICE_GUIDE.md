@@ -18,9 +18,9 @@
 
 **Key 分级（管理员 vs 用户）**：
 - **管理员 Key**（`.env` 的 `API_KEY`，向后兼容，亦可用 `ADMIN_API_KEY`）：完整权限。
-- **用户 Key**（`.env` 的 `USER_API_KEY`，可选）：只读体验，可查看/选股/读情绪，但**不能**调用以下管理员专属功能，否则返回 `403`：
-  `set_factor_weights`（改因子权重）、`set_sentiment_config`（改归一窗口）、`selection_backtest` / `predictions_backtest`（触发回测）。
-- 若 `.env` 未配置任何 Key（本地开发），默认放行为管理员。智能体使用的是管理员 Key。
+- **访客 Key**（`.env` 的 `USER_API_KEY`，可选）：可查看/选股/读情绪/查看回测结果，但**不能**调用以下管理员专属功能，否则返回 `403`：
+  `set_factor_weights`（改因子权重）、`set_sentiment_config`（改归一窗口）、`precompute_daily_factors`（写入全市场预计算结果）。
+- 未输入 token 时，Web 界面按访客隐藏管理员入口；若服务未配置任何 Key，服务端允许只读访问。若服务已配置管理员 Key，未授权请求仍返回 `401`；管理员操作必须使用 `API_KEY` 或 `ADMIN_API_KEY`。
 - **访客 Key 动态管理**（仅管理员，落库 `config_kv.user_api_keys`；Web 设置页「访客 Key 管理」可视化操作）：
   - `GET /admin/user-keys`：列出全部访客 Key
   - `POST /admin/user-keys` `{label}`：生成新访客 Key

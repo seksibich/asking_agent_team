@@ -28,16 +28,15 @@ import loader
 
 # 管理员 Key：向后兼容旧的 API_KEY，同时支持显式 ADMIN_API_KEY
 ADMIN_API_KEY = os.getenv("API_KEY", "") or os.getenv("ADMIN_API_KEY", "")
-# 用户 Key（只读体验）：仅可查看/选股/读情绪，不能改配置、不能触发回测
+# 访客 Key：可查看、选股、读情绪和查看回测结果，不能改配置或运行全市场预计算
 USER_API_KEY = os.getenv("USER_API_KEY", "")
 
-# 仅管理员可调用的敏感功能：修改因子/指标权重、归一化窗口、触发回测
+# 仅管理员可调用的敏感功能：修改配置、写入全市场预计算结果
 ADMIN_ONLY_FUNCTIONS = {
     "set_factor_weights",       # 修改各模型因子权重
     "set_sentiment_config",     # 修改情绪归一窗口
     "restore_config_version",   # 回滚配置到历史版本
-    "selection_backtest",       # 触发选股回测
-    "predictions_backtest",     # 触发预判回测
+    "precompute_daily_factors", # 写入全市场因子预计算结果
 }
 
 # 动态访客 Key（由管理员在设置页生成/管理）落库 config_kv 的键
@@ -81,12 +80,12 @@ def _save_user_keys(keys: list[dict[str, Any]]) -> None:
 
 def _role_for(x_api_key: Optional[str]) -> Optional[str]:
     """返回调用方角色：admin / user / None（未授权）。
-    完全未配置任何 Key 时（本地开发）默认放行为 admin，保持向后兼容。"""
+    未配置任何凭据时，未输入 token 只按只读用户处理；已配置管理员 Key 时空 token 仍未授权。"""
     if ADMIN_API_KEY and x_api_key == ADMIN_API_KEY:
         return "admin"
     dyn = _dynamic_user_keys()
     if not ADMIN_API_KEY and not USER_API_KEY and not dyn:
-        return "admin"   # 本地开发：未配置任何 Key，放行
+        return "user"   # 未配置凭据时允许只读访问，但不开放管理员操作
     if USER_API_KEY and x_api_key == USER_API_KEY:
         return "user"
     for k in dyn:
@@ -145,7 +144,7 @@ def functions(x_api_key: Optional[str] = Header(None)):
 
 @app.get("/whoami")
 def whoami(x_api_key: Optional[str] = Header(None)):
-    """返回当前 Key 的角色，供前端按权限控制 UI（禁改配置/禁回测）。"""
+    """返回当前 Key 的角色，供前端按权限控制 UI。访客可查看回测结果。"""
     role = _check_key(x_api_key)
     return _versioned({"role": role, "is_admin": role == "admin",
                        "admin_only": sorted(ADMIN_ONLY_FUNCTIONS)})
@@ -222,7 +221,7 @@ def call(req: CallReq, x_api_key: Optional[str] = Header(None)):
     if role != "admin" and req.function in ADMIN_ONLY_FUNCTIONS:
         raise HTTPException(
             status_code=403,
-            detail=f"forbidden: 功能 '{req.function}' 需管理员 Key（用户 Key 不可修改权重/窗口或触发回测）")
+            detail=f"forbidden: 功能 '{req.function}' 需管理员 Key（用户 Key 不可调用管理员专属功能）")
     try:
         data = registry.call(req.function, req.params)
     except registry.ParamError as e:

@@ -117,7 +117,7 @@ curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
 ## 安全
 
 - `.env` 含真实 token，已 gitignore；务必设置强随机 `API_KEY`。
-- **API Key 分级**：`API_KEY` 为管理员 Key（完整权限）；可选配置 `USER_API_KEY` 作为只读用户 Key —— 用户 Key 可查看/选股/读情绪，但**不能修改因子权重、归一化窗口，也不能触发回测**（服务端返回 403，Web 面板对应入口自动禁用）。留空 `USER_API_KEY` 则不启用。
+- **API Key 分级**：`API_KEY` 为管理员 Key（完整权限）；可选配置 `USER_API_KEY` 作为访客 Key —— 访客可查看/选股/读情绪/查看回测结果，但**不能修改因子权重、归一化窗口或运行全市场预计算**（服务端配置写入返回 403，Web 面板隐藏管理员配置入口）。未输入 token 时 Web 按访客隐藏管理员入口；若服务未配置任何 Key，服务端允许只读访问，若已配置管理员 Key，未授权请求仍返回 401。管理员操作必须使用管理员 Key。留空 `USER_API_KEY` 不会影响管理员 Key 的使用。
 - 本地/内网使用；迁移公网（ECS）时建议加防火墙白名单或反向代理鉴权。
 
 ## Agent→Skill 强制绑定（AGENT_DOC_VERSION v1.2.0）

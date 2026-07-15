@@ -33,8 +33,9 @@ svg{width:20px;height:20px}
 .role-badge.admin{background:var(--brand-soft);color:var(--brand)}
 .role-badge.user{background:#fff4e5;color:#b26a00}
 button:disabled,input:disabled{opacity:.55;cursor:not-allowed}
+.admin-only.hidden{display:none !important}
 
-.tabs{display:flex;gap:10px;padding:16px 22px 0;flex-wrap:wrap}
+.tabs{display:flex;gap:10px;padding:16px 22px 0;flex-wrap:wrap;justify-content:center}
 .tab{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card);
   color:var(--sub);padding:10px 16px;border-radius:999px;cursor:pointer;font-size:14px;font-weight:600}
 .tab svg{width:18px;height:18px}

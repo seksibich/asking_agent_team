@@ -49,7 +49,7 @@ POST /call
 
 | 分组 | 代表功能 |
 |---|---|
-| market | market_index, market_realtime, market_daily, market_adj_daily, market_weekly, market_limit, market_lianban, market_stk_limit, market_index_dailybasic |
+| market | market_index, market_realtime（代码/名称批量实时行情）, market_daily, market_adj_daily, market_weekly, market_limit, market_lianban, market_stk_limit, market_index_dailybasic |
 | money | money_flow, money_flow_ind, money_hsgt, money_hsgt_top10, money_toplist, money_topinst, money_hm_list, money_hm_detail |
 | fundamental | fundamental_daily_basic, fundamental_income, fundamental_forecast, fundamental_express, fundamental_fina_indicator |
 | macro（涨价强相关） | macro_ppi, macro_cpi, macro_pmi, macro_m |
@@ -65,6 +65,12 @@ POST /call
 | review | log_selection（category=auto/watch/holding，DB 幂等去重）, log_prediction（DB 幂等）, selection_backtest（成熟样本固化）, predictions_backtest |
 
 > 以 `/functions` 返回为准，本表仅速览；新增功能会自动出现在 `/functions` 并改变版本号。
+
+### 股票标的查询与批量行情
+
+- `meta_stock_basic`：默认返回全量上市股票；传 `codes` 按代码精确过滤，传 `name`/`names` 按股票名称关键词包含匹配，返回 `matched_codes`、`missing_codes`、`missing_names`。
+- `market_realtime`：支持 `codes`、`name`/`names`，可混合批量查询；服务端先解析名称再请求实时行情，返回 `resolved`、`missing_codes`、`missing_names` 和 `degraded`。代码和名称都不传时返回参数错误。
+- 关注与持仓中的股票优先直接调用 `market_realtime` 获取行情；名称解析不要自行调用无过滤的 `meta_stock_basic` 后再全量遍历。
 
 ## 交易日守卫
 

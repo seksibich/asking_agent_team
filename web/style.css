@@ -110,6 +110,17 @@ tbody tr:hover{background:#f7f9ff}
 .modal{position:fixed;inset:0;background:rgba(20,30,60,.35);display:flex;align-items:center;justify-content:center;z-index:20}
 .modal.hidden{display:none}
 .modal-card{background:var(--card);border-radius:var(--radius);padding:22px;width:min(420px,92vw);box-shadow:0 10px 40px rgba(20,30,60,.2)}
+/* 登录前完全锁定看板，登录层使用不透明背景覆盖整个视口 */
+body.auth-locked{overflow:hidden}
+body.auth-locked > .topbar,
+body.auth-locked > .tabs,
+body.auth-locked > .content,
+body.auth-locked > #settings,
+body.auth-locked > #factor-modal,
+body.auth-locked > #sentiment-settings,
+body.auth-locked > #toast{display:none !important}
+#login-modal{z-index:100;background:var(--bg)}
+#login-modal .modal-card{width:min(460px,92vw)}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
 .status{font-size:13px;min-height:18px;color:var(--sub)}
 .status.ok{color:var(--ok)} .status.bad{color:var(--bad)}

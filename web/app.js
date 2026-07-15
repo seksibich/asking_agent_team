@@ -13,6 +13,10 @@ const toast = (msg, type = "") => {
 };
 
 async function call(fn, params = {}) {
+  if (!_authReady || !cfg.key) {
+    openLogin("请先输入有效的服务 Key");
+    throw new Error("请先登录");
+  }
   const res = await fetch(cfg.base.replace(/\/$/, "") + "/call", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": cfg.key },
@@ -33,26 +37,90 @@ async function health() {
 }
 
 /* ---------- 角色 / 权限（管理员 vs 用户） ---------- */
-// 未输入 token、角色接口失败或服务未连接时均按访客处理，禁止前端误显管理员入口
-const ADMIN_ONLY_TABS = new Set(["precompute", "weights"]);
+// 未通过 Key 验证前禁止调用功能，服务端鉴权作为最终安全边界
+const ADMIN_ONLY_TABS = new Set(["precompute"]);
 let _role = "user";
+let _authReady = false;
 const isAdmin = () => _role === "admin";
+
+function setAppLocked(locked) {
+  document.body.classList.toggle("auth-locked", locked);
+}
+
+function openLogin(message = "请输入服务 Key") {
+  const modal = $("login-modal");
+  if (!modal) return;
+  setAppLocked(true);
+  $("login-base").value = cfg.base;
+  $("login-key").value = "";
+  $("login-status").textContent = message;
+  $("login-status").className = "status";
+  modal.classList.remove("hidden");
+  setTimeout(() => $("login-key")?.focus(), 0);
+}
+
+async function login() {
+  const base = $("login-base").value.trim() || window.location.origin;
+  const key = $("login-key").value.trim();
+  const status = $("login-status");
+  if (!key) {
+    status.textContent = "请输入服务 Key";
+    status.className = "status bad";
+    $("login-key").focus();
+    return;
+  }
+  status.textContent = "验证中…";
+  status.className = "status";
+  try {
+    const res = await fetch(base.replace(/\/$/, "") + "/whoami", {
+      headers: { "X-API-Key": key },
+    });
+    const body = await res.json();
+    if (!res.ok || !["admin", "user"].includes(body.role)) {
+      throw new Error(body.error || "Key 无效或无权访问");
+    }
+    cfg.base = base;
+    cfg.key = key;
+    localStorage.setItem(LS.base, cfg.base);
+    localStorage.setItem(LS.key, cfg.key);
+    _role = body.role;
+    _authReady = true;
+    $("login-modal").classList.add("hidden");
+    setAppLocked(false);
+    applyRoleUI();
+    toast(`登录成功：${isAdmin() ? "管理员" : "访客"}`, "ok");
+  } catch (e) {
+    _authReady = false;
+    _role = "user";
+    setAppLocked(true);
+    applyRoleUI();
+    status.textContent = "登录失败：" + e.message;
+    status.className = "status bad";
+    $("login-modal").classList.remove("hidden");
+  }
+}
 
 async function refreshRole() {
   try {
     const res = await fetch(cfg.base.replace(/\/$/, "") + "/whoami", {
       headers: { "X-API-Key": cfg.key },
     });
-    if (res.ok) {
-      const body = await res.json();
-      _role = body.role === "admin" ? "admin" : "user";
+    const body = await res.json();
+    if (res.ok && ["admin", "user"].includes(body.role)) {
+      _role = body.role;
+      _authReady = true;
     } else {
       _role = "user";
+      _authReady = false;
     }
   } catch (e) {
     _role = "user";
+    _authReady = false;
   }
+  setAppLocked(!_authReady);
+  if (_authReady) $("login-modal").classList.add("hidden");
   applyRoleUI();
+  if (!_authReady) openLogin("Key 无效或服务不可用，请重新输入");
   return _role;
 }
 
@@ -96,6 +164,10 @@ function applyRoleUI() {
 /* ---------- tabs ---------- */
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
+    if (!_authReady) {
+      openLogin("请先输入有效的服务 Key");
+      return;
+    }
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
@@ -107,8 +179,18 @@ document.querySelectorAll(".tab").forEach((btn) => {
   });
 });
 
+/* ---------- login ---------- */
+$("login-submit").onclick = login;
+$("login-key").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") login();
+});
+
 /* ---------- settings ---------- */
 $("settingsBtn").onclick = () => {
+  if (!_authReady) {
+    openLogin("请先输入有效的服务 Key");
+    return;
+  }
   $("cfg-base").value = cfg.base;
   $("cfg-key").value = cfg.key;
   $("cfg-status").textContent = "";
@@ -879,16 +961,10 @@ $("pc-run").onclick = async () => {
   btn.disabled = false;
 };
 
-/* 首屏：未配置 key 时自动弹出设置框，引导填写；已配置则识别角色以控制权限 UI */
+/* 首屏：没有本地 Key 时必须先登录；已有 Key 仍需重新向服务端验证 */
 applyRoleUI();
 if (!cfg.key) {
-  setTimeout(() => {
-    $("cfg-base").value = cfg.base;
-    $("cfg-key").value = "";
-    $("cfg-status").textContent = "请填入 service/.env 里的 API_KEY 后保存";
-    $("cfg-status").className = "status";
-    $("settings").classList.remove("hidden");
-  }, 300);
+  openLogin("请输入服务 Key 后继续");
 } else {
   refreshRole();
 }

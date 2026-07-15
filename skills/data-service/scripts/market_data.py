@@ -14,7 +14,7 @@ from typing import Any
 import pandas as pd
 
 import common
-from registry import register
+from registry import ParamError, register
 
 try:
     import tushare as ts
@@ -34,8 +34,8 @@ G_META = "meta"
 DEFAULT_INDEX = ["000001.SH", "399001.SZ", "399006.SZ"]
 
 
-def _normalize_codes(value: Any) -> list[str]:
-    """兼容代码数组、逗号字符串与空值，返回去重后的规范代码列表。"""
+def _normalize_tokens(value: Any) -> list[str]:
+    """兼容数组、逗号字符串与单值，返回去重后的非空字符串列表。"""
     if isinstance(value, list):
         raw = value
     elif isinstance(value, str):
@@ -44,12 +44,23 @@ def _normalize_codes(value: Any) -> list[str]:
         raw = []
     else:
         raw = [value]
-    codes: list[str] = []
+    values: list[str] = []
     for item in raw:
-        code = str(item).strip().upper()
-        if code and code not in codes:
-            codes.append(code)
+        value_text = str(item).strip()
+        if value_text and value_text not in values:
+            values.append(value_text)
+    return values
+
+
+def _normalize_codes(value: Any) -> list[str]:
+    """兼容代码数组、逗号字符串与空值，返回去重后的规范代码列表。"""
+    codes = [value.upper() for value in _normalize_tokens(value)]
     return codes or list(DEFAULT_INDEX)
+
+
+def _normalize_names(value: Any) -> list[str]:
+    """规范化股票名称关键词，支持数组或逗号分隔字符串。"""
+    return _normalize_tokens(value)
 
 
 def _wrap(source: str, df: pd.DataFrame) -> dict[str, Any]:
@@ -60,6 +71,32 @@ def _wrap(source: str, df: pd.DataFrame) -> dict[str, Any]:
 def _cached(name: str, params: dict[str, Any], fetch, use_cache: bool = True,
             historical: bool = False) -> dict[str, Any]:
     return common.cached_call(name, params, fetch, use_cache=use_cache, historical=historical)
+
+
+def _stock_basic_snapshot() -> dict[str, Any]:
+    """读取当日上市股票基础信息快照，名称解析和过滤共用该缓存。"""
+    pro = common.get_pro()
+    return _cached("stock_basic", {"d": common.today_str()},
+                   lambda: pro.stock_basic(list_status="L",
+                                           fields="ts_code,name,industry,market,list_date"))
+
+
+def _filter_stock_basic_rows(rows: list[dict[str, Any]],
+                             codes: list[str], names: list[str]) -> list[dict[str, Any]]:
+    """按代码精确匹配、按名称关键词包含匹配，两个条件取并集。"""
+    if not codes and not names:
+        return rows
+    code_set = set(codes)
+    name_queries = [name.casefold() for name in names]
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_code = str(row.get("ts_code", "")).strip().upper()
+        row_name = str(row.get("name", "")).strip().casefold()
+        code_match = bool(code_set and row_code in code_set)
+        name_match = bool(name_queries and any(query in row_name for query in name_queries))
+        if code_match or name_match:
+            filtered.append(row)
+    return filtered
 
 
 # ================= market =================
@@ -109,14 +146,64 @@ def market_index(p: dict) -> dict:
     return result
 
 
-@register("market_realtime", G_MKT, "实时行情快照（东财源），用于盘中/竞价",
-          params=[{"name": "codes", "type": "string", "required": True, "desc": "逗号分隔股票代码"}],
-          returns="最新价/涨跌幅/量额")
+@register("market_realtime", G_MKT,
+          "批量实时行情快照（东财源），支持股票代码和股票名称关键词混合查询",
+          params=[{"name": "codes", "type": "array", "required": False,
+                   "desc": "股票代码数组或逗号分隔字符串"},
+                  {"name": "names", "type": "array", "required": False,
+                   "desc": "股票名称关键词数组或逗号分隔字符串，按名称包含匹配"},
+                  {"name": "name", "type": "string", "required": False,
+                   "desc": "单个股票名称关键词，兼容简化调用"}],
+          returns="rows / requested_codes / requested_names / resolved / missing_codes / missing_names / degraded")
 def market_realtime(p: dict) -> dict:
     if ts is None:
         raise RuntimeError("tushare not installed")
-    df = ts.realtime_quote(ts_code=p["codes"])
-    return _wrap("realtime_quote", df)
+    requested_codes = _normalize_tokens(p.get("codes"))
+    requested_names = _normalize_names(p.get("names") or p.get("name"))
+    if not requested_codes and not requested_names:
+        raise ParamError("至少提供 codes、names 或 name 之一")
+
+    basic_rows: list[dict[str, Any]] = []
+    if requested_names:
+        basic = _stock_basic_snapshot()
+        basic_rows = list(basic.get("rows") or [])
+    name_rows: list[dict[str, Any]] = []
+    if requested_names:
+        name_rows = _filter_stock_basic_rows(basic_rows, [], requested_names)
+
+    resolved_codes = list(requested_codes)
+    resolved: list[dict[str, str]] = []
+    basic_by_code = {str(row.get("ts_code", "")).strip().upper(): row for row in basic_rows}
+    for code in requested_codes:
+        row = basic_by_code.get(code, {})
+        resolved.append({"code": code, "name": str(row.get("name", "")), "matched_by": "code"})
+    for row in name_rows:
+        code = str(row.get("ts_code", "")).strip().upper()
+        if code and code not in resolved_codes:
+            resolved_codes.append(code)
+            resolved.append({"code": code, "name": str(row.get("name", "")), "matched_by": "name"})
+
+    missing_names = [name for name in requested_names
+                     if not any(name.casefold() in str(row.get("name", "")).casefold()
+                                for row in name_rows)]
+    if not resolved_codes:
+        result = _wrap("realtime_quote", pd.DataFrame())
+    else:
+        df = ts.realtime_quote(ts_code=",".join(resolved_codes))
+        result = _wrap("realtime_quote", df)
+
+    returned_codes = {str(row.get("ts_code") or row.get("TS_CODE") or "").strip().upper()
+                      for row in result.get("rows") or []}
+    missing_codes = [code for code in resolved_codes if code not in returned_codes]
+    result.update({
+        "requested_codes": requested_codes,
+        "requested_names": requested_names,
+        "resolved": resolved,
+        "missing_codes": missing_codes,
+        "missing_names": missing_names,
+        "degraded": bool(missing_codes or missing_names),
+    })
+    return result
 
 
 @register("market_daily", G_MKT, "个股/指数日线（不复权）；个股接口空数据时自动回退指数日线",
@@ -499,12 +586,36 @@ def sector_ths_daily(p: dict) -> dict:
 
 
 # ================= meta 基础 =================
-@register("meta_stock_basic", G_META, "股票基础信息（代码/名称/行业/市场）", params=[])
+@register("meta_stock_basic", G_META,
+          "股票基础信息，支持代码精确过滤和名称关键词包含匹配",
+          params=[{"name": "codes", "type": "array", "required": False,
+                   "desc": "股票代码数组或逗号分隔字符串"},
+                  {"name": "names", "type": "array", "required": False,
+                   "desc": "股票名称关键词数组或逗号分隔字符串"},
+                  {"name": "name", "type": "string", "required": False,
+                   "desc": "单个股票名称关键词，兼容简化调用"}],
+          returns="rows / requested_codes / requested_names / matched_codes / missing_codes / missing_names")
 def meta_stock_basic(p: dict) -> dict:
-    pro = common.get_pro()
-    return _cached("stock_basic", {"d": common.today_str()},
-                   lambda: pro.stock_basic(list_status="L",
-                                           fields="ts_code,name,industry,market,list_date"))
+    requested_codes = _normalize_tokens(p.get("codes"))
+    requested_names = _normalize_names(p.get("names") or p.get("name"))
+    result = _stock_basic_snapshot()
+    all_rows = list(result.get("rows") or [])
+    rows = _filter_stock_basic_rows(all_rows, requested_codes, requested_names)
+    matched_codes = [str(row.get("ts_code", "")).strip().upper() for row in rows]
+    missing_codes = [code for code in requested_codes if code not in matched_codes]
+    missing_names = [name for name in requested_names
+                     if not any(name.casefold() in str(row.get("name", "")).casefold()
+                                for row in rows)]
+    result.update({
+        "rows": rows,
+        "requested_codes": requested_codes,
+        "requested_names": requested_names,
+        "matched_codes": matched_codes,
+        "missing_codes": missing_codes,
+        "missing_names": missing_names,
+        "filtered": bool(requested_codes or requested_names),
+    })
+    return result
 
 
 @register("meta_trade_cal", G_META, "交易日历",

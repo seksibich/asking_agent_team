@@ -56,7 +56,8 @@
 `market / money / fundamental / macro / price_hike / news / overseas / hot / sector / meta / screening / research / review`。
 
 常用：
-- 行情：`market_index` `market_daily` `market_adj_daily` `market_limit` `market_lianban`
+- 行情：`market_index` `market_realtime`（支持 `codes` 与 `name`/`names` 混合批量）`market_daily` `market_adj_daily` `market_limit` `market_lianban`
+- 标的解析：`meta_stock_basic`（`codes` 精确过滤，`name`/`names` 名称包含匹配；返回 `missing_codes`/`missing_names`）
 - 板块：`sector_dc` `sector_sw_daily` `sector_index_classify`
 - 资金：`money_hsgt` `money_toplist` `money_flow_ind`
 - 涨价/宏观：`price_hike_scan` `macro_ppi` `macro_cpi` `macro_pmi`

@@ -6,7 +6,7 @@
   <title>盯盘 · 量化面板</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="auth-locked">
   <header class="topbar">
     <div class="brand">
       <svg viewBox="0 0 24 24" class="brand-icon" aria-hidden="true"><path d="M4 19V5m0 14h16M8 15l3-4 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -40,7 +40,7 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16M8 4v16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       预计算
     </button>
-    <button class="tab admin-only" data-tab="weights">
+    <button class="tab" data-tab="weights">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h6M4 18h13M18 4v6m-6 0v8m10-14v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       权重配置
     </button>
@@ -242,7 +242,7 @@
     </section>
 
     <!-- 权重配置 -->
-    <section id="tab-weights" class="panel admin-only">
+    <section id="tab-weights" class="panel">
       <div class="card">
         <div class="card-title">因子 / 指标权重配置</div>
         <p class="hint">每个模型的权重之和须为 1.0；保存时若因子列表不匹配（服务端已增改因子），会提示并自动刷新。</p>
@@ -250,6 +250,26 @@
       </div>
     </section>
   </main>
+
+  <!-- 登录弹层：未验证 Key 前不可关闭、不可访问功能 -->
+  <div id="login-modal" class="modal login-modal">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <div id="login-title" class="card-title">登录数据服务</div>
+      <p class="hint">请输入服务 Key，验证成功后才能使用量化选股、情绪温度、回测和权重配置功能。</p>
+      <div class="form-row">
+        <label for="login-base">服务基址</label>
+        <input id="login-base" type="text" autocomplete="url" />
+      </div>
+      <div class="form-row">
+        <label for="login-key">服务 Key</label>
+        <input id="login-key" type="password" autocomplete="current-password" placeholder="请输入 API Key" />
+      </div>
+      <div id="login-status" class="status"></div>
+      <div class="modal-actions">
+        <button id="login-submit" class="btn-primary">登录</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 设置弹层 -->
   <div id="settings" class="modal hidden">

@@ -11,7 +11,76 @@
 
 ---
 
-## 0. 前置：配置 .env（两种方式都需要）
+## 0. 部署前环境检查
+
+先在仓库根目录完成环境预检。不同部署方式的要求如下：
+
+| 环境 | 建议版本 | 是否必须 | 用途 |
+|---|---:|---|---|
+| Python | 3.11+ | 裸机部署必须；Docker 部署由镜像提供 | 后端服务、数据处理和功能脚本 |
+| Node.js | 18+ | 建议安装，运行服务不依赖 | 检查前端 JavaScript 语法；当前 Web 为静态资源，无需 `npm install` 或构建 |
+| MySQL | 8.0+ | 仅使用 MySQL/RDS 时需要；默认 SQLite 可跳过 | 建库、执行 DDL 和排查数据库连通性 |
+| Docker / Compose | Docker 部署必须 | 仅 Docker 方式 | 构建和运行一体化服务 |
+
+### 0.1 检查命令与版本
+
+```bash
+# Python：必须为 3.11 或更高版本
+python3 --version
+python3 -c 'import sys; print("Python:", sys.version.split()[0]); raise SystemExit(0 if sys.version_info >= (3, 11) else "需要 Python 3.11+")'
+
+# Node.js：建议为 18 或更高版本；用于检查静态前端脚本
+node --version
+node -e 'const major=Number(process.versions.node.split(".")[0]); console.log("Node.js:", process.versions.node); process.exit(major >= 18 ? 0 : 1)'
+node --check web/app.js
+
+# MySQL：仅 DB_URL 指向 MySQL/RDS 时检查；默认 SQLite 可跳过
+mysql --version
+
+# Docker 部署时额外检查
+docker --version
+docker compose version
+```
+
+任一命令提示 `command not found` 时，先安装对应环境再继续。Node.js 检查失败不影响当前静态 Web 随后端运行，但应在修改前端脚本前修复；使用 SQLite 时不要求安装 MySQL 客户端。
+
+### 0.2 检查 MySQL/RDS 连通性
+
+仅当 `.env` 中配置了 MySQL `DB_URL` 时执行。不要把密码直接写进命令或提交到仓库；`--password` 会安全地交互式询问密码。
+
+```bash
+mysql --host="<MySQL或RDS地址>" \
+  --port=3306 \
+  --user="<用户名>" \
+  --password \
+  --execute="SELECT VERSION() AS version, NOW() AS server_time;"
+```
+
+连接成功后以只读方式确认服务端字符集和目标库是否存在：
+
+```bash
+mysql --host="<MySQL或RDS地址>" \
+  --port=3306 \
+  --user="<用户名>" \
+  --password \
+  --execute="SHOW VARIABLES LIKE 'character_set_server'; SHOW DATABASES LIKE 'stock_agent';"
+```
+
+若目标库不存在，由 DBA/RDS 管理员创建 `stock_agent` 并设置 `utf8mb4`；应用账号至少需要目标库的建表和读写权限。随后执行 `service/db/schema.sql`，或让服务首次启动时自动建表。
+
+### 0.3 安装 Python 依赖后复检
+
+裸机方式执行 `pip install -r requirements.txt` 后，运行：
+
+```bash
+python -c 'import fastapi, uvicorn, tushare, pandas, numpy, sqlalchemy, pymysql; print("Python dependencies: OK")'
+```
+
+Docker 方式无需宿主机安装这些 Python 包；镜像构建过程会按 `requirements.txt` 安装，并固定使用 Python 3.11。
+
+---
+
+## 1. 前置：配置 .env（两种方式都需要）
 
 ```bash
 cp .env.example .env

@@ -70,6 +70,30 @@ selections = Table(
     UniqueConstraint("sel_date", "code", "category", name="uk_sel_code_cat"),
 )
 
+# 当前关注/持仓状态：每个股票代码只保留一条最新状态，与按日选股快照隔离。
+portfolio_items = Table(
+    "portfolio_items", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("code", String(16), nullable=False, unique=True, index=True),
+    Column("name", String(64), nullable=False, default=""),
+    Column("item_type", String(16), nullable=False),  # watch / holding
+    Column("cost_price", Numeric(18, 4)),
+    Column("lots", Integer),
+    Column("note", Text),
+    Column("source", String(32), nullable=False, default="unknown"),
+    Column("created_at", DateTime, nullable=False, default=datetime.now),
+    Column("updated_at", DateTime, nullable=False, default=datetime.now),
+)
+
+# 自选数据独立版本：内容实际变化时 revision 单调递增，hash 校验当前快照。
+portfolio_meta = Table(
+    "portfolio_meta", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("revision", Integer, nullable=False, default=0),
+    Column("content_hash", String(64), nullable=False),
+    Column("updated_at", DateTime, nullable=False, default=datetime.now),
+)
+
 predictions = Table(
     "predictions", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -298,10 +322,43 @@ def _ensure_columns(engine: Engine, table_name: str,
                 f"{declarations[dialect_index]}"))
 
 
+def _portfolio_content_hash(rows: list[dict[str, Any]]) -> str:
+    """只对当前业务字段生成稳定哈希，写入时间和来源不影响数据版本。"""
+    normalized = []
+    for row in sorted(rows, key=lambda item: str(item.get("code") or "")):
+        cost = row.get("cost_price")
+        normalized.append({
+            "code": str(row.get("code") or ""),
+            "name": str(row.get("name") or ""),
+            "type": str(row.get("item_type") or row.get("type") or ""),
+            "cost_price": None if cost is None else f"{float(cost):.4f}",
+            "lots": None if row.get("lots") is None else int(row["lots"]),
+            "note": str(row.get("note") or ""),
+        })
+    return _json_fingerprint(normalized)
+
+
+def _portfolio_version_text(revision: int, content_hash: str) -> str:
+    return f"pv{int(revision)}.{str(content_hash)[:8]}"
+
+
 def init_db() -> None:
     """建表并通过 inspect 幂等补齐 SQLite/MySQL 旧表列。"""
     engine = get_engine()
     metadata.create_all(engine)
+    # 自选版本元数据固定为单行；旧库首次升级时从空/既有当前状态建立 revision=0 基线。
+    with engine.begin() as conn:
+        meta_row = conn.execute(select(portfolio_meta.c.id).where(
+            portfolio_meta.c.id == 1)).first()
+        if not meta_row:
+            rows = conn.execute(select(
+                portfolio_items.c.code, portfolio_items.c.name,
+                portfolio_items.c.item_type, portfolio_items.c.cost_price,
+                portfolio_items.c.lots, portfolio_items.c.note,
+            ).order_by(portfolio_items.c.code)).mappings().all()
+            content_hash = _portfolio_content_hash([dict(row) for row in rows])
+            conn.execute(portfolio_meta.insert().values(
+                id=1, revision=0, content_hash=content_hash, updated_at=datetime.now()))
     # 旧版 RDS schema 曾遗漏 matured，create_all 不会给已有表补列。
     columns = {column["name"] for column in inspect(engine).get_columns("selection_forward_returns")}
     if "matured" not in columns:
@@ -349,6 +406,152 @@ def init_db() -> None:
                 conn.execute(text(
                     "ALTER TABLE selections MODIFY COLUMN category "
                     "ENUM('auto','manual','watch','holding') NOT NULL DEFAULT 'auto'"))
+
+
+# ---------- 当前关注与持仓 ----------
+def _serialize_portfolio_row(row: dict[str, Any]) -> dict[str, Any]:
+    cost = row.get("cost_price")
+    lots = row.get("lots")
+    return {
+        "id": row.get("id"),
+        "code": str(row.get("code") or ""),
+        "name": str(row.get("name") or ""),
+        "type": str(row.get("item_type") or ""),
+        "cost_price": float(cost) if cost is not None else None,
+        "lots": int(lots) if lots is not None else None,
+        "shares": int(lots) * 100 if lots is not None else None,
+        "note": str(row.get("note") or ""),
+        "source": str(row.get("source") or ""),
+        "created_at": str(row.get("created_at") or ""),
+        "updated_at": str(row.get("updated_at") or ""),
+    }
+
+
+def get_portfolio_version() -> str:
+    """返回独立于功能索引的当前自选数据版本。"""
+    eng = get_engine()
+    with eng.connect() as conn:
+        row = conn.execute(select(portfolio_meta).where(
+            portfolio_meta.c.id == 1)).mappings().first()
+    if not row:
+        return "pv0.uninitialized"
+    return _portfolio_version_text(int(row["revision"]), str(row["content_hash"]))
+
+
+def _portfolio_snapshot(conn) -> dict[str, Any]:
+    """在同一连接/事务中读取自选行与版本，避免响应中的内容和版本错位。"""
+    rows = conn.execute(select(portfolio_items).order_by(
+        text("CASE WHEN item_type = 'holding' THEN 0 ELSE 1 END"),
+        portfolio_items.c.code)).mappings().all()
+    meta = conn.execute(select(portfolio_meta).where(
+        portfolio_meta.c.id == 1)).mappings().first()
+    version = (_portfolio_version_text(int(meta["revision"]), str(meta["content_hash"]))
+               if meta else "pv0.uninitialized")
+    serialized = [_serialize_portfolio_row(dict(row)) for row in rows]
+    return {"portfolio_version": version, "rows": serialized,
+            "holding_count": sum(row["type"] == "holding" for row in serialized),
+            "watch_count": sum(row["type"] == "watch" for row in serialized)}
+
+
+def fetch_portfolio_items() -> dict[str, Any]:
+    """获取按持仓优先、代码排序的当前关注与持仓。"""
+    eng = get_engine()
+    with eng.connect() as conn:
+        return _portfolio_snapshot(conn)
+
+
+def apply_portfolio_upload(items: list[dict[str, Any]], source: str) -> dict[str, Any]:
+    """按代码批量 upsert/delete；同一批次重复代码最后一项生效，实际变化才升版。"""
+    deduped: dict[str, dict[str, Any]] = {}
+    for item in items:
+        deduped[str(item["code"])] = item
+
+    eng = get_engine()
+    now = datetime.now()
+    counts = {"inserted": 0, "updated": 0, "deleted": 0, "unchanged": 0}
+    with eng.begin() as conn:
+        meta_stmt = select(portfolio_meta).where(portfolio_meta.c.id == 1)
+        if eng.dialect.name == "mysql":
+            meta_stmt = meta_stmt.with_for_update()
+        meta = conn.execute(meta_stmt).mappings().first()
+        if not meta:
+            empty_hash = _portfolio_content_hash([])
+            conn.execute(portfolio_meta.insert().values(
+                id=1, revision=0, content_hash=empty_hash, updated_at=now))
+            meta = {"revision": 0, "content_hash": empty_hash}
+
+        current_stmt = select(portfolio_items)
+        if eng.dialect.name == "mysql":
+            current_stmt = current_stmt.with_for_update()
+        current = {str(row["code"]): dict(row)
+                   for row in conn.execute(current_stmt).mappings().all()}
+
+        for code, item in deduped.items():
+            existing = current.get(code)
+            if item.get("deleted"):
+                if existing:
+                    conn.execute(portfolio_items.delete().where(portfolio_items.c.code == code))
+                    current.pop(code, None)
+                    counts["deleted"] += 1
+                else:
+                    counts["unchanged"] += 1
+                continue
+
+            values = {
+                "code": code,
+                "name": str(item["name"]),
+                "item_type": str(item["type"]),
+                "cost_price": item.get("cost_price"),
+                "lots": item.get("lots"),
+                "note": str(item.get("note") or ""),
+                "source": source,
+                "updated_at": now,
+            }
+            if existing:
+                old_cost = None if existing.get("cost_price") is None else round(float(existing["cost_price"]), 4)
+                new_cost = None if values["cost_price"] is None else round(float(values["cost_price"]), 4)
+                unchanged = (
+                    str(existing.get("name") or "") == values["name"]
+                    and str(existing.get("item_type") or "") == values["item_type"]
+                    and old_cost == new_cost
+                    and existing.get("lots") == values["lots"]
+                    and str(existing.get("note") or "") == values["note"]
+                )
+                if unchanged:
+                    counts["unchanged"] += 1
+                    continue
+                conn.execute(portfolio_items.update().where(
+                    portfolio_items.c.code == code).values(**values))
+                counts["updated"] += 1
+            else:
+                values["created_at"] = now
+                result = conn.execute(portfolio_items.insert().values(**values))
+                values["id"] = int(result.inserted_primary_key[0])
+                counts["inserted"] += 1
+            current[code] = values
+
+        changed = bool(counts["inserted"] or counts["updated"] or counts["deleted"])
+        if changed:
+            hash_rows = conn.execute(select(
+                portfolio_items.c.code, portfolio_items.c.name,
+                portfolio_items.c.item_type, portfolio_items.c.cost_price,
+                portfolio_items.c.lots, portfolio_items.c.note,
+            ).order_by(portfolio_items.c.code)).mappings().all()
+            content_hash = _portfolio_content_hash([dict(row) for row in hash_rows])
+            revision = int(meta["revision"]) + 1
+            conn.execute(portfolio_meta.update().where(portfolio_meta.c.id == 1).values(
+                revision=revision, content_hash=content_hash, updated_at=now))
+
+        # 快照必须在本事务内读取，确保 rows 与 portfolio_version 来自同一状态。
+        snapshot = _portfolio_snapshot(conn)
+
+    snapshot.update(counts)
+    snapshot.update({
+        "changed": changed,
+        "received_count": len(items),
+        "deduplicated_count": len(deduped),
+    })
+    return snapshot
 
 
 # ---------- selections ----------

@@ -37,6 +37,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       选股看板
     </button>
+    <button class="tab admin-only" data-tab="portfolio">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM8 3v6m8-6v6M7 13h4m-4 4h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      自选
+    </button>
     <button class="tab" data-tab="sentiment">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9M12 12l5-5M3 12h2m14 0h2M12 3v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       情绪温度
@@ -75,6 +79,15 @@
             <label for="q-industries">行业 / 主线 / 概念</label>
             <input id="q-industries" type="text" placeholder="如 医药 或 通信,PCB" />
           </div>
+        </div>
+        <div class="quant-board-filter">
+          <span class="board-filter-label">市场范围</span>
+          <div class="board-options" id="q-boards">
+            <label class="board-chip"><input type="checkbox" value="main" checked /><span>沪深主板</span></label>
+            <label class="board-chip"><input type="checkbox" value="star" checked /><span>科创板</span></label>
+            <label class="board-chip"><input type="checkbox" value="gem" checked /><span>创业板</span></label>
+          </div>
+          <span class="compact-note">多选取并集，默认全选</span>
         </div>
         <div class="quant-actions">
           <div class="form-row inline topn-control">
@@ -127,16 +140,26 @@
     <section id="tab-selections" class="panel">
       <div class="card selection-hero">
         <div class="card-title">量化选股看板 <span id="sl-meta" class="meta"></span></div>
-        <p class="hint">汇总 Agent 每日自动选股与用户触发正式选股，展示选股时价格、当前行情、热点事件、短线地位和完整理由。最新行情口径为最近交易日收盘。</p>
+        <p class="hint">首次进入默认展示目标交易日及之前三个交易日。切换到本页或点击“刷新行情”会更新实时价格和涨停/跌停标签；实时行情不可用时如实回退最近收盘。</p>
         <div class="filter-grid">
           <div class="form-row"><label for="sl-from">起始日期</label><input id="sl-from" type="date" /></div>
           <div class="form-row"><label for="sl-to">结束日期</label><input id="sl-to" type="date" /></div>
-          <div class="form-row"><label for="sl-hotspot">热点/事件</label><input id="sl-hotspot" type="text" placeholder="如 AI、创新药、涨价" /></div>
+          <div class="form-row"><label for="sl-hotspot">题材/标签</label><input id="sl-hotspot" type="text" placeholder="如 创新药、CRO、实验猴" /></div>
           <div class="form-row"><label for="sl-category">选股来源</label>
-            <select id="sl-category"><option value="">全部可见类别</option><option value="auto">每日自动选股</option><option value="manual">用户触发选股</option><option value="watch" data-admin-only-category>关注</option><option value="holding" data-admin-only-category>持仓</option></select>
+            <select id="sl-category">
+              <option value="">全部可见记录</option>
+              <option value="auto">每日自动选股</option>
+              <option value="manual">用户触发选股</option>
+              <option value="watch" data-admin-only-category>历史关注快照（管理员）</option>
+              <option value="holding" data-admin-only-category>历史持仓快照（管理员）</option>
+            </select>
           </div>
         </div>
-        <button id="sl-run" class="btn-primary">查询选股记录</button>
+        <div class="selection-query-actions">
+          <button id="sl-run" class="btn-primary" type="button">查询选股记录</button>
+          <button id="sl-refresh-quotes" class="btn-ghost" type="button">刷新行情</button>
+          <span id="sl-refreshed" class="meta">尚未刷新</span>
+        </div>
       </div>
       <div class="card selection-local-tools">
         <div class="selection-local-head">
@@ -147,9 +170,10 @@
           <div class="selection-local-actions">
             <label for="sl-sort">排序</label>
             <select id="sl-sort">
-              <option value="score-desc">核心优先 · 评分高到低</option>
-              <option value="score-asc">核心优先 · 评分低到高</option>
-              <option value="latest">核心优先 · 最新登记</option>
+              <option value="grouped">智能聚合（题材 / 日期）</option>
+              <option value="score-desc">全局评分高到低（取消聚合）</option>
+              <option value="score-asc">全局评分低到高（取消聚合）</option>
+              <option value="latest">全局最新登记（取消聚合）</option>
             </select>
             <button id="sl-clear-tag" class="btn-ghost selection-clear-tag" type="button" disabled>清除标签</button>
           </div>
@@ -159,6 +183,51 @@
       <div class="card selection-list-card">
         <div class="card-title">选股列表 <span id="sl-list-meta" class="meta"></span></div>
         <div id="sl-result" class="selection-list"><div class="empty">进入页面后自动加载</div></div>
+      </div>
+    </section>
+
+    <!-- 管理员自选：当前关注与持仓 -->
+    <section id="tab-portfolio" class="panel admin-only">
+      <div class="card portfolio-hero">
+        <div class="card-title-row">
+          <div>
+            <span class="sentiment-eyebrow">关注与持仓</span>
+            <div class="card-title portfolio-title">自选管理 <span id="pf-version" class="meta-chip">版本 --</span></div>
+            <p class="hint">先按股票名称或代码片段搜索并选择，再添加为关注或持仓。同一代码只保留最新状态。</p>
+          </div>
+          <button id="pf-refresh" class="btn-ghost" type="button">刷新</button>
+        </div>
+        <div class="portfolio-search-row">
+          <div class="form-row portfolio-search-box">
+            <label for="pf-search">搜索股票</label>
+            <div class="portfolio-search-input">
+              <input id="pf-search" type="search" autocomplete="off" placeholder="输入名称或代码片段，如 茅台、6005" />
+              <button id="pf-search-btn" class="btn-primary" type="button">搜索</button>
+            </div>
+            <div id="pf-search-results" class="portfolio-search-results hidden"></div>
+          </div>
+          <div id="pf-selected" class="portfolio-selected empty-compact">尚未选择股票</div>
+        </div>
+        <div class="portfolio-form-grid">
+          <div class="form-row"><label for="pf-type">自选类型</label><select id="pf-type"><option value="watch">关注</option><option value="holding">持仓</option></select></div>
+          <div class="form-row"><label for="pf-cost">持仓成本</label><input id="pf-cost" type="number" min="0.0001" step="0.0001" disabled placeholder="持仓时必填" /></div>
+          <div class="form-row"><label for="pf-lots">持仓手数</label><input id="pf-lots" type="number" min="1" step="1" disabled placeholder="持仓时必填" /></div>
+          <div class="form-row portfolio-note"><label for="pf-note">备注</label><input id="pf-note" type="text" maxlength="2000" placeholder="关注理由、持仓计划或风险说明" /></div>
+        </div>
+        <div class="portfolio-actions">
+          <span id="pf-status" class="status"></span>
+          <button id="pf-reset" class="btn-ghost" type="button">清空</button>
+          <button id="pf-save" class="btn-primary" type="button" disabled>保存到自选</button>
+        </div>
+      </div>
+      <div class="portfolio-overview">
+        <div class="card portfolio-stat"><small>持仓</small><b id="pf-holding-count">0</b><span>只</span></div>
+        <div class="card portfolio-stat"><small>关注</small><b id="pf-watch-count">0</b><span>只</span></div>
+        <div class="card portfolio-stat"><small>合计</small><b id="pf-total-count">0</b><span>只</span></div>
+      </div>
+      <div class="card portfolio-list-card">
+        <div class="card-title">当前自选 <span class="meta">持仓优先，按代码排列</span></div>
+        <div id="pf-list" class="portfolio-list"><div class="empty">进入页面后自动加载</div></div>
       </div>
     </section>
 
@@ -274,7 +343,7 @@
           </button>
           <span id="b-meta" class="meta"></span>
         </div>
-        <p class="hint">数据源：服务端 selection_backtest（自动选股跟踪）与 predictions_backtest（预判命中）。持久化于 DATA_DIR 的 selections.jsonl / predictions.jsonl。</p>
+        <p class="hint">数据源：自动选股跟踪与预判命中回测；选股、预判、前向收益和回测快照统一由数据库持久化。</p>
       </div>
 
       <!-- 自动选股回测 -->

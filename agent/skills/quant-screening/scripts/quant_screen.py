@@ -143,19 +143,64 @@ def _stock_name_members(pro, stock_names: list[str]) -> set[str]:
     return codes
 
 
+_BOARD_LABELS = {
+    "main": "沪深主板",
+    "star": "科创板",
+    "gem": "创业板",
+}
+
+
+def _board_of(code: str) -> str:
+    """按 tushare 股票代码归类市场；北交所独立识别但不纳入当前量化股票池。"""
+    raw = str(code or "").strip().upper()
+    num, _, exchange = raw.partition(".")
+    if exchange == "BJ":
+        return "bj"
+    if num.startswith(("688", "689")):
+        return "star"
+    if num.startswith(("300", "301")):
+        return "gem"
+    if exchange in {"SH", "SZ"}:
+        return "main"
+    return "unknown"
+
+
+def _normalize_boards(boards: Optional[list]) -> set[str]:
+    """严格校验市场筛选；省略参数时覆盖当前支持的三个沪深市场。"""
+    if boards is None:
+        return set(_BOARD_LABELS)
+    if not isinstance(boards, list) or not boards:
+        from registry import ParamError
+        raise ParamError("boards 必须是非空数组；省略该参数表示全部支持市场")
+    normalized = [str(board or "").strip().lower() for board in boards]
+    invalid = sorted({board for board in normalized if board not in _BOARD_LABELS})
+    if invalid:
+        from registry import ParamError
+        allowed = ", ".join(_BOARD_LABELS)
+        raise ParamError(
+            f"boards 仅支持 {allowed}；北交所暂不纳入量化股票池；非法值：{', '.join(invalid)}")
+    return set(normalized)
+
+
 def run(industries: Optional[list[str]] = None,
         stock_names: Optional[list[str]] = None,
         weights: Optional[dict[str, float]] = None,
-        top_n: int = 30) -> dict[str, Any]:
-    """量化选股主入口；个股名称非空时优先，否则按板块过滤或筛全市场。
+        top_n: int = 30,
+        boards: Optional[list[str]] = None) -> dict[str, Any]:
+    """量化选股主入口；市场范围与个股名称或行业条件叠加过滤。
 
-    优先读预计算 daily_factors（全市场路径可完全不依赖 tushare）；未命中回退实时逐只。
+    boards 支持沪深主板、科创板、创业板，多选取并集；北交所独立排除。
+    仅读取质量合格的预计算 daily_factors，并在合成评分前完成市场过滤。
     """
+    selected_boards = _normalize_boards(boards)
+    effective_boards = [board for board in _BOARD_LABELS if board in selected_boards]
+
     base_weights = factor_config.effective_weights("stock")
     if weights is not None:
         if set(weights) != set(base_weights):
             return {"source": "screen/quant", "fetched_at": common.now_str(),
-                    "candidates": [], "error": "自定义权重必须包含契约中的全部因子（含权重0因子）",
+                    "boards": effective_boards, "candidates": [],
+                    "error": "自定义权重必须包含契约中的全部因子（含权重0因子）",
                     "expected_factors": list(base_weights)}
         try:
             w = {name: float(weights[name]) for name in base_weights}
@@ -165,7 +210,8 @@ def run(industries: Optional[list[str]] = None,
             contract["weight_version"] = f"request:{contract['weight_hash'][:12]}"
         except (TypeError, ValueError) as exc:
             return {"source": "screen/quant", "fetched_at": common.now_str(),
-                    "candidates": [], "error": f"自定义权重无效：{exc}"}
+                    "boards": effective_boards, "candidates": [],
+                    "error": f"自定义权重无效：{exc}"}
     else:
         w = base_weights
         contract = factor_config.model_contract("stock")
@@ -180,7 +226,8 @@ def run(industries: Optional[list[str]] = None,
         contract["factor_version"], contract["schema_hash"], dependency_hash)
     if not end:
         return {"source": "screen/quant", "fetched_at": common.now_str(),
-                "candidates": [], "note": "没有与当前完整因子契约一致的成功预计算数据"}
+                "boards": effective_boards, "candidates": [],
+                "note": "没有与当前完整因子契约一致的成功预计算数据"}
 
     from screen_trend import _industry_members, _norm_terms
     name_terms = _norm_terms(stock_names)
@@ -201,7 +248,8 @@ def run(industries: Optional[list[str]] = None,
         label = "个股名称" if filter_type == "stock_names" else "行业/主线/概念"
         return {
             "source": "screen/quant", "fetched_at": common.now_str(), "trade_date": end,
-            "filter_type": filter_type, "filter_terms": filter_terms, "candidates": [],
+            "filter_type": filter_type, "filter_terms": filter_terms,
+            "boards": effective_boards, "candidates": [],
             "note": f"未找到匹配的{label}，请检查名称或缩短关键词",
         }
 
@@ -211,17 +259,26 @@ def run(industries: Optional[list[str]] = None,
         return {
             "source": "screen/quant", "fetched_at": common.now_str(),
             "trade_date": end, "filter_type": filter_type, "filter_terms": filter_terms,
-            "factor_contract": contract, "candidates": [],
+            "boards": effective_boards, "factor_contract": contract, "candidates": [],
             "error": "没有与当前因子公式版本和结构哈希完全一致的合格预计算数据",
             "note": "为防止缺失行业因子或旧版成分被静默补0，量化筛选不再用不完整实时数据降级；请先补算。",
+        }
+
+    tbl = tbl[tbl["code"].map(_board_of).isin(selected_boards)].copy()
+    if tbl.empty:
+        return {
+            "source": "screen/quant", "fetched_at": common.now_str(),
+            "trade_date": end, "filter_type": filter_type, "filter_terms": filter_terms,
+            "boards": effective_boards, "factor_contract": contract, "candidates": [],
+            "note": "当前个股/行业与市场范围的交集没有合格候选",
         }
 
     try:
         tbl = factors.composite_score(tbl, w, strict=True)
     except ValueError as exc:
         return {"source": "screen/quant", "fetched_at": common.now_str(),
-                "trade_date": end, "factor_contract": contract,
-                "candidates": [], "error": str(exc)}
+                "trade_date": end, "boards": effective_boards,
+                "factor_contract": contract, "candidates": [], "error": str(exc)}
     tbl = tbl.sort_values("score", ascending=False)
 
     active = contract["active_components"]
@@ -256,7 +313,8 @@ def run(industries: Optional[list[str]] = None,
         "candidate_codes": [row["code"] for row in out],
         "candidates": out,
         "params": {"filter_type": filter_type, "filter_terms": filter_terms,
-                   "top_n": int(top_n), "custom_weights": weights is not None},
+                   "boards": effective_boards, "top_n": int(top_n),
+                   "custom_weights": weights is not None},
     })
     return {
         "source": "screen/quant",
@@ -265,6 +323,7 @@ def run(industries: Optional[list[str]] = None,
         "data_source": data_source,
         "filter_type": filter_type,
         "filter_terms": filter_terms,
+        "boards": effective_boards,
         "screening_run_id": run_id,
         "factor_contract": contract,
         "weights": w,
@@ -275,17 +334,25 @@ def run(industries: Optional[list[str]] = None,
 
 
 @register("screen_quant", "screening",
-          "量化多因子选股；支持按个股名称或行业/主线/概念限定范围，个股名称非空时优先。"
-          "候选须按涨价、逻辑、预期、情绪四维复核",
+          "量化多因子选股；支持按市场、个股名称或行业/主线/概念限定范围，"
+          "个股名称非空时优先；候选须按涨价、逻辑、预期、情绪四维复核",
           params=[{"name": "industries", "type": "array", "required": False,
                    "desc": "限定行业/主线/概念名；正式行业分类优先，无命中时回退概念；多词条取交集"},
                   {"name": "stock_names", "type": "array", "required": False,
                    "desc": "限定个股名称；支持逗号分隔，多个名称取并集；非空时优先于 industries"},
+                  {"name": "boards", "type": "array", "required": False,
+                   "desc": "市场范围：main沪深主板、star科创板、gem创业板；北交所暂不纳入量化股票池"},
                   {"name": "weights", "type": "object", "required": False, "desc": "自定义因子权重"},
                   {"name": "top_n", "type": "int", "required": False, "default": 30}],
-          returns="candidates（含各因子值与合成 score）")
+          returns="boards / candidates（含各因子值与合成 score）")
 def screen_quant(p: dict) -> dict:
-    return run(p.get("industries"), p.get("stock_names"), p.get("weights"), p.get("top_n", 30))
+    return run(
+        industries=p.get("industries"),
+        stock_names=p.get("stock_names"),
+        weights=p.get("weights"),
+        top_n=p.get("top_n", 30),
+        boards=p.get("boards"),
+    )
 
 
 if __name__ == "__main__":

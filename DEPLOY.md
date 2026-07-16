@@ -190,7 +190,7 @@ curl -XPOST http://localhost:18901/call \
 2. RDS 建库并执行最新版 `service/db/schema.sql`（包含 `daily_factors`、`daily_factor_runs` 和 `selection_forward_returns.matured`；应用首启也会通过 `create_all()` 建立缺失表，并仅对旧表补 `matured` 列）。
 3. `docker compose -f docker-compose.yml up -d --build --force-recreate`。
 4. 安全组仅放行必要来源到 `18901`；建议加反向代理（Nginx/TLS）与 IP 白名单。
-5. Agent 侧把服务基址改为公网地址、更新记忆 `service_state.json` 的 `base_url`。
+5. Agent 侧把公网基址同时写入运行期 `服务状态与能力.md` 与 `关注与持仓.md` 的 `BASE_URL`；真实 Key 仍只放安全配置。
 
 ## 自动化部署脚本（阿里云 ECS + systemd）
 

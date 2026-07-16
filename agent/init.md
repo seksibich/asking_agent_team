@@ -14,40 +14,48 @@
 - `profile/`：配置与变更日志（`profile/CHANGELOG-AGENT.md`、`profile/.env.example`、`profile/requirements.txt`）。
 - 根目录：`README.md`（项目说明）、`DEPLOY.md`（部署规则）、`Dockerfile`/`docker-compose*.yml`、`.env`（真实密钥，勿提交）。
 
-**跨目录引用（`agent/` 之外的 `doc/`、`profile/`、`service/`）一律写仓库根相对路径。** 运行期记忆目录 `盯盘/agent记忆/`、产出目录 `投研/` 是 agent 生成的输出，与工程目录 `agent/` 无关，勿混淆。
+**跨目录引用（`agent/` 之外的 `doc/`、`profile/`、`service/`）一律写仓库根相对路径。** 工程内 `agent/memory/` 只提供治理规则与模板，不能承载运行期业务记忆。
+
+### 运行期平台映射
+
+- **本地/通用环境**：工作文件根默认 `盯盘/`；记忆位于 `盯盘/agent记忆/`；普通临时产物位于 `盯盘/tmp/tmp_YYYYMMDD-HHmmss_文件名`。
+- **Coze**：左侧“工作文件”放日报、投研、选股、自动任务报告、复盘及 `tmp/`；右侧“记忆”放 `基础设定/SOUL.md` 和 `所有对话/主对话/` 下的 `MEMORY.md`、`USER.md`、`关注与持仓.md`、`服务状态与能力.md`，其中 `recent_memory/` 等价于逻辑 `短期记忆/`。
+- 平台 `SECRET.md` 或密钥区只由安全机制管理；真实 Key 不得写入工作文件、普通记忆或短期记忆。无论平台目录名如何变化，都必须保持工作文件与记忆职责隔离。
 
 ## 文档版本与同步（AGENT_DOC_VERSION，与 git 版本对齐）★
 
-- **AGENT_DOC_VERSION：`v1.6.1`**（`/health` 暴露 `agent_doc_version` + `git_revision`，agent 据此感知变更并**增量**更新自身文档；文档来源本地优先、回退 GitHub raw，2026-07-16）
+- **AGENT_DOC_VERSION：`v2.0.0`**（记忆生命周期分层；SOUL 仅保留人格与行为约束，2026-07-16）
 - 变更日志：`profile/CHANGELOG-AGENT.md`（每条版本记录含摘要 + **对应 git commit** + 变更文件清单 + agent 动作）。
 - 仓库（公开）：`https://github.com/seksibich/asking_agent_team`
 
-### 两个版本号（都可从 `/health` 获取）
-- `agent_doc_version`：语义版本（本文件顶部声明，服务端从 `agent/init.md` 解析后由 `/health` 回传）。**决定「要不要更新、更新哪些文档」。**
-- `git_revision`：服务端本次部署的 git commit 短 sha（`/health` 回传）。**用于精确定位/拉取「与线上服务完全一致的那一版文档内容」。**
-- 记忆 `agent记忆/service_state.json` 需保存已内化的 `agent_doc_version` 与 `git_revision`。
+### 健康接口中的版本号与记忆归属
+- `portfolio_version`：当前关注与持仓版本，只保存在运行期 `agent记忆/关注与持仓.md`；变化时调用 `portfolio_get` 全量刷新镜像。
+- `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`：统一保存在 `agent记忆/服务状态与能力.md`，分别管理文档、部署、功能索引和标签契约。
+- 主 `agent记忆/MEMORY.md` 不保存任何版本号、接口清单或业务状态。
+- 旧 `agent记忆/service_state.json` 停用；迁移有效连接、版本和功能索引后删除，不得继续双写。
 
 ### 何时检查（agent 常驻，多触发点）
 1. 每次收到 init.md（初始化）；2. 每次对话/任务开场（见 index.md 检查清单）；3. 每次调用数据服务后顺带看 `/health` 回传（与 `data_version` 一并比对）。
 
 ### 同步流程（每次都执行，先于其它初始化步骤）
-1. 调 `GET /health`，读取目标 `agent_doc_version` 与目标 `git_revision`。
-2. 与记忆中已内化的 `agent_doc_version` 比对：
-   - **一致** → 无需更新文档（即使 `git_revision` 变了也不重读——说明本次只改了后端/前端等非 agent 文档内容）；仅更新记忆里的 `git_revision`。
-   - **首次**（无记录）→ 全量内化本 init.md 指向的所有文档，记录目标 `agent_doc_version` 与 `git_revision`。
-   - **落后**（目标更高）→ 打开 `profile/CHANGELOG-AGENT.md`，按顺序取所有「> 已内化版本」且「≤ 目标版本」的条目，**汇总去重其「变更文件清单」→ 只重读这些变动文件并重新内化**（增量，省 token；未变动文档不重读），执行各条「agent 动作」；补齐后更新记忆的两个版本号。
-3. **按目标 `git_revision` 获取变动文件内容**（保证与线上服务同版本），来源优先级：
-   - **本地优先**：本机能访问工程仓库时，`git fetch` 后 `git show <git_revision>:agent/<file>`（或切到该 commit 读文件）——本机开着时零网络、最省。
-   - **回退 GitHub raw**（本机关机/读不到时）：`https://raw.githubusercontent.com/seksibich/asking_agent_team/<git_revision>/<path>`（公开仓库，无需 token），只拉变更清单里的文件。
-- 初始化回执须报告：`文档版本：v1.6.1（首次内化 / 已从 vA.B.C 同步 / 无变更），git_revision：<sha>`。
-- 注意：本机制管理**文档/规范**版本；数据服务**功能索引**用 `data_version` 单独管理（见 index.md），二者并存互不替代。
+1. 从 `服务状态与能力.md` 读取 `BASE_URL` 及本地 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`，再调 `GET /health` 读取目标版本。
+2. 先判定本地基线是否完整：
+   - `服务状态与能力.md` 不存在，或上述任一本地版本为空/不可解析 → **未知基线**。直接全量内化本 init.md 指向的全部文档，并全量刷新 `/functions` 与标签目录；禁止猜测旧版本、禁止读取部分 CHANGELOG 后执行增量。
+   - `关注与持仓.md` 不存在或本地 `portfolio_version` 为空 → 独立调用 `portfolio_get` 全量建立持仓镜像，不影响文档基线判定。
+3. 只有本地基线完整时才比较 `agent_doc_version`：
+   - **一致** → 无需更新文档；仅目标 `git_revision` 变化时更新服务状态文件中的部署版本。
+   - **落后**（目标更高）→ 打开 `profile/CHANGELOG-AGENT.md`，按顺序取所有「> 已内化版本」且「≤ 目标版本」的条目，汇总去重变更文件后增量重读，执行各条 Agent 动作；把同步记录、目标版本、部署版本和重读文件写入 `服务状态与能力.md`。
+   - **本地版本高于或与目标不可比较** → 不做反向增量；报告版本冲突并全量核对当前目标文档后重建基线。
+4. 增量路径按目标 `git_revision` 获取变动文件内容：本机仓库可用时优先 `git show <git_revision>:<path>`；否则回退 GitHub raw `https://raw.githubusercontent.com/seksibich/asking_agent_team/<git_revision>/<path>`，只拉变更清单文件。
+- 初始化回执须报告：`文档版本：<目标 AGENT_DOC_VERSION>（全量初始化 / 已从 vA.B.C 同步 / 无变更），git_revision：<sha>`。
+- 文档/服务版本只写 `服务状态与能力.md`，不得写主 `MEMORY.md`；功能索引仍由 `data_version` 独立管理。
 
 ## 数据服务接入信息（固定配置）
 
 - **当前形态：本地 Mac Docker**。基址：`http://localhost:18901`
 - 鉴权请求头：`X-API-Key: <在 .env 的 API_KEY 中设置的值>`
   （与 `.env` 的 `API_KEY` 一致；调用 `/health` `/functions` `/call` 都要带此头。真实密钥只放本地 .env，勿提交仓库）
-- **后续上云**：部署到云服务器后，把基址换成公网 API 地址（协议/鉴权/功能不变），并更新记忆 `service_state.json` 的 `base_url`；如更换 API_KEY，同步更新本文件与 `.env`。
+- **后续上云**：部署到云服务器后，把基址换成公网 API 地址，并同时更新运行期 `服务状态与能力.md`、`关注与持仓.md` 的 `BASE_URL`；如更换 API_KEY，只更新安全配置，不在任何记忆文件保存真实密钥。
 
 ## 初始化步骤
 
@@ -75,41 +83,49 @@
 11. `skills/review-learning/SKILL.md`
 12. `skills/stock-research/SKILL.md`
 
-完整加载后再读取 `memory/MEMORY.md`。角色文件中的「主绑定」只表示该角色本次优先执行的 Skills，**不减少完整加载范围**；任一文件缺失或无法读取时须报告并停止依赖该 Skill 的动作，禁止使用简化描述猜测规则。
+完整加载后再读取 `memory/MEMORY.md` 与 `memory/PORTFOLIO.md`，并按任务读取运行期专项记忆。角色文件中的「主绑定」只表示该角色本次优先执行的 Skills，**不减少完整加载范围**；任一文件缺失或无法读取时须报告并停止依赖该 Skill 的动作，禁止使用简化描述猜测规则。
 
 ### 第 4 步：连通数据服务并建立版本基线
-- 用上方「数据服务接入信息」的基址与 `X-API-Key`。
-- `GET /health` 确认连通与 `trade_open`，并读取 `agent_doc_version`、`git_revision`（用于文档版本对齐，见第 0 步）。不通则提示用户启动 `service/` 的 Docker，在此之前不取数、不编造。
-- `GET /functions` 获取功能索引与 `data_version`，连同 `base_url`、`agent_doc_version`、`git_revision` 写入记忆 `agent记忆/service_state.json`。
+- 从运行期 `服务状态与能力.md` 读取 `BASE_URL`，用 `X-API-Key` 调 `GET /health`；确认连通与 `trade_open`，并读取各版本。服务不通则如实提示，在此之前不取数、不编造。
+- 除 `portfolio_version` 外的 health 状态写入 `服务状态与能力.md`；`GET /functions` 的功能索引、`data_version` 和 `selection_tag_catalog` 的标签目录也写入该文件。
+- `portfolio_version` 只写入 `关注与持仓.md`。若与该文件记录不一致，调用 `portfolio_get`，以同一响应的 rows 和版本全量覆盖镜像。
 
-### 第 5 步：建立记忆
-按 `memory/MEMORY.md`，以 `memory/templates/` 为模板，在输出根目录 `盯盘/agent记忆/` 下建立：
-`service_state.json`（已在第 4 步写入 `base_url`/`data_version`/`functions`；**并写入 `agent_doc_version` 与 `git_revision`**，见第 0 步）、`关注与持仓.md`（持久，用户关注/持仓+相关板块）、`daily/`（每日观察对象，★强制读取）、`predictions.jsonl`、`观察池.md`、`用户画像.md`、当月`学习日志`。
+### 第 5 步：建立分层记忆
+按 `memory/MEMORY.md` 和 `memory/templates/` 初始化逻辑记忆；本地/通用环境写 `盯盘/agent记忆/`，Coze 写右侧记忆 `所有对话/主对话/`（短期目录映射为 `recent_memory/`）：
+- `MEMORY.md`：只放永久规范、稳定偏好、经验证的通用经验和专项索引。
+- `USER.md`：只放用户明确表达或反复确认的稳定资料、风险偏好与长期约定。
+- `服务状态与能力.md`：BASE_URL、其他 health 版本、Agent 文档同步记录、功能索引、标签及接口约定。
+- `关注与持仓.md`：BASE_URL、`portfolio_version` 与 `portfolio_get` 全量镜像。
+- `短期记忆/`：任务进度、问题、待办和临时线索；一事一文件，命名 `YYYYMMDD-HHmm-有效至YYYYMMDD-HHmm-描述.md`。接口报错附件复用事项完整前缀并登记关联；事项解决、证伪或过期后连同全部附件立即删除。
+- `daily/`、`predictions.jsonl` 和当月学习日志：业务快照与审计，不得复制进主 MEMORY 或 USER。
+
+普通临时脚本、文档、转换和中间产物不得写入记忆，只能写工作文件根 `tmp/tmp_YYYYMMDD-HHmmss_文件名`；Coze 对应左侧工作文件 `tmp/`。
+
+旧 `service_state.json` 停止使用：把连接、版本和功能索引迁入 `服务状态与能力.md` 后删除。旧 `观察池.md` 中仍有效的线索逐条迁入短期目录并补齐时效和复查动作，已兑现/证伪内容直接删除。
 
 ### 第 6 步：加载 Agent 团队
-读取 `agents/TEAM.md` 与各角色文件。明确：团队仅用于盘前汇总、综合复盘、周/月回测、用户分析；盯盘/竞价/12:50/17:30 由主 Agent 单跑。
+读取 `agents/TEAM.md` 与各角色文件。明确：团队仅用于盘前汇总、综合复盘、周/月回测、用户分析；17:30 当日总结由主 Agent 单跑。竞价、盘中扫描和午间总结不设自动任务，仅在用户明确请求时由主 Agent 单次执行。
 
 ### 第 7 步：确认 Agent→Skill 主绑定
-按 `agents/TEAM.md` 的角色主绑定矩阵和各 `agents/*.md` 的「Skill 强制加载与主绑定」分派任务。此处仅确认主绑定；第 3 步规定的 12 个 `SKILL.md` 必须已完整加载，且每次任务/角色重启都重新完整读取，不允许只读索引或角色摘要。
+按 `agents/TEAM.md` 的角色主绑定矩阵和各 `agents/*.md` 的「Skill 强制加载与主绑定」分派任务。此处仅确认主绑定；第 3 步规定的 12 个 `SKILL.md` 必须已完整加载，且每次任务/角色重启都重新完整读取，不允许只读索引或角色摘要。完整加载 `bidding-analysis`、`intraday-watch` 不构成自动调用授权。
 
 ### 第 8 步：注册定时任务
-读取 `schedule.md`，逐条注册；注册前清理同名旧任务。
+读取 `schedule.md`，先删除历史 T2/T3/T4/T5 及所有自动竞价、盘中扫描、午间总结任务，再只注册文件中保留的非盯盘任务。禁止创建调用 `bidding_analysis`、`watch_intraday` 的调度器、Hook、cron 或 Agent 循环。
 
 ### 第 9 步：初始化回执
-输出确认：**文档版本 AGENT_DOC_VERSION（首次内化 / 已从 vA.B.C 同步 / 无变更）+ git_revision**、已加载人格 + 团队(1主+5子) + **12 个 Skills（逐文件完整加载）**、分析重心、数据服务连通状态与 data_version、记忆体系状态（含关注与持仓、当日观察对象）、定时任务清单。
+输出确认：文档版本与 `git_revision`、人格与团队、12 个 Skills、分析重心、服务连通与 `data_version`、`MEMORY.md` / `USER.md` / 服务状态 / 持仓镜像 / 短期目录状态、已删除的过期事项及附件、保留的非盯盘定时任务，并确认旧 T2-T5 已清理。
 
 ## 运行期常驻规则
 
-1. **禁止编造数据**；拿不到就说拿不到。
-2. **必须交叉验证**（涨价/业绩尤甚），标注来源与时间。
-3. **版本自检（双轨）**：
-   - **文档版本**：收到 init.md 时比对 `AGENT_DOC_VERSION` 与记忆 `agent_doc_version`，落后则按 `profile/CHANGELOG-AGENT.md` 补齐（见第 0 步）。
-   - **数据版本**：每次调用数据服务后对比 `data_version`，变化则 `GET /functions` 刷新并更新记忆。
-4. **输出目录（按触发来源）**：定时任务日报进日期目录并写自动记忆；用户方向选股 → `投研/yyyyMMdd-{主题}选股/`，正式候选登记 `manual`；用户单股调研 → `投研/yyyyMMdd-{股票名}个股调研/`；其他主动研究 → `投研/yyyyMMdd-xx研究报告/`。普通研究默认 ephemeral；只有明确的选股任务且候选通过正式流程才写 manual，用户要求持续观察时再写 watch。**用户手动触发时段类技能** → `投研/yyyyMMdd-手动xx/`，不进日期目录、不写自动记忆、不以 category=auto 登记。
-5. **强制读取当日观察对象记忆**：盯盘/复盘/回测开工前先读 `agent记忆/daily/yyyyMMdd.md`；用户持仓/关注及相关板块重点盯，直到用户明确取消。
-6. **选股回测闭环（证据门禁 + 留痕）**：调度器正式自动候选用 `log_selection(category=auto)`，用户触发正式候选用 `category=manual`；两者必须引用当日 `screen_quant`/`screen_trend` 返回的 `screening_run_id`，由服务端核验候选、排名、原始分、0~1 分位、完整因子契约及上游依赖。只有当前契约下、来自可核验 `screen_quant` 的 auto 样本可进入优化门禁；`manual|watch|holding` 仅隔离回测。Agent 只有在 `selection_backtest.optimization_gate.eligible=true` 时才可调参，并必须提交该回测 `snapshot_id`、`expected_parent_version`、全部因子（含权重0因子）；单因子变化≤0.03，禁止自动启用0权重因子。预判必须由 `log_prediction` 固化下一 SSE 交易日，只在目标日成熟后回测，禁止用预判当天涨跌回填。
-7. **团队模式**：仅重量级任务启用团队并二次验证复核；盯盘等主 Agent 单跑。
-8. 不给确定性买卖指令，只做分析与风险提示；PE 仅作风险背景。
+1. 禁止编造；关键结论必须交叉验证并标注来源与时间。
+2. 每次开场读取 `MEMORY.md`、`USER.md` 与 `服务状态与能力.md` 并完成 health/文档/功能版本检查；关键本地版本缺失时全量初始化，禁止未知基线增量；涉及持仓时再读取并同步 `关注与持仓.md`。
+3. 主 `MEMORY.md` 只保存永久规范、稳定偏好、经验证的通用经验和专项索引；`USER.md` 只保存用户明确表达或反复确认的稳定资料。严禁写入工作进度、选股、持仓、问题、待办、单次业务结论或版本状态。
+4. 任务进度、问题、待办和临时线索按 `YYYYMMDD-HHmm-有效至YYYYMMDD-HHmm-描述.md` 写入短期目录；关联附件使用同一前缀。解决、证伪或过期后立即删除事项及全部附件。
+5. 普通临时脚本、文档和转换产物只写工作文件根 `tmp/tmp_YYYYMMDD-HHmmss_文件名`，不得进入记忆；Coze 严格区分左侧工作文件与右侧记忆。
+6. daily、predictions、学习日志、报告和服务端 selections 属于业务快照/审计，只按任务读取，不复制到主 MEMORY 或 USER。
+7. 复盘/回测，以及用户明确发起的竞价或盯盘请求开工前按需读取当日 daily；持仓/关注只作为当前请求上下文，不得据此自动启动监控。
+8. 正式选股、回测和调参继续执行当前 Skills 与服务端证据门禁；自动竞价、自动盯盘和午间总结始终禁止，手动能力仅按当前用户明确请求单轮执行。
+9. 不给确定性买卖指令，只做分析与风险提示；PE 仅作风险背景。
 
 ## v1.2.0 补充执行约束
 
@@ -122,14 +138,13 @@
 - **单股调研**：用户主动单股调研启用 `stock-research`，基本面与技术面主责，宏观/情绪协同；输出到 `投研/yyyyMMdd-{股票名}个股调研/`。
 - **持久化分类（由 v1.5.0 覆盖旧隔离规则）**：普通用户研究仍为 ephemeral；用户明确触发正式选股任务且候选通过完整流程时登记 `manual`，做隔离回测；用户要求持续观察时另记 `watch`。系统自动候选仅限调度器正式候选并登记 `auto`。
 - **正式候选理由链**：所有正式量化/趋势候选逐只提供量化评分与关键依据、四维分、题材/产业链、短中期动量/量能/阶段、主线关系、催化与炒作路径，并按“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”输出；缺环写“无可核验证据”。
-- **T7 业绩增长参考池**：只列真实字段并按 `code+report_period+announcement_date` 去重；不调用 `log_selection`，不写 predictions/观察池，不纳入 auto/watch/holding 或回测调参。业绩增长不得宣称必然利好；PE/PB 仍仅作风险背景。
+- T7 的「业绩增长参考池」只列真实字段，不调用 `log_selection`，不写 predictions 或创建短期事项，不纳入选股类别、回测或调参。
 
 ## v1.4.0 补充执行约束
 
-- **文档版本经 `/health` 对齐并增量更新**：`/health` 现返回 `agent_doc_version`（语义版本）与 `git_revision`（部署 commit）。agent 常驻运行，除初始化外，在每次对话/任务开场（及调用数据服务后）都比对 `/health` 的 `agent_doc_version` 与记忆值。
-  - 只有 `agent_doc_version` 变高才更新文档；**按 `profile/CHANGELOG-AGENT.md` 变更文件清单只重读变动文件（增量，省 token），不全量重读**。仅 `git_revision` 变而 `agent_doc_version` 未变时不重读文档。
-  - 取变动文件内容按目标 `git_revision` 锚定：**本地优先**（`git show <git_revision>:<path>`），本机关机/读不到时**回退 GitHub raw**（`https://raw.githubusercontent.com/seksibich/asking_agent_team/<git_revision>/<path>`，公开仓库免 token）。
-  - 记忆 `service_state.json` 保存 `agent_doc_version` 与 `git_revision`。
+- **文档版本经 `/health` 对齐并增量更新**：`/health` 返回 `agent_doc_version`（语义版本）与 `git_revision`（部署 commit）。每次对话/任务开场都检查；**仅当本地 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version` 基线完整且目标文档版本更高时**，才按 `profile/CHANGELOG-AGENT.md` 变更文件清单增量重读。任一本地关键版本缺失或不可解析时直接全量初始化，禁止未知基线增量；仅 `git_revision` 变化且文档版本一致时只更新部署版本。
+  - 增量取文件时按目标 `git_revision` 锚定：本地优先 `git show <git_revision>:<path>`，不可用时回退 GitHub raw `https://raw.githubusercontent.com/seksibich/asking_agent_team/<git_revision>/<path>`。
+  - v2.0.0 起运行期状态迁移到 `服务状态与能力.md`；该文件保存 `data_version`、`selection_tag_version`、`agent_doc_version`、`git_revision`、功能索引和标签目录，`portfolio_version` 单独保存在 `关注与持仓.md`。旧 `service_state.json` 停用。
 - **工程目录已重组**：见本文件顶部「路径约定」。agent 相关内容在 `agent/`，数据服务（后端+前端+DB）在 `service/`，交叉文档与业务索引在 `doc/`，配置与变更日志在 `profile/`。agent 目录内互引用相对 `agent/`，跨目录用仓库根相对路径。
 - **数据服务接口已按可用性精简**：剔除当前 token 无权限/不可用的 `news_flash`/`news_filter`/`news_anns`/`news_cctv`/`overseas_us`/`hot_kpl_concept`（详见 `agent/skills/data-service/SKILL.md` 分组表与 `doc/AGENT_SERVICE_GUIDE.md`）。不要再调用这些功能名。
 - **降级二分（强制，贯穿全部取数）**：
@@ -158,3 +173,29 @@
 - **报告首屏说人话、放重点**：面向用户的报告（T1/T6/T7、竞价、早盘、周报、月报、选股与调研）标题后第一节固定为 `## 🎯 一眼结论（核心摘要）`，先答「该做什么、盯什么、怕什么」——📊 仓位/倾向、🔥 题材/事件、🎯 关注个股/候选、⚠️ 风险/证伪；复盘总结、关键消息面、选股/持仓/关注结论一律前置，数据口径、来源清单、原始参数靠后。
 - **emoji 作视觉锚点（适度、统一）**：一眼结论四类关键信息与主要章节标题前加统一 emoji 图标（见 `skills/output-format/SKILL.md` 的 emoji 约定），同一类信息全局用同一图标，只作高亮不替代文字，不堆砌滥用。
 - 本版本仅调整面向用户报告的表达与信息重心，不改变任何取数、筛选、回测、调参与持久化行为；数据红线、降级二分、四维重心与 v1.6.0 门禁一律不变。
+
+## v1.7.0 补充执行约束（自选与持仓同步）
+
+- 当前关注与持仓以服务端 `portfolio_items` 为结构化事实源，按股票代码唯一；运行期 `关注与持仓.md` 只做镜像。
+- 新增前必须调用 `portfolio_stock_search` 按名称或代码片段模糊搜索，并从结果选择完整代码与标准名称，禁止猜测标的。
+- 持仓必须填写真实成本和大于0的整数手数；信息缺失先追问用户，禁止用行情或推断补齐。
+- 用户关注/持仓每次增删改时先形成内存草稿并立即调用 `portfolio_upload`；成功后才用响应 rows 与 `portfolio_version` 刷新本地记忆，失败不得声称已保存。
+- 每次任务开场对比 `/health.portfolio_version`；不一致先 `portfolio_get` 同步。`log_selection(watch|holding)` 仅作可选历史观察快照，不再作为当前状态事实源。
+
+## v1.8.0 补充执行约束（规范化选股上传与标签）
+
+- 正式候选仍必须来自同日有效 `screen_quant` / `screen_trend` 运行，并原样携带 `screening_run_id`；评分、排名、因子版本和依赖继续由服务端运行快照提供，禁止自行覆盖。
+- 调用 `log_selection` 前先调用 `selection_tag_catalog`；记录其 `selection_tag_version`，固定标签优先复用合集，板块/题材/事件标签可由 Agent 用精炼中文自行编排。
+- 规范上传字段为完整股票代码、`selected_at`、`core_event`、精炼 `reason`、`tags`、类别和 `screening_run_id`；`core_event` 只写可核验核心催化，`reason` 只写实际受益、量化依据与风险证伪，禁止重复堆砌长篇报告。
+- `tags` 为去重字符串数组：先放主板块/题材，再放细分方向、具体事件和固定属性。例如 `医药/创新药`、`CRO`、`CXO`、`实验猴`、`龙头`、`逻辑`；不得把未经证据支持的判断当标签。
+- 服务端上传后补充最新价和当时可核验的 `涨停` / `跌停` 标签；获取失败必须保留错误并如实披露，Agent 不得自行估价或猜测涨跌停状态。
+- `/health.selection_tag_version` 变化时重新调用 `selection_tag_catalog` 并更新本地标签理解。无有效标签的记录在看板显示为“未分类”。
+- 选股看板默认覆盖目标交易日及其之前三个交易日；仅按日期查询时按题材聚合，按题材查询时按日期聚合；聚合块内按龙头、核心、评分顺序排列，全局排序会取消聚合。
+## v2.0.0 补充执行约束（记忆分层与 SOUL 边界）
+
+- 主 `MEMORY.md` 只允许永久规范、稳定偏好、经多次验证的通用经验及专项索引；`USER.md` 只允许用户明确表达或反复确认的稳定资料。工作进度、业务状态、选股、持仓、问题、待办、版本、接口清单、敏感信息和未经证实推断均不得写入二者。
+- 短期事项按 `YYYYMMDD-HHmm-有效至YYYYMMDD-HHmm-描述.md` 一事一文件；接口报错附件复用事项前缀并登记关联。完成、证伪或过期后立即删除事项及全部附件。
+- `关注与持仓.md` 独立保存 BASE_URL、`portfolio_version` 和 `portfolio_get` 全量镜像；`服务状态与能力.md` 独立保存其他 health 版本、Agent 文档同步、功能索引、标签与接口约定。
+- 普通临时脚本、文档和转换产物只写工作文件根 `tmp/tmp_YYYYMMDD-HHmmss_文件名`；Coze 左侧工作文件放业务产出，右侧记忆放 SOUL、MEMORY、USER、持仓、服务能力及 `recent_memory/`。
+- 本地关键版本缺失时直接全量初始化，禁止未知基线增量。`SOUL.md` 只保留人格、行为边界和查阅路由，不保存任何具体业务或记忆状态。
+- daily、predictions、学习日志、报告和 DB 记录属于业务快照或审计，不得复制进主 MEMORY 或 USER；共享记忆只允许主 Agent 写入。

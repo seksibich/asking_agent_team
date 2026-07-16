@@ -13,16 +13,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import common
 import db
 import factor_contract
 import factor_config
-from registry import register
+import selection_tags
+from registry import ParamError, register
+
+try:
+    import tushare as ts
+except ImportError:
+    ts = None  # type: ignore
 
 HORIZONS = [1, 3, 7, 30]
 BENCHMARK = "000300.SH"
@@ -35,6 +43,231 @@ VALID_CATEGORIES = {"auto", "manual", "watch", "holding"}
 def _to_date(s: str):
     s = str(s).replace("-", "")
     return datetime.strptime(s, "%Y%m%d").date()
+
+
+def _selection_time(value: Any, date_value: Any = None) -> tuple[str, datetime]:
+    """规范化选股日期和上海时间；显式日期与时间必须属于同一天。"""
+    zone = ZoneInfo(common.TZ)
+    if value:
+        text_value = str(value).strip().replace("Z", "+00:00")
+        try:
+            selected_at = datetime.fromisoformat(text_value)
+        except ValueError as exc:
+            raise ParamError("selected_at 必须是 ISO 时间，如 2026-07-16 10:30:00") from exc
+        if selected_at.tzinfo is not None:
+            selected_at = selected_at.astimezone(zone).replace(tzinfo=None)
+    else:
+        now = datetime.now(zone).replace(tzinfo=None)
+        selected_day = str(date_value or common.today_str()).replace("-", "")
+        selected_at = (now if selected_day == now.strftime("%Y%m%d")
+                       else datetime.strptime(selected_day + " 15:00:00", "%Y%m%d %H:%M:%S"))
+
+    selected_date = str(date_value or selected_at.strftime("%Y%m%d")).replace("-", "")
+    try:
+        _to_date(selected_date)
+    except ValueError as exc:
+        raise ParamError("date 必须是有效 YYYYMMDD") from exc
+    if selected_at.strftime("%Y%m%d") != selected_date:
+        raise ParamError("selected_at 与 date 必须属于同一天")
+    return selected_date, selected_at
+
+
+def _finite_float(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _market_snapshot(codes: list[str]) -> dict[str, Any]:
+    """批量获取实时价格，并以最近完成日行情兜底；价格、涨幅和涨跌停价必须同日。"""
+    normalized = list(dict.fromkeys(str(code).strip().upper() for code in codes if code))
+    refreshed_at = common.now_str()
+    if not normalized:
+        return {"refreshed_at": refreshed_at, "quote_date": None,
+                "quote_date_min": None, "quote_date_max": None,
+                "mixed_quote_dates": False, "quotes": {}, "errors": []}
+
+    def normalize_trade_date(value: Any) -> Optional[str]:
+        text = str(value or "").strip().replace("-", "")
+        if len(text) != 8 or not text.isdigit():
+            return None
+        try:
+            _to_date(text)
+        except ValueError:
+            return None
+        return text
+
+    errors: list[str] = []
+    realtime: dict[str, dict[str, Any]] = {}
+    if ts is not None:
+        for offset in range(0, len(normalized), 100):
+            chunk = normalized[offset:offset + 100]
+            try:
+                frame = ts.realtime_quote(ts_code=",".join(chunk))
+                for raw in frame.to_dict(orient="records") if frame is not None else []:
+                    code = str(raw.get("TS_CODE") or raw.get("ts_code") or "").upper()
+                    if code:
+                        realtime[code] = raw
+            except Exception as exc:
+                errors.append(f"实时行情失败：{type(exc).__name__}: {exc}"[:300])
+    else:
+        errors.append("实时行情失败：tushare 未安装")
+
+    pro = None
+    try:
+        pro = common.get_pro()
+    except Exception as exc:
+        errors.append(f"行情客户端失败：{type(exc).__name__}: {exc}"[:300])
+
+    completed_date: Optional[str] = None
+    daily_map: dict[str, dict[str, Any]] = {}
+    basic_map: dict[str, dict[str, Any]] = {}
+    try:
+        completed_date = normalize_trade_date(common.last_completed_trade_date())
+        if pro is not None and completed_date:
+            daily = common.cached_call(
+                "selection_dashboard_daily", {"trade_date": completed_date},
+                lambda: pro.daily(trade_date=completed_date), historical=True)
+            daily_map = {str(row.get("ts_code") or "").upper(): row
+                         for row in daily.get("rows", []) if row.get("ts_code")}
+    except Exception as exc:
+        errors.append(f"最近收盘行情失败：{type(exc).__name__}: {exc}"[:300])
+    try:
+        if pro is not None and completed_date:
+            basics = common.cached_call(
+                "selection_dashboard_basic", {"trade_date": completed_date},
+                lambda: pro.daily_basic(
+                    trade_date=completed_date,
+                    fields="ts_code,turnover_rate,turnover_rate_f,volume_ratio"),
+                historical=True)
+            basic_map = {str(row.get("ts_code") or "").upper(): row
+                         for row in basics.get("rows", []) if row.get("ts_code")}
+    except Exception as exc:
+        errors.append(f"最近换手数据失败：{type(exc).__name__}: {exc}"[:300])
+
+    today = common.today_str()
+    valid_realtime_dates: dict[str, str] = {}
+    for code, row in realtime.items():
+        trade_date = normalize_trade_date(row.get("DATE"))
+        if (trade_date is None or trade_date > today
+                or (completed_date is not None and trade_date < completed_date)):
+            errors.append(f"{code} 实时行情日期无效或陈旧，已回退最近收盘")
+            continue
+        valid_realtime_dates[code] = trade_date
+
+    limit_dates = set(valid_realtime_dates.values())
+    if completed_date:
+        limit_dates.add(completed_date)
+    limit_by_date: dict[str, dict[str, dict[str, Any]]] = {}
+    if pro is not None:
+        for trade_date in sorted(limit_dates):
+            try:
+                limits = common.cached_call(
+                    "selection_dashboard_limits", {"trade_date": trade_date},
+                    lambda trade_date=trade_date: pro.stk_limit(trade_date=trade_date),
+                    historical=trade_date < today)
+                limit_by_date[trade_date] = {
+                    str(row.get("ts_code") or "").upper(): row
+                    for row in limits.get("rows", []) if row.get("ts_code")}
+            except Exception as exc:
+                errors.append(f"{trade_date}涨跌停价失败：{type(exc).__name__}: {exc}"[:300])
+
+    quotes: dict[str, dict[str, Any]] = {}
+    quote_dates: list[str] = []
+    for code in normalized:
+        rt = realtime.get(code, {})
+        daily = daily_map.get(code, {})
+        basic = basic_map.get(code, {})
+        realtime_date = valid_realtime_dates.get(code)
+        realtime_price = _finite_float(rt.get("PRICE"))
+        use_realtime = realtime_date is not None and realtime_price is not None and realtime_price > 0
+        if use_realtime:
+            price = realtime_price
+            pre_close = _finite_float(rt.get("PRE_CLOSE"))
+            trade_date = realtime_date
+            quote_time = " ".join(part for part in (
+                str(rt.get("DATE") or "").strip(), str(rt.get("TIME") or "").strip()) if part)
+            source = "realtime_quote"
+        else:
+            price = _finite_float(daily.get("close"))
+            pre_close = _finite_float(daily.get("pre_close"))
+            trade_date = normalize_trade_date(daily.get("trade_date")) or completed_date
+            quote_time = trade_date or ""
+            source = "tushare daily close" if price is not None else "unavailable"
+        if trade_date:
+            quote_dates.append(trade_date)
+        pct_chg = ((price / pre_close - 1) * 100
+                   if price is not None and pre_close not in (None, 0) else None)
+        limit_row = limit_by_date.get(trade_date or "", {}).get(code, {})
+        up_limit = _finite_float(limit_row.get("up_limit"))
+        down_limit = _finite_float(limit_row.get("down_limit"))
+        auto_tags: list[str] = []
+        if price is not None and up_limit is not None and abs(price - up_limit) <= 0.0051:
+            auto_tags.append("涨停")
+        if price is not None and down_limit is not None and abs(price - down_limit) <= 0.0051:
+            auto_tags.append("跌停")
+        quotes[code] = {
+            "latest_price": price,
+            "latest_chg_pct": round(pct_chg, 4) if pct_chg is not None else None,
+            "latest_quote_time": quote_time or None,
+            "latest_trade_date": trade_date,
+            "quote_source": source,
+            "turnover_rate": _finite_float(basic.get("turnover_rate")),
+            "turnover_trade_date": completed_date,
+            "amount": _finite_float(daily.get("amount")),
+            "amount_trade_date": completed_date,
+            "market_tags": auto_tags,
+        }
+    unique_dates = sorted(set(quote_dates))
+    return {"refreshed_at": refreshed_at,
+            "quote_date": unique_dates[-1] if unique_dates else completed_date,
+            "quote_date_min": unique_dates[0] if unique_dates else completed_date,
+            "quote_date_max": unique_dates[-1] if unique_dates else completed_date,
+            "mixed_quote_dates": len(unique_dates) > 1,
+            "quotes": quotes, "errors": list(dict.fromkeys(errors))}
+
+
+def _record_tags(extra: dict[str, Any], driver: str = "") -> list[str]:
+    """读取新标签；旧记录从热点、短线地位和驱动字段兼容合成。"""
+    raw_tags = extra.get("tags")
+    try:
+        tags = selection_tags.normalize_tags(raw_tags) if isinstance(raw_tags, list) else []
+    except ValueError:
+        tags = []
+    for value in (extra.get("market_role"), extra.get("hotspot"), driver):
+        tag = str(value or "").strip()
+        if tag and tag not in {"未分类", "未标注", "非主线"} and tag not in tags:
+            tags.append(tag)
+    return tags[:24]
+
+
+def _default_selection_range() -> tuple[Any, Any]:
+    """默认展示目标交易日及其之前三个交易日，共四个交易日。
+
+    注意口径差异（有意为之，勿改成同一函数）：此处末日用 last_trade_date（含当日，
+    盘中登记的候选当天即可见），而 _market_snapshot 的行情兜底用 last_completed_trade_date
+    （收盘线，避免拿到当天不完整的收盘数据）。二者服务于「选股展示日期」与「行情数据日期」
+    两个不同维度，实际行情日已由 latest_trade_date / quote_source / mixed_quote_dates 暴露。
+    """
+    end_text = common.last_trade_date()
+    start_window = (datetime.strptime(end_text, "%Y%m%d") - timedelta(days=30)).strftime("%Y%m%d")
+    calendar = common.get_pro().trade_cal(
+        exchange="SSE", start_date=start_window, end_date=end_text, is_open="1")
+    open_days = sorted(calendar[calendar["is_open"] == 1]["cal_date"].astype(str).tolist())
+    if not open_days:
+        raise RuntimeError("无法获取默认选股看板交易日范围")
+    return _to_date(open_days[-4] if len(open_days) >= 4 else open_days[0]), _to_date(open_days[-1])
+
+
+@register("selection_tag_catalog", "review",
+          "选股标签合集：返回固定标签及面向 Agent 的标签说明；板块、题材、事件标签可按规范自行补充",
+          params=[], returns="selection_tag_version / rows[{tag,description}]")
+def selection_tag_catalog(p: dict) -> dict:
+    return {"source": "selection_tag_catalog", "fetched_at": common.now_str(),
+            "selection_tag_version": selection_tags.TAG_VERSION,
+            "rows": list(selection_tags.CATALOG)}
 
 
 # ---------------- 登记 ----------------
@@ -88,48 +321,74 @@ def _capture_factor_snapshot(code: str, selected_date: str) -> tuple[dict[str, A
 
 
 @register("log_selection", "review",
-          "持久化正式选股/关注/持仓（日期+代码+category 幂等）。保存选股价、热点事件、短线地位、完整理由和量化因子快照；"
+          "规范化上传正式选股/历史观察快照（日期+代码+category 幂等）。保存核心事件、精炼理由、标签、选股时间、行情与完整因子契约；"
           "auto 用于调参，manual/watch/holding 仅隔离回测",
-          params=[{"name": "code", "type": "string", "required": True, "desc": "tushare 代码"},
+          params=[{"name": "code", "type": "string", "required": True, "desc": "tushare 完整股票代码"},
                   {"name": "name", "type": "string", "required": False, "default": ""},
-                  {"name": "date", "type": "string", "required": False, "desc": "YYYYMMDD，默认今日"},
+                  {"name": "selected_at", "type": "string", "required": False,
+                   "desc": "选股时间，ISO 格式；省略时由服务端按上海时间补充"},
+                  {"name": "date", "type": "string", "required": False,
+                   "desc": "兼容字段 YYYYMMDD；与 selected_at 必须同日"},
                   {"name": "score", "type": "float", "required": False, "default": 0.0,
-                   "desc": "兼容字段；新调用请使用 score_percentile"},
+                   "desc": "兼容字段；正式选股评分由 screening_run_id 对应运行提供"},
                   {"name": "score_raw", "type": "float", "required": False,
-                   "desc": "筛选横截面标准化原始分"},
+                   "desc": "兼容字段；正式选股以筛选运行快照为准"},
                   {"name": "score_percentile", "type": "float", "required": False,
-                   "desc": "筛选横截面0~1分位，回测分桶统一使用"},
+                   "desc": "兼容字段；正式选股以筛选运行0~1分位为准"},
                   {"name": "screening_run_id", "type": "string", "required": False,
                    "desc": "screen_quant/screen_trend 返回的运行ID；auto/manual正式选股必填"},
                   {"name": "driver", "type": "string", "required": False, "default": "未标注",
                    "desc": "主导驱动：涨价/逻辑/预期/情绪"},
+                  {"name": "core_event", "type": "string", "required": False,
+                   "desc": "核心事件或催化；Agent 侧精炼为可核验短句"},
                   {"name": "reason", "type": "string", "required": True,
-                   "desc": "完整理由链：热点/事件、炒作路线地位、受益证据、量化信号、风险证伪"},
+                   "desc": "精炼入选理由：实际受益、量化信号、风险证伪，不重复堆砌事件"},
+                  {"name": "tags", "type": "array", "required": False, "strict": True,
+                   "desc": "标签字符串数组；固定标签优先从 selection_tag_catalog 选，板块/题材/事件标签可自行编排"},
                   {"name": "category", "type": "string", "required": False, "default": "auto",
                    "desc": "auto|manual|watch|holding；用户触发正式选股使用 manual"},
                   {"name": "selected_price", "type": "float", "required": False,
-                   "desc": "选股时价格；省略则服务端抓最近收盘价"},
+                   "desc": "选股时价格；省略则服务端抓选股日收盘价"},
                   {"name": "hotspot", "type": "string", "required": False, "default": "",
-                   "desc": "所属市场热点/主线"},
+                   "desc": "兼容的主板块/题材；未传时取首个 Agent 自编排标签作为聚合题材"},
                   {"name": "event", "type": "string", "required": False, "default": "",
-                   "desc": "当时核心事件或催化"},
+                   "desc": "兼容字段；新调用使用 core_event"},
                   {"name": "market_role", "type": "string", "required": False, "default": "",
-                   "desc": "核心/分支/补涨/非主线"},
+                   "desc": "兼容字段：核心/分支/补涨/非主线；新调用同时写入 tags"},
                   {"name": "factors", "type": "object", "required": False,
-                   "desc": "选股时全部量化因子、行业分和综合分快照"},
+                   "desc": "兼容字段；正式选股因子以筛选运行和服务端契约快照为准"},
                   {"name": "extra", "type": "object", "required": False}],
-          returns="登记结果（含选股价格快照）")
+          returns="登记结果，含服务端标签版本、规范标签、最新价及涨停/跌停标签")
 def log_selection(p: dict) -> dict:
-    cat = p.get("category", "auto")
+    cat = str(p.get("category", "auto")).strip()
     if cat not in VALID_CATEGORIES:
         return {"logged": False, "reason": f"category 须为 {sorted(VALID_CATEGORIES)}"}
-    code = str(p["code"]).strip().upper()
-    selected_date = str(p.get("date") or common.today_str()).replace("-", "")
+    code = str(p.get("code") or "").strip().upper()
+    if not code:
+        return {"logged": False, "reason": "code 必填"}
     try:
-        _to_date(selected_date)
-    except ValueError:
-        return {"logged": False, "reason": "date 必须是有效 YYYYMMDD"}
+        selected_date, selected_at = _selection_time(p.get("selected_at"), p.get("date"))
+    except ParamError as exc:
+        return {"logged": False, "reason": str(exc)}
+    reason = str(p.get("reason") or "").strip()
+    if not reason:
+        return {"logged": False, "reason": "reason 必填且须由 Agent 精炼"}
+    if len(reason) > 4000:
+        return {"logged": False, "reason": "reason 最长 4000 个字符"}
+    if p.get("extra") is not None and not isinstance(p.get("extra"), dict):
+        return {"logged": False, "reason": "extra 必须是对象"}
     extra = dict(p.get("extra") or {})
+    core_event = str(p.get("core_event") or p.get("event") or extra.get("core_event")
+                     or extra.get("event") or "").strip()
+    if cat in {"auto", "manual"} and not core_event:
+        return {"logged": False, "reason": "正式选股必须填写精炼后的 core_event"}
+    if len(core_event) > 1000:
+        return {"logged": False, "reason": "core_event 最长 1000 个字符"}
+    try:
+        uploaded_tags = selection_tags.normalize_tags(
+            p.get("tags") if "tags" in p else extra.get("tags"))
+    except ValueError as exc:
+        return {"logged": False, "reason": str(exc)}
     run_id = str(p.get("screening_run_id") or extra.get("screening_run_id") or "")
     screening_run = db.get_screening_run(run_id) if run_id else None
     run_candidate = db.get_screening_candidate(run_id, code) if run_id else None
@@ -153,15 +412,34 @@ def log_selection(p: dict) -> dict:
         return {"logged": False, "reason": "正式选股必须保存 score_percentile（0~1）"}
     try:
         score_percentile = float(percentile_value) if percentile_value is not None else None
-        if score_percentile is not None and not 0 <= score_percentile <= 1:
+        if (score_percentile is not None
+                and (not math.isfinite(score_percentile) or not 0 <= score_percentile <= 1)):
             raise ValueError
     except (TypeError, ValueError):
-        return {"logged": False, "reason": "score_percentile 必须在0~1之间"}
+        return {"logged": False, "reason": "score_percentile 必须是0~1之间的有限数值"}
+
+    score_raw_value = (run_candidate.get("score_raw") if run_candidate
+                       else p.get("score_raw", extra.get("score_raw")))
+    score_raw = _finite_float(score_raw_value) if score_raw_value is not None else None
+    if score_raw_value is not None and score_raw is None:
+        return {"logged": False, "reason": "score_raw 必须是有限数值"}
+    compatibility_score = 0.0
+    if score_percentile is None and p.get("score") not in (None, ""):
+        parsed_score = _finite_float(p.get("score"))
+        if parsed_score is None:
+            return {"logged": False, "reason": "score 必须是有限数值"}
+        compatibility_score = parsed_score
 
     if cat == "auto" or p.get("selected_price") is None:
         price_snapshot = _capture_selection_price(code, selected_date)
     else:
-        price_snapshot = {"selected_price": float(p["selected_price"]),
+        try:
+            supplied_price = float(p["selected_price"])
+            if not math.isfinite(supplied_price) or supplied_price <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return {"logged": False, "reason": "selected_price 必须是大于0的有限数值"}
+        price_snapshot = {"selected_price": supplied_price,
                           "price_trade_date": selected_date,
                           "price_source": extra.get("price_source", "调用方提供")}
 
@@ -174,11 +452,34 @@ def log_selection(p: dict) -> dict:
         if valid:
             factor_snapshot, factor_source = dict(supplied), "调用方完整契约快照"
 
+    market_snapshot = _market_snapshot([code])
+    latest_quote = market_snapshot["quotes"].get(code, {})
+    hotspot = str(p.get("hotspot") or extra.get("hotspot") or "").strip()
+    market_role = str(p.get("market_role") or extra.get("market_role") or "").strip()
+    driver = str(p.get("driver") or "未标注").strip() or "未标注"
+    tags = [tag for tag in uploaded_tags if tag not in selection_tags.AUTO_MARKET_TAGS]
+    for tag in (market_role, hotspot, driver):
+        if tag and tag not in {"未分类", "未标注", "非主线"} and tag not in tags:
+            tags.append(tag)
+    market_tags = list(latest_quote.get("market_tags") or [])
+    tags = tags[:max(0, 24 - len(market_tags))] + [tag for tag in market_tags if tag not in tags]
+    primary_theme = selection_tags.primary_theme(tags, hotspot)
+
     extra.update(price_snapshot)
     extra.update({
-        "hotspot": p.get("hotspot") or extra.get("hotspot", ""),
-        "event": p.get("event") or extra.get("event", ""),
-        "market_role": p.get("market_role") or extra.get("market_role", ""),
+        "selected_at": selected_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "selection_tag_version": selection_tags.TAG_VERSION,
+        "tags": tags,
+        "primary_theme": primary_theme,
+        "hotspot": hotspot,
+        "core_event": core_event,
+        "event": core_event,
+        "market_role": market_role,
+        "latest_price_at_upload": latest_quote.get("latest_price"),
+        "latest_quote_time_at_upload": latest_quote.get("latest_quote_time"),
+        "latest_quote_source_at_upload": latest_quote.get("quote_source"),
+        "market_tags_at_upload": market_tags,
+        "market_quote_errors_at_upload": market_snapshot.get("errors") or [],
         "factors": factor_snapshot,
         "factor_source": factor_source,
         "factor_contract": factor_contract.base_contract("stock"),
@@ -186,28 +487,45 @@ def log_selection(p: dict) -> dict:
         "screening_run_id": run_id or None,
         "screening_function": screening_run.get("function_name") if screening_run else None,
         "screening_contract": screening_run.get("contract") if screening_run else None,
-        "score_raw": (run_candidate.get("score_raw") if run_candidate
-                      else p.get("score_raw", extra.get("score_raw"))),
+        "score_raw": score_raw,
         "screening_rank": run_candidate.get("rank") if run_candidate else None,
         "score_percentile": score_percentile,
         "trigger": "scheduled" if cat == "auto" else "user",
     })
     if not factor_snapshot:
         extra["factor_error"] = factor_source
-    stored_score = score_percentile if score_percentile is not None else float(p.get("score", 0) or 0)
+    stored_score = score_percentile if score_percentile is not None else compatibility_score
     rec = {
         "sel_date": _to_date(selected_date), "code": code, "name": p.get("name", ""),
-        "score": stored_score, "driver": p.get("driver", "未标注"),
-        "reason": p.get("reason", ""), "category": cat, "extra": extra,
-        "logged_at": datetime.now(),
+        "score": stored_score, "driver": driver,
+        "reason": reason, "category": cat, "extra": extra,
+        "logged_at": selected_at,
     }
     write = db.upsert_selection(rec)
+    inserted = bool(write.get("inserted", True))
     record = dict(write.get("record") or rec)
     for key in ("sel_date", "logged_at"):
         if record.get(key) is not None:
             record[key] = str(record[key])
-    return {"logged": True, "inserted": write.get("inserted", True),
-            "immutable": cat in {"auto", "manual"}, "record": record}
+    stored_extra = record.get("extra") or extra
+    current_quote = {
+        "latest_price": latest_quote.get("latest_price"),
+        "latest_chg_pct": latest_quote.get("latest_chg_pct"),
+        "latest_quote_time": latest_quote.get("latest_quote_time"),
+        "latest_trade_date": latest_quote.get("latest_trade_date"),
+        "quote_source": latest_quote.get("quote_source"),
+        "market_tags": market_tags,
+    }
+    return {"logged": True, "inserted": inserted, "duplicate": not inserted,
+            "immutable": cat in {"auto", "manual"},
+            "selection_tag_version": selection_tags.TAG_VERSION,
+            "tags": stored_extra.get("tags") or [],
+            # 兼容旧调用方保留顶层行情字段；current_quote 明确这是本次请求刷新值，而非原记录快照。
+            "latest_price": current_quote["latest_price"],
+            "latest_quote_time": current_quote["latest_quote_time"],
+            "market_tags": market_tags, "current_quote": current_quote,
+            "quote_errors": market_snapshot.get("errors") or [],
+            "record": record}
 
 
 # ---------------- 前向收益 ----------------
@@ -444,74 +762,80 @@ def selection_backtest(p: dict) -> dict:
 
 
 @register("selection_dashboard", "review",
-          "量化选股看板：按当前权限全量或按日期/热点/类别查询持久化选股；访客仅可见 auto/manual，"
-          "watch/holding 仅管理员可见。补最近交易日价格、涨幅、换手、成交额及相对选股价表现",
-          params=[{"name": "date_from", "type": "string", "required": False, "desc": "起始日期 YYYYMMDD"},
+          "规范化选股看板：默认展示最近目标交易日及之前三个交易日；按日期/题材/类别查询，"
+          "刷新实时行情、涨跌停标签并保留评分、因子契约与历史回测字段",
+          params=[{"name": "date_from", "type": "string", "required": False, "desc": "起始日期 YYYYMMDD；起止均省略时自动取最近四个交易日"},
                   {"name": "date_to", "type": "string", "required": False, "desc": "结束日期 YYYYMMDD"},
-                  {"name": "hotspot", "type": "string", "required": False, "desc": "热点/主线关键词"},
+                  {"name": "hotspot", "type": "string", "required": False, "desc": "题材、板块、事件或标签关键词"},
                   {"name": "category", "type": "string", "required": False,
                    "desc": "auto|manual|watch|holding；省略为当前权限下全部，watch/holding 仅管理员"},
                   {"name": "limit", "type": "int", "required": False, "default": 200}],
-          returns="rows / hotspots / quote_trade_date / quote_errors")
+          returns="rows / hotspots / selection_tag_version / refreshed_at / quote_errors / default_date_range")
 def selection_dashboard(p: dict) -> dict:
     category = str(p.get("category") or "").strip()
     if category and category not in VALID_CATEGORIES:
-        return {"source": "selection_dashboard", "fetched_at": common.now_str(),
-                "rows": [], "error": f"category 须为 {sorted(VALID_CATEGORIES)}"}
-    date_from = _to_date(p["date_from"]) if p.get("date_from") else None
-    date_to = _to_date(p["date_to"]) if p.get("date_to") else None
+        raise ParamError(f"category 须为 {sorted(VALID_CATEGORIES)}")
+    try:
+        default_applied = not p.get("date_from") and not p.get("date_to")
+        if default_applied:
+            date_from, date_to = _default_selection_range()
+        else:
+            date_from = _to_date(p["date_from"]) if p.get("date_from") else None
+            date_to = _to_date(p["date_to"]) if p.get("date_to") else None
+    except ValueError as exc:
+        raise ParamError("date_from/date_to 必须是有效 YYYYMMDD") from exc
+    if date_from and date_to and date_from > date_to:
+        raise ParamError("date_from 不能晚于 date_to")
+
     records = db.fetch_selections(date_from, date_to, category or None)
-    keyword = str(p.get("hotspot") or "").strip().lower()
+    keyword = str(p.get("hotspot") or "").strip().casefold()
     if keyword:
         records = [row for row in records if keyword in " ".join([
             str((row.get("extra") or {}).get("hotspot", "")),
+            str((row.get("extra") or {}).get("core_event", "")),
             str((row.get("extra") or {}).get("event", "")),
             str(row.get("reason", "")),
-        ]).lower()]
-    limit = min(max(int(p.get("limit", 200)), 1), 1000)
+            " ".join(_record_tags(row.get("extra") or {}, str(row.get("driver") or ""))),
+        ]).casefold()]
+    try:
+        limit = min(max(int(p.get("limit", 200)), 1), 1000)
+    except (TypeError, ValueError) as exc:
+        raise ParamError("limit 必须是 1 到 1000 的整数") from exc
     records = records[:limit]
 
-    quote_date: Optional[str] = None
-    quote_map: dict[str, dict[str, Any]] = {}
-    basic_map: dict[str, dict[str, Any]] = {}
-    quote_errors: list[str] = []
-    try:
-        quote_date = common.last_trade_date()
-        pro = common.get_pro()
-        daily = common.cached_call(
-            "selection_dashboard_daily", {"trade_date": quote_date},
-            lambda: pro.daily(trade_date=quote_date), historical=True)
-        quote_map = {str(row.get("ts_code", "")).upper(): row
-                     for row in daily.get("rows", []) if row.get("ts_code")}
-        basics = common.cached_call(
-            "selection_dashboard_basic", {"trade_date": quote_date},
-            lambda: pro.daily_basic(trade_date=quote_date,
-                                    fields="ts_code,turnover_rate,turnover_rate_f,volume_ratio"),
-            historical=True)
-        basic_map = {str(row.get("ts_code", "")).upper(): row
-                     for row in basics.get("rows", []) if row.get("ts_code")}
-    except Exception as exc:
-        quote_errors.append(f"最近行情获取失败：{type(exc).__name__}: {exc}"[:500])
-
+    market = _market_snapshot([str(record.get("code") or "") for record in records])
+    quote_map = market.get("quotes") or {}
     rows: list[dict[str, Any]] = []
-    hotspot_counts: dict[str, int] = defaultdict(int)
+    theme_counts: dict[str, int] = defaultdict(int)
     for record in records:
         extra = record.get("extra") or {}
-        hotspot = str(extra.get("hotspot") or "未分类")
-        hotspot_counts[hotspot] += 1
         code = str(record.get("code", "")).upper()
         quote = quote_map.get(code, {})
-        basic = basic_map.get(code, {})
         selected_price = extra.get("selected_price")
-        current_price = quote.get("close")
+        current_price = quote.get("latest_price")
         since_return = None
         try:
             if selected_price is not None and current_price is not None and float(selected_price):
                 since_return = round((float(current_price) / float(selected_price) - 1) * 100, 2)
         except (TypeError, ValueError, ZeroDivisionError):
             since_return = None
+
+        tags = [tag for tag in _record_tags(extra, str(record.get("driver") or ""))
+                if tag not in selection_tags.AUTO_MARKET_TAGS]
+        # 与 log_selection 一致：为服务端补充的涨停/跌停标签预留位置，避免用户标签占满 24 位后被截掉。
+        market_tags = [tag for tag in (quote.get("market_tags") or []) if tag not in tags]
+        tags = tags[:max(0, 24 - len(market_tags))] + market_tags
+        legacy_hotspot = str(extra.get("hotspot") or "").strip()
+        primary_theme = str(extra.get("primary_theme") or "").strip()
+        if not primary_theme or primary_theme == "未分类":
+            primary_theme = selection_tags.primary_theme(tags, legacy_hotspot)
+        theme_counts[primary_theme] += 1
+
         rows.append({
             "id": record.get("id"), "date": str(record.get("sel_date")),
+            "selected_at": extra.get("selected_at") or (
+                record.get("logged_at").strftime("%Y-%m-%d %H:%M:%S")
+                if record.get("logged_at") else None),
             "logged_at": record.get("logged_at").strftime("%Y-%m-%d %H:%M:%S")
             if record.get("logged_at") else None,
             "code": code, "name": record.get("name", ""),
@@ -519,16 +843,25 @@ def selection_dashboard(p: dict) -> dict:
             "score_raw": extra.get("score_raw"),
             "score_percentile": extra.get("score_percentile"),
             "screening_rank": extra.get("screening_rank"),
-            "driver": record.get("driver", ""), "hotspot": hotspot,
-            "event": extra.get("event", ""), "market_role": extra.get("market_role", ""),
+            "driver": record.get("driver", ""),
+            "tags": tags, "primary_theme": primary_theme,
+            "hotspot": legacy_hotspot or primary_theme,
+            "core_event": extra.get("core_event") or extra.get("event", ""),
+            "event": extra.get("core_event") or extra.get("event", ""),
+            "market_role": extra.get("market_role", ""),
             "reason": record.get("reason", ""),
             "selected_price": float(selected_price) if selected_price is not None else None,
             "selected_price_date": extra.get("price_trade_date"),
-            "latest_price": float(current_price) if current_price is not None else None,
-            "latest_chg_pct": float(quote["pct_chg"]) if quote.get("pct_chg") is not None else None,
+            "latest_price": current_price,
+            "latest_chg_pct": quote.get("latest_chg_pct"),
+            "latest_quote_time": quote.get("latest_quote_time"),
+            "quote_source": quote.get("quote_source"),
+            "market_tags": quote.get("market_tags") or [],
             "since_selection_pct": since_return,
-            "turnover_rate": float(basic["turnover_rate"]) if basic.get("turnover_rate") is not None else None,
-            "amount": float(quote["amount"]) if quote.get("amount") is not None else None,
+            "turnover_rate": quote.get("turnover_rate"),
+            "turnover_trade_date": quote.get("turnover_trade_date"),
+            "amount": quote.get("amount"),
+            "amount_trade_date": quote.get("amount_trade_date"),
             "factors": extra.get("factors") or {},
             "factor_contract": extra.get("factor_contract") or {},
             "factor_metadata": extra.get("factor_metadata") or {},
@@ -538,11 +871,21 @@ def selection_dashboard(p: dict) -> dict:
             "trigger": extra.get("trigger", ""),
         })
     hotspots = [{"name": name, "count": count} for name, count in sorted(
-        hotspot_counts.items(), key=lambda item: (-item[1], item[0]))]
+        theme_counts.items(), key=lambda item: (-item[1], item[0]))]
     return {"source": "selection_dashboard", "fetched_at": common.now_str(),
-            "quote_trade_date": quote_date, "quote_errors": quote_errors,
+            "refreshed_at": market.get("refreshed_at"),
+            "quote_trade_date": market.get("quote_date"),
+            "quote_trade_date_min": market.get("quote_date_min"),
+            "quote_trade_date_max": market.get("quote_date_max"),
+            "mixed_quote_dates": bool(market.get("mixed_quote_dates")),
+            "quote_errors": market.get("errors") or [],
+            "selection_tag_version": selection_tags.TAG_VERSION,
+            "date_from": str(date_from) if date_from else None,
+            "date_to": str(date_to) if date_to else None,
+            "default_date_range": default_applied,
+            "group_by": "date" if keyword else "theme",
             "total": len(rows), "hotspots": hotspots, "rows": rows,
-            "note": "最新行情为最近交易日收盘数据；缺失项保持为空，不做推断"}
+            "note": "优先使用实时行情，失败时回退最近完成交易日收盘；缺失项保持为空，不做推断"}
 
 
 if __name__ == "__main__":

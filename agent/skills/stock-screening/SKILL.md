@@ -21,7 +21,7 @@ disable-model-invocation: false
 - 综合消息面（新闻/公告/可信外部来源）、热榜、涨停连板、量能和资金聚类，识别具体事件及题材；不得局限申万、东财、同花顺既有板块。
 - 用户指定事件、行业或热门板块时，以其为种子扩展产业链、直接/间接受益关系和同义事件；每个候选必须用主营、产品、订单、公告、客户供应链或产业链位置证明受益关系。
 - 输出题材阶段：首次发酵 / 加速 / 分歧 / 退潮 / 证伪，并保留来源时间和反向证据。
-- 调 `price_hike_scan`、`screen_sector`、`sector_dc` 与观察池交叉核验，形成按“题材/事件 → 个股”组织的初始候选池。
+- 调 `price_hike_scan`、`screen_sector`、`sector_dc`，并与相关未过期短期线索交叉核验，形成按“题材/事件 → 个股”组织的初始候选池。
 
 ### 2. 候选内趋势筛选
 调 `screen_trend`（底层复用 `factors.py` 趋势侧因子），在动态题材候选、指定行业或全市场内初筛：
@@ -42,7 +42,7 @@ disable-model-invocation: false
 
 ### 5. 产出选股报告
 - 调度器正式自动选股写 `选股/yyyyMMdd-趋势选股.md`；用户按事件/行业导向/热门板块主动触发时由团队执行，写 `投研/yyyyMMdd-{主题}选股/研究报告.md`。
-- 用户触发选股任务中通过正式门槛的候选逐只调用 `log_selection(category=manual)`；必须保存选股时价格、热点/主线、当时核心事件、炒作路线地位（核心/分支/补涨/非主线）、完整理由链和全部量化因子快照。`manual` 做隔离的 1/3/7/30 日回测但不参与 auto 调参；普通研究、不成体系的线索和未通过门槛者保持 ephemeral。用户要求持续跟踪时再更新 `关注与持仓.md` 并补记 `watch`。
+- 用户触发选股任务中通过正式门槛的候选逐只调用 `log_selection(category=manual)`；原样携带同日 `screening_run_id`，提供上海时间 `selected_at`、精炼 `core_event`、精炼 `reason` 和 `tags`。标签按“主板块/题材 → 细分方向 → 具体事件 → 固定属性”编排，固定属性先查询 `selection_tag_catalog`；评分、排名、选股价、因子契约和依赖由服务端运行快照及行情补充，禁止自行覆盖。`manual` 做隔离的 1/3/7/30 日回测但不参与 auto 调参；普通研究、不成体系的线索和未通过门槛者保持 ephemeral。用户要求持续跟踪时，先调用 `portfolio_stock_search` 并从结果选择标准股票，再以 `portfolio_upload(type=watch)` 上传；成功后用响应 rows 刷新 `关注与持仓.md`。只有用户另行要求历史观察回测时才补记 `log_selection(category=watch)`。
 - 执行 `skills/output-format/SKILL.md` 的首屏结论表、四维打分表、趋势主线表、量化分组表和正式候选表：
 ```markdown
 # 趋势选股 — YYYY-MM-DD
@@ -58,11 +58,11 @@ disable-model-invocation: false
 ```
 正式候选表逐只保留：量化综合分与关键因子、四维分、板块/产业链、板块短中期动量/量能/阶段、主线关系、催化与炒作路径、完整理由链、情绪与择时、风险与证伪。
 
-### 6. 记忆与选股快照
-- **调度器自动链路**中独立通过正式量化/趋势流程的候选，调用 `log_selection(category=auto)`，并按自动规则写 daily/观察池；需要方向性预判时才另写 predictions。
-- **用户明确触发的选股任务**中通过相同正式流程的候选，调用 `log_selection(category=manual)`；不写自动 predictions/daily/观察池，但必须保存热点、事件、短线地位、选股价、完整理由和全部量化因子，供 `selection_dashboard` 与隔离回测使用。
-- 普通单股调研或行业/事件研究仍为 `ephemeral`；用户要求持续跟踪时才另记 `watch`。`manual|watch|holding` 必须排除 auto 胜率、`tuning_hints` 和因子/情绪调参。
-- 业绩增长参考池不是正式选股，其成员不得因进入参考池而持久化；同一股票只有独立通过上述正式流程才可按触发来源写 auto 或 manual。
+### 6. 业务快照与短期事项
+- 调度器正式候选调用 `log_selection(category=auto)`，按规则更新 daily；有正式方向性预判时才写 predictions。若生成需要后续复查的临时线索，必须逐条写入 `短期记忆/` 并设置失效时间、待办和删除条件。
+- 用户正式候选调用 `log_selection(category=manual)`；不改自动 predictions、daily 或短期事项。普通研究保持 `ephemeral`，用户要求持续跟踪时才上传为 watch。
+- 选股、候选、进度和待办都不得写入永久 `MEMORY.md`；`manual|watch|holding` 继续排除 auto 调参。
+- 业绩增长参考池不得创建任何持久化或短期事项。
 
 ## 严谨要求
 - 技术面筛选数据来自 `screen_trend`，禁止编造

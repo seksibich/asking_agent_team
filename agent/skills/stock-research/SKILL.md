@@ -15,9 +15,9 @@ disable-model-invocation: false
 
 ## 默认 ephemeral 边界（强制）
 
-- 默认只生成报告：不写 `predictions.jsonl`、`daily/yyyyMMdd.md`、`观察池.md`，不调用 `log_selection`，不回测。
-- 仅当用户明确说「加入观察」「持续跟踪」「纳入后续回测」等持久化指令时：更新 `关注与持仓.md`，调用 `log_selection(category=watch)`。
-- watch 只进入 1/3/7/30 日观察性回测，必须与 auto 分组展示；不得进入自动胜率、`tuning_hints`、因子权重或情绪参数调优。
+- 默认只生成报告：不写 `predictions.jsonl`、`daily/yyyyMMdd.md` 或短期事项，不调用 `log_selection`，不回测。
+- 仅当用户明确说「加入观察」「持续跟踪」等持久化指令时：先调用 `portfolio_stock_search` 并从结果确认标准股票，在内存中形成 watch 草稿，调用 `portfolio_upload`；上传成功后用响应 rows 刷新 `关注与持仓.md`。只有用户另行明确要求纳入后续历史回测时，才调用 `log_selection(category=watch)`。
+- watch 历史快照只进入 1/3/7/30 日观察性回测，必须与 auto 分组展示；不得进入自动胜率、`tuning_hints`、因子权重或情绪参数调优。
 - `category=auto` 仅允许调度器正式自动候选使用；主动调研标的即使高分也不得登记为 auto。
 
 ## 团队分工

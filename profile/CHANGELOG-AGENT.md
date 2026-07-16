@@ -20,19 +20,94 @@
 
 每次把 `init.md` 提交给 agent 时，agent 按 init.md「文档版本与同步」一节执行：
 
-1. 读取 `init.md` 的 `AGENT_DOC_VERSION`（= 目标版本）。
-2. 读取自身记忆 `agent记忆/service_state.json` 的 `agent_doc_version`（= 已内化版本；缺失视为首次）。
-3. 若两者一致 → 无需变更，继续正常初始化/任务。
-4. 若目标版本更高 → 打开本文件，**按顺序处理所有「> 已内化版本」且「≤ 目标版本」的条目**：
-   - 逐条重读该版本「变更文件清单」中列出的文件，重新内化其规则；
-   - 若条目「agent 动作」要求更新记忆/模板，照做。
-5. 全部补齐后，把记忆 `agent_doc_version` 更新为目标版本，并在初始化回执中报告「文档版本：vX.Y.Z（已从 vA.B.C 同步）」。
+1. 读取 `init.md` 的 `AGENT_DOC_VERSION`（目标版本），并读取运行期 `服务状态与能力.md` 的本地 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`。
+2. 若状态文件不存在，或任一本地版本为空/不可解析，视为未知基线：全量内化当前 `init.md` 指向的全部文档，并全量刷新功能与标签目录；禁止在未知旧版本上执行增量。
+3. 只有本地基线完整时才比较版本：一致则继续；目标更高时，按顺序处理所有「> 已内化版本」且「≤ 目标版本」的条目，逐条重读变更文件并执行 Agent 动作。
+4. 全部补齐后，把目标版本、部署版本、同步时间和重读文件写入 `服务状态与能力.md`；文档版本不得写入主 `MEMORY.md`。
 
-> 首次初始化（无 `agent_doc_version`）：全量内化当前 init.md 指向的所有文档，记 `agent_doc_version` = 当前 `AGENT_DOC_VERSION`。
+> `关注与持仓.md` 或 `portfolio_version` 缺失时，独立调用 `portfolio_get` 全量建立镜像；这不构成可执行文档增量的版本基线。
 
 ---
 
 ## 版本记录（最新在上）
+
+### v2.0.0 — 2026-07-16（记忆生命周期分层 + SOUL 纯人格边界）
+
+- **摘要**：对运行期记忆做不兼容分层。主 `MEMORY.md` 只允许永久规范、稳定偏好、经多个独立样本验证的通用经验及专项索引；用户稳定资料独立写 `USER.md`；短期事项改为目录内一事一文件，统一命名 `YYYYMMDD-HHmm-有效至YYYYMMDD-HHmm-描述.md`，接口报错附件复用事项前缀并随事项删除。关注持仓与服务能力分别独立维护。新增本地/Coze 工作文件—记忆双栏映射和 `tmp/tmp_YYYYMMDD-HHmmss_文件名` 普通临时产物规则；本地关键版本缺失时必须全量初始化，禁止未知基线增量。`SOUL.md` 只保留人格、行为边界和查阅路由。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`、`agent/index.md`、`agent/SOUL.md`、`agent/schedule.md`
+  - `agent/memory/MEMORY.md`、`agent/memory/PORTFOLIO.md`
+  - `agent/memory/templates/MEMORY.md`、`agent/memory/templates/USER.md`、`agent/memory/templates/短期记忆.md`、`agent/memory/templates/服务状态与能力.md`、`agent/memory/templates/关注与持仓.md`、`agent/memory/templates/学习日志.md`
+  - 删除 `agent/memory/templates/service_state.json`、`agent/memory/templates/观察池.md`、`agent/memory/templates/用户画像.md`
+  - `agent/agents/TEAM.md`、`agent/agents/ORCHESTRATION.md`、`agent/agents/main-orchestrator.md`、`agent/agents/fundamental-research-analyst.md`
+  - `agent/skills/data-service/SKILL.md`、`agent/skills/output-format/SKILL.md`、`agent/skills/pre-market/SKILL.md`、`agent/skills/post-market/SKILL.md`、`agent/skills/priority-framework/SKILL.md`、`agent/skills/industry-analysis/SKILL.md`、`agent/skills/stock-screening/SKILL.md`、`agent/skills/quant-screening/SKILL.md`、`agent/skills/review-learning/SKILL.md`、`agent/skills/stock-research/SKILL.md`、`agent/skills/bidding-analysis/SKILL.md`、`agent/skills/intraday-watch/SKILL.md`
+  - `doc/AGENT_SERVICE_GUIDE.md`、`DEPLOY.md`、`service/db/PERSISTENCE.md`
+- **Agent 动作**：
+  1. 若本地服务状态文件不存在，或 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version` 任一为空，直接全量初始化当前文档、功能和标签，禁止按未知旧版本增量。
+  2. 创建 `MEMORY.md`、`USER.md`、`服务状态与能力.md`、`关注与持仓.md` 和短期目录；主 MEMORY 只迁移永久规范、稳定约定、已验证经验及索引，用户稳定资料按 USER 门禁迁移。
+  3. 把旧 `service_state.json` 的连接、文档/部署/功能/标签版本迁入 `服务状态与能力.md`；把持仓版本及全量 rows 写入 `关注与持仓.md`；核验后删除旧文件。
+  4. 把旧 `观察池.md` 中仍有效线索逐条迁为短期事项；按新文件名补齐时效、动作和删除条件。接口报错附件与事项同前缀关联；完成、证伪或过期时删除事项及全部附件。
+  5. 普通临时脚本、文档和转换产物只写工作文件根 `tmp/`；Coze 严格执行左侧工作文件、右侧记忆映射，真实密钥只在平台安全区管理。
+  6. 每次开场读取永久 MEMORY、USER、服务状态及当前任务相关专项记忆；版本和接口查服务状态，持仓查持仓镜像，选股风格查永久 MEMORY 与 `priority-framework`。子 Agent 不直接写共享记忆，不把具体业务内容追加到 SOUL。
+
+### v1.9.0 — 2026-07-16（量化市场筛选闭环 + 取消自动盯盘）
+
+- **摘要**：`screen_quant` 市场筛选已端到端接入，支持沪深主板、科创板和创业板，并与个股/行业条件取交集；北交所独立识别但暂不纳入量化因子预计算。同步取消全部自动竞价与盘中盯盘：删除原 T2/T3/T4/T5，初始化必须清理遗留任务，禁止平台调度器、Agent 循环、Hook 或 cron 自动触发竞价、盘中扫描和午间总结。`bidding-analysis`、`intraday-watch` 及服务函数保留，但只能在用户明确请求时单次执行，响应结束即停止，不写自动盯盘记忆。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`、`agent/index.md`、`agent/schedule.md`、`agent/memory/MEMORY.md`（版本保持 v1.9.0；注册链删除 T2-T5，强制清理旧任务与自动盘中预判入口）
+  - `agent/agents/TEAM.md`、`agent/agents/ORCHESTRATION.md`、`agent/agents/main-orchestrator.md`、`agent/agents/sentiment-analyst.md`（删除固定时点/循环盯盘编排，仅保留用户显式单次路由）
+  - `agent/skills/intraday-watch/SKILL.md`、`agent/skills/bidding-analysis/SKILL.md`（改为仅用户可调用，禁止自动触发、续跑及自动记忆）
+  - `agent/skills/pre-market/SKILL.md`、`agent/skills/output-format/SKILL.md`、`agent/skills/data-service/SKILL.md`（断开盘前→竞价/盯盘自动衔接，更新目录与容错规则）
+  - `agent/skills/quant-screening/SKILL.md`（三类市场、北交所排除、严格校验和组合规则）
+  - `doc/AGENT_SERVICE_GUIDE.md`、`doc/SERVICE_INDEX.md`（服务能力保留但标明竞价/盯盘仅用户显式调用；定时交叉表移除 T2-T5）
+  - 服务端与前端（非 Agent 文档，一并记录）：`agent/skills/quant-screening/scripts/quant_screen.py`、`service/web/index.html`、`service/web/app.js`
+- **agent 动作**：
+  1. 初始化时删除所有遗留 T2/T3/T4/T5，以及任何调用 `bidding_analysis`、`watch_intraday` 的平台任务、Hook、cron 或循环；不得重新创建。
+  2. 仅注册 `schedule.md` 保留的 T1/T6/T7/W1/M1/D1/P1。竞价或盘中分析必须有当前用户明确请求，每次只执行一轮，结束后不续跑。
+  3. 手动竞价/盯盘产出进入 `投研/yyyyMMdd-手动xx/`，不写 predictions、daily、观察池或 `category=auto`。
+  4. 刷新 `/functions`，量化市场筛选只传 `main|star|gem`；北交所暂不支持，不得并入主板。
+  5. 将筛选响应和运行快照中的 `boards` 视为实际生效范围；非法值或空数组报错后修正，不得扩大范围。
+
+### v1.8.0 — 2026-07-16（规范化选股上传 + 标签契约 + 实时聚合看板）
+
+- **摘要**：规范 `log_selection` 的股票代码、选股时间、核心事件、精炼理由和标签字段，保留并强化同日筛选运行、评分分位、因子契约与上游依赖门禁。新增版本化标签合集 `selection_tag_catalog`，固定标签含龙头、核心、补涨、趋势、连板、弹性、位置、驱动等，允许 Agent 自编排板块/题材/事件标签；服务端自动补充最新价及涨停/跌停标签。选股看板默认展示目标交易日及之前三个交易日，每次进入刷新行情，支持手动刷新；仅日期筛选按题材聚合，题材筛选按日期聚合，聚合内龙头/核心优先，其余按评分排序，全局排序取消聚合。同时修复 `log_selection` 成功写库后因 `Decimal` 等数据库类型无法直接 JSON 序列化而偶发 HTTP 500，以及非法兼容分数触发 500、实时价与异日涨幅/限价混用的问题；重复上传明确区分首次固化记录与本次刷新行情。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`、`agent/index.md`（版本→v1.8.0；五轨版本自检、规范上传和看板聚合规则）
+  - `agent/memory/MEMORY.md`、`agent/memory/templates/service_state.json`（新增标签版本与标签合集缓存）
+  - `agent/skills/review-learning/SKILL.md`（完整上传契约、标签顺序、理由精炼与重复上传语义）
+  - `agent/skills/quant-screening/SKILL.md`、`agent/skills/stock-screening/SKILL.md`（正式候选标签与上传要求）
+  - `agent/skills/data-service/SKILL.md`（标签合集功能、健康版本字段和行情补充说明）
+  - `doc/AGENT_SERVICE_GUIDE.md`、`doc/SERVICE_INDEX.md`（接口、五轨版本、默认日期、聚合与幂等协议）
+  - 服务端与前端（非 Agent 文档，一并记录）：`service/selection_tags.py`、`service/registry.py`、`service/app.py`、`agent/skills/review-learning/scripts/selection_backtest.py`、`service/web/index.html`、`service/web/app.js`、`service/web/style.css`
+- **agent 动作**：
+  1. 重读上述文件；发现 `/health.selection_tag_version` 变化时调用 `selection_tag_catalog`，将标签版本及 `{tag, description}` 写入 `service_state.json`。
+  2. 正式候选继续先取得同日 `screening_run_id`；上传时提供 `selected_at`、精炼 `core_event`、精炼 `reason` 和 `tags`，不得自行填写或覆盖服务端固化评分与因子契约。
+  3. 标签顺序按“主板块/题材 → 细分方向 → 具体事件 → 固定属性”；固定标签优先从合集选，业务标签可自行编排，无标签时接受看板显示“未分类”。
+  4. 使用服务端返回的最新价和涨停/跌停标签；失败时披露错误，不自行推断。重复上传时以 `record` 为首次固化记录，以 `current_quote` 为本次刷新行情。
+  5. 将此前 `log_selection` HTTP 500 标记为服务端响应序列化缺陷；升级后重新调用即可，成功响应不再因 Decimal/日期类型编码失败。
+
+### v1.7.0 — 2026-07-16（管理员自选事实源 + 关注持仓版本同步）
+
+- **摘要**：新增管理员专属「自选」管理体系，将当前关注与持仓从按日选股快照中分离为按股票代码唯一的结构化事实源。新增名称/代码片段模糊搜索并要求从结果选择，持仓强制真实成本与整数手数；服务端支持批量上传、同批次最后一项生效、内容无变化不升版，并通过 `/health.portfolio_version` 驱动 Agent 同步。运行期 `关注与持仓.md` 改为服务端镜像，上传成功后才覆盖；历史 `watch/holding` 选股快照仅在用户明确要求回测时额外登记。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`（版本→v1.7.0；新增四轨版本、自选事实源、搜索选择与上传约束）
+  - `agent/index.md`（开场同步、强制记忆与当前自选/历史快照边界）
+  - `agent/memory/MEMORY.md`、`agent/memory/PORTFOLIO.md`（自选同步流程、冲突规则、成本/手数模型）
+  - `agent/memory/templates/关注与持仓.md`、`agent/memory/templates/daily-观察对象.md`、`agent/memory/templates/service_state.json`（当前状态镜像、每日快照字段与 portfolio_version）
+  - `agent/skills/data-service/SKILL.md`（管理员自选接口、版本机制、搜索后选择和上传协议）
+  - `agent/skills/output-format/SKILL.md`、`agent/skills/stock-research/SKILL.md`、`agent/skills/stock-screening/SKILL.md`（用户关注/持仓指令统一先上传，历史回测改为显式可选）
+  - `doc/AGENT_SERVICE_GUIDE.md`、`doc/SERVICE_INDEX.md`（接口权限、版本字段、功能与持久化说明）
+  - 服务端与前端（非 Agent 文档，一并记录）：`service/app.py`、`service/db.py`、`service/db/schema.sql`、`service/web/index.html`、`service/web/app.js`、`service/web/style.css`、`agent/skills/data-service/scripts/portfolio.py`
+- **agent 动作**：
+  1. 重读上述文件；把服务端 `portfolio_items` 视为当前关注与持仓唯一事实源，把运行期 `关注与持仓.md` 视为可重建镜像。
+  2. 每次开场对比 `/health.portfolio_version`；版本不一致时调用 `portfolio_get`，以响应 rows 覆盖镜像并更新 `service_state.json`。
+  3. 新增股票先调用 `portfolio_stock_search`，必须从结果选择完整代码和标准名称；持仓缺真实成本或整数手数时先追问，禁止猜测。
+  4. 每次增删改先形成内存草稿并调用 `portfolio_upload`；仅上传成功后刷新镜像，失败时保留待同步事项并如实告知。
+  5. 默认不调用 `log_selection(category=watch|holding)`；只有用户明确要求历史观察回测时才额外登记，且继续与 auto 调参样本隔离。
 
 ### v1.6.1 — 2026-07-16（输出规约人性化：首屏重心前置 + emoji 高亮）
 

@@ -20,17 +20,36 @@ disable-model-invocation: false
 - **holding**：用户持仓仅作观察，沿用持仓规则，不进入 auto 调参。
 
 ### 登记（选股当时）
-每只正式候选都调 `log_selection`（按 日期+代码+category **幂等去重**）：
+
+1. 先执行 `selection_tag_catalog {}`，读取 `selection_tag_version` 与固定标签说明；当 `/health.selection_tag_version` 变化时必须刷新。
+2. 每只正式候选都调用 `log_selection`（按 日期+代码+category **幂等去重**）：
 ```json
-{"function":"log_selection","params":{"code":"600XXX.SH","name":"某某","score":79,"driver":"涨价","reason":"完整理由链与证伪条件","category":"auto|manual","selected_price":12.34,"hotspot":"化工涨价","event":"产品报价连续上调","market_role":"核心","factors":{"mom_12_1":0.2,"industry_strength":0.9,"score":1.2}}}
+{
+  "function": "log_selection",
+  "params": {
+    "code": "600XXX.SH",
+    "name": "某某",
+    "selected_at": "2026-07-16 10:25:00",
+    "screening_run_id": "screen_quant返回的真实运行ID",
+    "core_event": "实验猴供给收缩，相关服务价格出现上行线索",
+    "reason": "公司直接提供相关CRO服务；量化分位与行业强度居前。若价格与订单证据不能继续验证则失效。",
+    "tags": ["医药/创新药", "CRO", "CXO", "实验猴", "龙头", "逻辑", "预期"],
+    "driver": "逻辑",
+    "category": "auto|manual"
+  }
+}
 ```
-- 调度器候选用 `auto`，用户触发正式选股用 `manual`，关注/持仓用 `watch|holding`。
-- `reason` 必须说明对应热点、当时事件、炒作路线短线地位和实际受益证据；`factors` 应传选股时全部个股因子、行业强度和综合分，禁止只存最终排名。若漏传，服务端会从同日/最近可用 `daily_factors` 自动补齐并标来源；仍取不到则明确记录 `factor_error`，不得伪造。
-- 若调用方拿不到选股时价格，可省略 `selected_price`，由服务端抓最近收盘价；抓取失败必须保留为空并披露，禁止估算。
-- 普通研究及业绩增长参考池保持 ephemeral，不调用 `log_selection`。
+- 调度器正式候选用 `auto`，用户触发正式候选用 `manual`；`watch|holding` 只在用户明确要求历史观察回测时使用，当前自选仍由 `portfolio_upload` 管理。
+- `screening_run_id` 必须来自同一选股交易日且包含该代码；服务端从运行快照读取评分、排名、完整因子契约和依赖，不接受 Agent 自填分数覆盖。
+- `core_event` 只写一条最关键、可核验的事件或催化；`reason` 由 Agent 精炼为“实际受益 → 量化/趋势依据 → 风险证伪”，不复制报告全文，不堆砌标签。
+- `tags` 为去重字符串数组，顺序固定为“主板块/题材 → 细分方向 → 具体事件 → 固定属性”。固定属性优先选标签合集；板块、题材、产品和事件标签可自行编排，如 `医药/创新药`、`CRO`、`CXO`、`实验猴`。
+- `selected_at` 使用上海时间并与筛选运行日期同日；兼容调用仍可传 `date`，但两者不得冲突。
+- 服务端上传后补充最新价及可核验的 `涨停` / `跌停` 标签，并返回行情错误；失败时保留为空并披露，禁止 Agent 自行估价或判断涨跌停。
+- 同一“日期+代码+类别”的重复上传返回成功且 `inserted=false`、`duplicate=true`；`record` 是首次固化记录，`current_quote` 是本次请求刷新行情，二者不得混作同一时点。
+- 选股价、评分、因子版本、结构哈希、权重版本、上游依赖和回测字段维持既有服务端口径。普通研究及业绩增长参考池保持 ephemeral，不调用 `log_selection`。
 
 ### 回测与看板（定期）
-调 `selection_backtest` 分别展示 auto/manual/watch/holding；仅 auto 生成自动胜率、超额和 `tuning_hints`。调 `selection_dashboard` 可全量或按日期、热点、类别查看选股时价格、最新价/涨幅/换手/成交额、选股后涨跌、理由与量化因子快照。
+调 `selection_backtest` 分别展示 auto/manual/watch/holding；仅合格 auto 样本进入自动优化门禁。`selection_dashboard` 首次默认展示目标交易日及之前三个交易日，每次调用刷新实时行情：仅日期筛选按题材聚合，传题材/标签筛选时按日期聚合；聚合内龙头、核心优先，其余按评分排序，选择全局排序时取消聚合。
 
 ### 据回测自主微调（每晚，署名 + 留痕）★
 每晚回测后，允许 Agent（回测分析师产出建议 → 主 Agent 复核）**自主微调量化选股中权重不为 0 的因子**，并落库生效：
@@ -58,14 +77,14 @@ disable-model-invocation: false
 ## 业绩增长参考池隔离（T7 强制）
 
 - T7 的「业绩增长参考池」仅为公告事实参考，不是自动选股、关注或持仓样本。
-- 参考池记录不得调用 `log_selection`，不得写 `predictions.jsonl` 或观察池，不得映射为 `category=auto|manual|watch|holding`，不得进入 `predictions_backtest`、`selection_backtest`、胜率/超额统计、`tuning_hints` 或任何因子/情绪参数调优依据。
+- 参考池记录不得调用 `log_selection`，不得写 `predictions.jsonl` 或创建短期事项，不得映射为任何选股类别，也不得进入回测或调参。
 - 同一股票若独立通过正式 `screen_quant`/`screen_trend` 流程，只允许以正式候选身份按正常规则进入回测；样本理由和来源必须来自正式流程，不能继承“进入业绩参考池”这一事实。
 - 回测报告须声明已排除业绩增长参考池；若发现误入样本，先剔除并披露，不得据此调参。
 
 ## 自我改进逻辑
 - 统计各 driver 维度历史准确率与选股超额，识别 Agent 在哪个维度更可靠。
 - 若某维度长期偏差大，在打分依据中提高该维度的验证门槛（不改四维权重本身）。
-- 归纳可复用的「避坑规则」写入学习日志。
+- 归纳可复用的“避坑规则”先写入学习审计；只有经多个独立样本验证、抽象后不依赖具体日期和标的，才可由主 Agent 提炼进永久 `MEMORY.md`。
 
 ## 二、趋势周报（每周日 20:00）
 
@@ -74,7 +93,7 @@ disable-model-invocation: false
 ### 流程
 1. 调 `sector_dc`、`screen_sector`、`price_hike_scan` 汇总本周涨价链与主线轮动
 2. 调 `screen_trend` + `screen_quant`（自动跑 `top_n=50`）生成下周候选池，并**按主线/产业链分组解读**（逐股板块/行业/炒作路径 + 消息面/行业新闻/近期主线，见 output-format 表格5）
-3. 复查 `观察池` 所有线索，更新/兑现/淘汰
+3. 复查 `短期记忆/` 中相关未过期线索：更新复查动作与时效，完成、兑现、证伪或到期后立即删除
 4. 统计本周预判准确率（`predictions_backtest`）+ 自动选股表现（`selection_backtest`），产出调参建议
 5. 产出 `周报/yyyy年第NN周周报.md`（首屏先给一眼结论，再展开）：
 ```markdown
@@ -85,7 +104,7 @@ disable-model-invocation: false
 - 🎯 下周重点候选（题材/事件 → 个股）：
 - ⚠️ 最大风险/证伪：
 ## 🔥 本周主线与轮动
-## 📈 涨价链进展（观察池复查）
+## 📈 涨价链进展（相关短期线索复查）
 ## 📊 趋势主线跟踪表
 ## 🎯 下周候选池（趋势+量化 top_n=50，四维打分 + 按主线/产业链分组解读）
 ## 📋 本周预判复盘（分驱动准确率）
@@ -95,7 +114,7 @@ disable-model-invocation: false
 ## 三、月报（每月末）
 
 1. 汇总当月主线演绎、涨价链兑现情况
-2. 更新 `用户画像.md`
+2. 复核 `USER.md`；仅把用户明确表达或反复确认的长期偏好写入，临时指令、持仓、选股、进度、问题和推断不得写入
 3. 统计当月准确率与改进项
 4. 产出 `月报/yyyy年MM月月报.md`（同样首屏先给 `## 🎯 一眼结论（核心摘要）`：📋 当月复盘一句话、🔥 下月主线预判、⚠️ 最大风险，再展开正文；主要章节沿用统一 emoji 图标）
 

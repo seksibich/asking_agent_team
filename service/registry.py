@@ -105,6 +105,8 @@ def _coerce(spec: dict[str, Any], value: Any) -> Any:
         if t == "array":
             if isinstance(value, list):
                 return value
+            if spec.get("strict"):
+                raise ValueError("expected array")
             if isinstance(value, str):
                 parts = [x.strip() for x in value.replace("，", ",").split(",")]
                 return [x for x in parts if x]

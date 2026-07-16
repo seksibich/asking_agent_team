@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -26,6 +27,7 @@ import common
 import db
 import registry
 import loader
+import selection_tags
 import version
 
 def _normalize_key(value: Optional[str]) -> str:
@@ -57,6 +59,9 @@ ADMIN_ONLY_FUNCTIONS = {
     "precompute_daily_factors", # 启动全市场因子预计算任务
     "precompute_status",        # 查看预计算任务进度与错误摘要
     "precompute_run_errors",    # 查看单日预计算完整错误明细
+    "portfolio_get",           # 获取管理员当前关注与持仓
+    "portfolio_stock_search",  # 模糊搜索可加入自选的股票
+    "portfolio_upload",        # 上传、更新或删除管理员关注与持仓
 }
 
 # 选股读取安全红线：访客不得读取关注或持仓；默认查询由 DB 层自动排除。
@@ -135,8 +140,10 @@ def _require_admin(x_api_key: Optional[str]) -> None:
 
 
 def _versioned(body: dict[str, Any]) -> JSONResponse:
+    """统一编码日期、Decimal 等数据库类型，避免写入成功后响应序列化为 HTTP 500。"""
     body["data_version"] = registry.data_version()
-    return JSONResponse(content=body, headers={"X-Data-Version": registry.data_version()})
+    return JSONResponse(content=jsonable_encoder(body),
+                        headers={"X-Data-Version": registry.data_version()})
 
 
 class CallReq(BaseModel):
@@ -154,13 +161,17 @@ def health():
     except Exception:
         open_ = None
     db_ready = True
+    portfolio_version = "unavailable"
     try:
         import db
         db.get_engine().connect().close()
+        portfolio_version = db.get_portfolio_version()
     except Exception:
         db_ready = False
     return _versioned({"status": "ok", "date": day, "trade_open": open_,
                        "tushare_ready": tushare_ready, "db_ready": db_ready,
+                       "portfolio_version": portfolio_version,
+                       "selection_tag_version": selection_tags.TAG_VERSION,
                        "functions": len(registry.names()),
                        # agent 文档版本对齐：语义版本 + 部署 git 版本（供 agent 增量更新自身文档）
                        "agent_doc_version": version.agent_doc_version(),

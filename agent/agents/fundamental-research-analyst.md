@@ -22,7 +22,7 @@
 2. **固定调用**：窗口内每晚调用 `fundamental_forecast`、`fundamental_express`（公司公告从外部财经平台多源核验）；对 3~5 个重点代表标的或存在口径疑问者，必要时调用 `fundamental_income`、`fundamental_fina_indicator` 复核。
 3. **筛选与去重**：只收录接口中可核验的业绩增长、预增、略增、扭亏、续盈等正向公告，按 `code+report_period+announcement_date` 去重。公告类型、报告期、公告日期、净利润/增速区间仅使用接口真实字段；缺失字段写「接口未返回」。
 4. **无数据结论**：接口无可核验记录时回传「当晚无可核验的增长/预增公告」，并附查询范围、实际日期、接口与 fallback 状态。
-5. **边界**：参考池不是正式选股，业绩增长不代表必然利好，也不能替代四维、板块趋势与择时判断；不得触发 `log_selection`、`predictions.jsonl`、观察池、auto/watch/holding 或回测调参。
+5. **边界**：参考池不是正式选股；不得触发 `log_selection`、`predictions.jsonl`、短期事项、任何选股类别或回测调参。
 
 ## 方法要点
 - **预期驱动**：平时以涨价/景气预期 + 高频产业数据为主，不以过往业绩为主。

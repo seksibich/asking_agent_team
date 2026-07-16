@@ -85,7 +85,7 @@ POST /call
 
 - **完整加载**：每次角色启动先完整读取固定 12 Skills：`skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/stock-research/SKILL.md`，不得只凭 index、角色摘要或旧接口印象。
 - **主绑定**：`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/review-learning/SKILL.md`；用户单股调研时协同 `skills/stock-research/SKILL.md` 提供热度、阶段与择时。
-- **职责/流程显式调用**：情绪温度、v1.1.0 情绪极端指数、连板生态、连板个股与断板反包按 `skills/data-service/SKILL.md` 取数，并在盘前/竞价/盘中/盘后分别遵守对应 `skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`；仓位与候选排序必须回到 `skills/priority-framework/SKILL.md`。
+- **职责/流程显式调用**：情绪温度、v1.1.0 情绪极端指数、连板生态、连板个股与断板反包按 `skills/data-service/SKILL.md` 取数；盘前/盘后遵守对应 Skill，竞价和盘中 Skill 仅在用户明确请求时单次执行，禁止自动触发或循环；仓位与候选排序必须回到 `skills/priority-framework/SKILL.md`。
 
 ## 数据降级约束
 

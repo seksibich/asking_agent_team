@@ -75,7 +75,7 @@ disable-model-invocation: false
 - 无法证实的传闻标「传闻，待证实」，不作为核心结论
 - **预期驱动**：选股/推荐依据以涨价与景气**预期**为主，不以过往业绩为主（业绩披露期除外）
 - **PE/PB 不作为看多依据**，只放进「风险提示」作为过往业绩对应估值的背景参考（如是否透支预期），不推断上涨动能
-- **持久化隔离**：用户主动研究默认 `ephemeral`，只落投研报告，不写 `predictions.jsonl`、daily、观察池，不调用 `log_selection`；仅用户明确要求持久化时转 `watch`。只有调度任务产生的正式自动结论才按自动规则写 predictions/观察池或 `category=auto`。
+- **持久化隔离**：用户主动研究默认 `ephemeral`，只落投研报告，不改 predictions、daily 或短期事项，不调用 `log_selection`；仅用户明确要求持续跟踪时转为服务端 watch。调度任务若产生待复查线索，只能创建带时效、待办和删除条件的短期条目，禁止写入永久 `MEMORY.md`。
 - `watch` 做 1/3/7/30 日观察性回测，但不得进入 auto 胜率、`tuning_hints` 或调参。
 
 ## Skill 加载约束 / 依赖 Skills

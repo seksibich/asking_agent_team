@@ -40,6 +40,36 @@ CREATE TABLE IF NOT EXISTS selections (
   KEY idx_category_date (category, sel_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自动/关注/持仓 选股登记';
 
+
+-- ---------- 1之二. 当前关注与持仓（按股票代码唯一） ----------
+CREATE TABLE IF NOT EXISTS portfolio_items (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+  code        VARCHAR(16)     NOT NULL COMMENT 'tushare 股票代码，全表唯一',
+  name        VARCHAR(64)     NOT NULL DEFAULT '' COMMENT '股票名称',
+  item_type   ENUM('watch','holding') NOT NULL COMMENT 'watch=关注，holding=持仓',
+  cost_price  DECIMAL(18,4)   NULL COMMENT '持仓成本价；关注类型为空',
+  lots        INT             NULL COMMENT '持仓手数，一手=100股；关注类型为空',
+  note        TEXT            NULL COMMENT '关注理由、持仓备注或风险说明',
+  source      VARCHAR(32)     NOT NULL DEFAULT 'unknown' COMMENT 'web-admin/agent 等写入来源',
+  created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_portfolio_code (code),
+  KEY idx_portfolio_type_updated (item_type, updated_at),
+  CONSTRAINT chk_portfolio_position_fields CHECK (
+    (item_type = 'watch' AND cost_price IS NULL AND lots IS NULL)
+    OR (item_type = 'holding' AND cost_price > 0 AND lots > 0)
+  )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='当前关注与持仓状态；同代码只保留最新一条';
+
+CREATE TABLE IF NOT EXISTS portfolio_meta (
+  id            TINYINT UNSIGNED NOT NULL COMMENT '固定为1的单行版本记录',
+  revision      BIGINT UNSIGNED  NOT NULL DEFAULT 0 COMMENT '内容变化时单调递增',
+  content_hash  CHAR(64)         NOT NULL COMMENT '当前状态规范化 SHA-256',
+  updated_at    DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='关注与持仓独立数据版本';
+
 -- ---------- 2. 预判登记（不可变下一交易日口径） ----------
 CREATE TABLE IF NOT EXISTS predictions (
   id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',

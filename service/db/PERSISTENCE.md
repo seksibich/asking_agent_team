@@ -19,7 +19,7 @@
 | 每日情绪原始指标 | **DB** `daily_sentiment` | RDS/SQLite | `sentiment_temperature`/`market_timing` | 二者 |
 | tushare 日级数据（当日） | 文件缓存 | CACHE_DIR/{date}/ | `cached_call` | 全部取数功能 |
 | tushare 历史数据（不可变） | 文件永久缓存 | CACHE_DIR/permanent/ | `cached_call(historical)` | 历史日线/切片 |
-| 盘中快照（增量对比） | 文件 | CACHE_DIR/intraday_snapshot.json | `watch_intraday` | 下一轮 |
+| 盘中快照（增量对比） | 文件 | CACHE_DIR/intraday_snapshot.json | `watch_intraday` | 仅供用户后续再次明确请求时作单轮对比，不触发下一轮 |
 
 > 说明：`daily_sentiment`/`daily_factors` 既是"可重建"又是"要长期留存/共享"的派生数据，统一入库更利于上云与前端查询，故归 DB。tushare 原始切片仍走文件永久缓存，避免把大体量原始行情灌入库。
 
@@ -44,4 +44,4 @@
 ## 上云切换
 - 设 `DB_URL=mysql+pymysql://user:pwd@rds:3306/stock_agent?charset=utf8mb4`，先在 RDS 执行 `schema.sql`（或依赖服务启动 `create_all`）。
 - CACHE_DIR 仍为实例本地/挂载卷（缓存，不需跨实例共享；如多实例可各自重建）。
-- Agent 记忆中的 `service_state.json` 更新 `base_url` 为公网服务地址。
+- Agent 记忆中的 `服务状态与能力.md` 与 `关注与持仓.md` 同时更新 `BASE_URL` 为公网服务地址；真实密钥不得写入记忆。

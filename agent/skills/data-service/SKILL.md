@@ -15,7 +15,7 @@ disable-model-invocation: false
 ## 服务地址与鉴权
 
 - **当前：本地 Mac Docker**，基址 `http://localhost:18901`
-- **后续上云**：部署云服务器后改为公网 API 基址（协议/鉴权/功能不变），同步更新记忆 `service_state.json` 的 `base_url`
+- **后续上云**：改为公网 API 后，同时更新运行期 `服务状态与能力.md` 和 `关注与持仓.md` 的 `BASE_URL`；协议与鉴权不变。
 - 鉴权：请求头 `X-API-Key: {service_api_key}`（值见 `init.md` / `.env`）
 - Key 分级：管理员 Key(`API_KEY`) 全权限；访客 Key(`USER_API_KEY`) 可查看/选股/读情绪/查看回测结果，但不能改权重/归一窗口、不能运行全市场预计算（否则 403）。智能体用的是管理员 Key
 - 详细服务文档见 `doc/AGENT_SERVICE_GUIDE.md`
@@ -24,7 +24,7 @@ disable-model-invocation: false
 
 | 端点 | 用途 |
 |---|---|
-| `GET /health` | 健康检查，返回 `status/date/trade_open/data_version`，及 `agent_doc_version`/`git_revision`（文档版本对齐用） |
+| `GET /health` | 健康检查，返回 `status/date/trade_open/data_version/portfolio_version/selection_tag_version`，及 `agent_doc_version`/`git_revision`（文档版本对齐用） |
 | `GET /functions` | 全部功能索引（名称/分组/描述/参数），含 `data_version` |
 | `POST /call` | 统一调用：body `{"function":"<名>","params":{...}}` |
 
@@ -38,12 +38,18 @@ POST /call
 ## ★ 版本机制（必须遵守）
 
 1. 每个响应都带 `data_version`（也在响应头 `X-Data-Version`）。
-2. 智能体在记忆中保存「最近已知 data_version」与「功能索引」（见 memory 规则）。
-3. **每次调用任何功能后，对比返回的 `data_version` 与记忆中的版本**：
-   - 一致 → 继续使用记忆中的功能索引
-   - 不一致 → 立即 `GET /functions` 拉取最新索引，更新记忆中的版本与索引，再继续
-4. 初始化时先 `GET /functions` 建立索引与版本基线。
-5. 版本号由服务端功能索引内容自动生成：任何功能新增/参数/描述变化都会改变版本，无需人工维护。
+2. 最近 `data_version` 和完整功能索引只保存在运行期 `服务状态与能力.md`，不得写主 MEMORY。
+3. 每次调用后对比版本：一致则继续；不一致立即 `GET /functions`，全量覆盖该文件的功能索引和检查时间。
+4. 初始化时先 `GET /health` 和 `/functions` 建立基线；接口失败产生的处理事项写入 `短期记忆/`，解决后删除。
+5. 版本号由功能索引内容自动生成，无需人工维护。
+
+### 独立业务契约版本
+
+- **选股标签版本**：`/health.selection_tag_version` 变化时调用 `selection_tag_catalog`，把标签版本与 `{tag, description}` 目录写入 `服务状态与能力.md`；固定标签优先复用，业务标签允许按证据精炼。
+- `log_selection` 规范字段为完整代码、`selected_at`、`core_event`、精炼 `reason`、`tags`、类别和同日 `screening_run_id`；评分、排名、因子版本及依赖由服务端筛选运行提供。
+- `/health.portfolio_version` 只表示当前关注与持仓内容版本，且只能与 `关注与持仓.md` 中的版本比较；其他版本写入 `服务状态与能力.md`。
+- 涉及关注/持仓时比较版本；不一致调用 `portfolio_get`，使用同一响应的 rows 和版本全量覆盖镜像。上传成功也只使用上传响应刷新。
+- 新增前必须调用 `portfolio_stock_search` 选择标准代码和名称；持仓必须使用真实成本和整数手数。同步失败写入 `短期记忆/`，成功处理后立即删除。
 
 ## 功能分组（通过 /functions 获取完整清单与参数）
 
@@ -62,7 +68,8 @@ POST /call
 | screening | screen_trend, screen_quant, screen_sector, watch_intraday, get_factor_config, set_factor_weights, precompute_daily_factors |
 | sentiment | sentiment_temperature（0-100 情绪温度，11 项：含涨跌家数比、平均涨幅、大盘/平均股价指数振幅方向+实体长度等+窗口低/均/高）, market_timing（择时：连续冰点/高热+出手权重）, get_sentiment_config / set_sentiment_config（归一窗口 3-30 天，落库）, bidding_analysis（09:25 竞价分析数据） |
 | research | research_build |
-| review | log_selection（category=auto/watch/holding，DB 幂等去重）, log_prediction（DB 幂等）, selection_backtest（成熟样本固化）, predictions_backtest |
+| portfolio（管理员） | portfolio_stock_search（名称/代码片段模糊搜索）, portfolio_get（当前关注持仓）, portfolio_upload（按代码覆盖最新并返回 portfolio_version） |
+| review | selection_tag_catalog（版本化固定标签及 Agent 说明）, log_selection（规范上传正式候选；watch/holding 仅作可选历史快照）, log_prediction（DB 幂等）, selection_dashboard（实时行情与题材/日期聚合）, selection_backtest（成熟样本固化）, predictions_backtest |
 
 > 以 `/functions` 返回为准，本表仅速览；新增功能会自动出现在 `/functions` 并改变版本号。
 
@@ -70,7 +77,8 @@ POST /call
 
 - `meta_stock_basic`：默认返回全量上市股票；传 `codes` 按代码精确过滤，传 `name`/`names` 按股票名称关键词包含匹配，返回 `matched_codes`、`missing_codes`、`missing_names`。
 - `market_realtime`：支持 `codes`、`name`/`names`，可混合批量查询；服务端先解析名称再请求实时行情，返回 `resolved`、`missing_codes`、`missing_names` 和 `degraded`。代码和名称都不传时返回参数错误。
-- 关注与持仓中的股票优先直接调用 `market_realtime` 获取行情；名称解析不要自行调用无过滤的 `meta_stock_basic` 后再全量遍历。
+- 关注与持仓中的股票先以 `portfolio_get` 为当前清单；新增时必须调用 `portfolio_stock_search` 选择标准股票，再调用 `portfolio_upload`。行情查询继续用 `market_realtime`。
+- `portfolio_upload` 对同一批次重复代码取最后一项，数据库按代码唯一覆盖最新状态；`holding` 必填 `cost_price` 与整数 `lots`，`watch` 不保存这两项。
 
 ### 全市场因子预计算
 
@@ -153,4 +161,4 @@ POST /call
 - 关键接口遇 4xx/5xx/空数据：先记录首次失败；延后 **5 分钟**重试一次，再延后至首次失败后 **15 分钟**重试一次。
 - 401 鉴权失败及明确的参数/配置错误不盲目重试：立即标配置问题并提示修复。402 按对应 fallback 执行。
 - 两次延迟重试后关键接口仍失败：执行上述或接口专属 fallback，标 `degraded`、缺失来源、尝试时间与实际数据日期，继续可完成部分。
-- 非关键接口失败不阻塞整份报告；所有任务坚持“缺失可见、报告继续、禁止编造”。T4 资讯直接执行「资讯类外部获取」，不因单一来源失败中止早盘总结。
+- 非关键接口失败不阻塞整份报告；所有任务坚持“缺失可见、报告继续、禁止编造”。用户明确请求竞价或盘中总结时，资讯按「资讯类外部获取」执行；不得因接口或资讯规则自行启动后续盯盘。

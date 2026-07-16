@@ -1,9 +1,18 @@
 # 服务业务索引 & Agent↔服务交叉文档
 
 > 本文把「数据服务功能」与「agent 技能 / 定时任务」双向关联，便于开发与排障时快速定位。
-> 权威功能清单以运行时 `GET /functions` 为准（含参数）；调用协议与接口可用性说明见 `doc/AGENT_SERVICE_GUIDE.md` 与 `agent/skills/data-service/SKILL.md` 分组表。当前功能数 **59**。
+> 权威功能清单以运行时 `GET /functions` 为准（含参数）；调用协议与接口可用性说明见 `doc/AGENT_SERVICE_GUIDE.md` 与 `agent/skills/data-service/SKILL.md` 分组表。功能数随注册内容自动变化，不在本文硬编码。
 
 ## 一、按业务分组的功能索引（功能 → 用途 → 主要使用方）
+
+### portfolio 管理员自选
+| 功能 | 用途 | 主要使用方 |
+|---|---|---|
+| portfolio_stock_search | 按股票名称或代码片段模糊搜索；新增时必须从结果选择标准股票 | Web 管理员 / Agent |
+| portfolio_get | 获取按代码唯一的当前关注与持仓，以及独立业务版本 | Web 管理员 / Agent 开场同步 |
+| portfolio_upload | 批量新增、更新或移除；重复代码取最后一项，持仓必填成本和整数手数 | Web 管理员 / Agent 状态更新 |
+
+`portfolio_version` 在 `/health` 中暴露，只有当前内容实际变化才递增；访客 Key 不可搜索、读取或修改自选。
 
 ### market 行情
 | 功能 | 用途 | 主要 skill |
@@ -49,23 +58,23 @@
 | sentiment_temperature | 0-100 情绪温度（权重可配） | 情绪面分析师 / pre/post-market |
 | sentiment_extreme_index | 0-100 极端指数（固定规则，Agent 不复算） | 情绪面分析师 |
 | market_timing | 择时：冰点/高热 streak + 出手买入权重 | priority-framework（择时叠加） |
-| bidding_analysis | 09:25 竞价数据 + 成交额 TopN + 异常高开 | bidding-analysis（T2） |
+| bidding_analysis | 集合竞价数据 + 成交额 TopN + 异常高开 | bidding-analysis（仅用户显式调用） |
 | get_sentiment_config / set_sentiment_config | 情绪归一窗口读/写（管理员） | review-learning |
 
-### screening 选股/盯盘/预计算/因子配置
+### screening 选股/手动盯盘/预计算/因子配置
 | 功能 | 用途 | 主要 skill |
 |---|---|---|
-| screen_quant | 量化多因子选股（默认 6 因子 + 7 候选 0 权重因子） | quant-screening |
+| screen_quant | 量化多因子选股（默认 8 个启用因子 + 7 个候选 0 权重因子） | quant-screening |
 | screen_trend | 趋势+行业逻辑选股 | stock-screening |
 | screen_sector | 板块轮动量化 | quant-screening |
-| watch_intraday | 盘中盯盘异动扫描（无异动静默） | intraday-watch（T3/T5） |
+| watch_intraday | 用户明确请求时的单轮盘中异动扫描 | intraday-watch（禁止定时/循环） |
 | precompute_daily_factors / precompute_status | 全市场因子预计算与覆盖状态 | quant-screening（D1） |
 | get_factor_config / set_factor_weights | 因子权重读/写（写=管理员，留痕） | review-learning（调参闭环） |
 | get_config_history / get_config_version / restore_config_version | 配置留痕/定位/回滚（回滚=管理员） | review-learning |
 
 ### research / review
 `research_build`（投研数据包）→ industry-analysis / stock-research。
-`log_selection` `log_prediction` `selection_backtest` `predictions_backtest`（回测闭环，仅正式候选/预判登记）→ review-learning。
+`selection_tag_catalog`（版本化固定标签及说明）→ 正式选股上传前读取；`log_selection`（同日筛选运行、精炼事件/理由/标签）`selection_dashboard`（默认四个交易日、实时行情、题材/日期智能聚合）`log_prediction` `selection_backtest` `predictions_backtest`（回测闭环，仅正式候选/预判登记）→ review-learning。`/health.selection_tag_version` 变化时必须刷新标签目录。
 
 > **资讯类不在数据服务**（新闻/时政/公告/美股外盘，token 无权限）：由 agent 从各财经平台多源获取，≥2 来源交叉，见 `agent/skills/data-service/SKILL.md`「资讯类外部获取」。
 
@@ -74,11 +83,8 @@
 | 任务 | 时间 | 主用 skill | 关键数据接口 | 资讯（外部多源） |
 |---|---|---|---|---|
 | T1 盘前汇总 | 08:30 | pre-market + 全角色 | macro_ppi/cpi/pmi、price_hike_scan、screen_sector、sentiment_temperature/extreme、market_timing、hot_dc/ths/kpl_list、overseas_hk、selection_backtest | 新闻/时政/外盘 |
-| T2 竞价分析 | 09:25 | bidding-analysis | bidding_analysis、market_timing、sentiment_temperature | — |
-| T3/T5 盘中盯盘 | 09:35–11:30 / 13:05–14:55 | intraday-watch | watch_intraday、market_realtime、market_stk_limit | 午间消息（T4 邻近） |
-| T4 盘中消息+早盘总结 | 12:50 | intraday-watch | market_limit | 新闻/时政/公告 |
 | T6 当日总结 | 17:30 | post-market | market_index、sector_dc、market_limit/lianban、hot_dc/ths/kpl_list、sentiment_*、market_timing、money_hsgt、price_hike_scan | 新闻/公告 |
-| T7 综合复盘+选股+回测+业绩池 | 22:00 | post-market + review + 选股 + 全角色 | 上述 + money_toplist、screen_sector/quant/trend、fundamental_forecast/express、predictions_backtest、selection_backtest、log_selection（仅正式候选） | 新闻/公告 |
+| T7 综合复盘+选股+回测+业绩池 | 22:00 | post-market + review + 选股 + 全角色 | 上述 + money_toplist、screen_sector/quant/trend、fundamental_forecast/express、predictions_backtest、selection_backtest、selection_tag_catalog→log_selection（仅正式候选） | 新闻/公告 |
 | W1 周回测/周报 | 周日 20:00 | review + 选股 | selection_backtest、predictions_backtest、screen_*、get/set_factor_weights | — |
 | M1 月回测/月报 | 月末 21:00 | review + quant | selection_backtest、get/set_factor_weights | — |
 | D1 全市场预计算 | 交易日 17:45 | quant-screening | precompute_daily_factors（失败按 retryable_dates 重跑） | — |

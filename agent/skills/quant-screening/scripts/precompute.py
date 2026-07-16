@@ -126,6 +126,10 @@ def _active_universe(pro, date: str) -> set[str]:
         delisted = str(row.get("delist_date") or "")
         if not code or not listed or listed > date or (delisted and delisted <= date):
             continue
+        # 北交所（.BJ）不在申万一级行业成分体系内，且短线量化策略不覆盖，
+        # 从源头排除，避免每日刷屏「缺少有效行业成分映射」并拉低覆盖率。
+        if code.endswith(".BJ"):
+            continue
         name = str(row.get("name", ""))
         if "ST" in name.upper() or "退" in name:
             continue
@@ -326,6 +330,7 @@ def _compute_for_date(pro, target: str, lookback: int, job_id: str,
 
     bar_cols = [c for c in ("trade_date", "close", "vol", "amount") if c in allbars.columns]
     items: list[dict[str, Any]] = []
+    missing_industry: list[str] = []
     total_stocks = max(1, int(allbars["ts_code"].nunique()))
     for stock_index, (code, group) in enumerate(allbars.groupby("ts_code")):
         if stock_index % 100 == 0 or stock_index == total_stocks - 1:
@@ -336,7 +341,8 @@ def _compute_for_date(pro, target: str, lookback: int, job_id: str,
             if fac is not None:
                 industry = industry_map.get(code)
                 if not industry:
-                    errors.append(f"{code} 缺少 {target} 有效行业成分映射，未写入中性伪值")
+                    # 预期内跳过（如无申万行业归属的特殊标的），循环后汇总为一条，避免逐只刷屏。
+                    missing_industry.append(code)
                     continue
                 fac["industry_strength"] = float(industry["industry_strength"])
                 fac["_meta"] = industry
@@ -347,6 +353,11 @@ def _compute_for_date(pro, target: str, lookback: int, job_id: str,
                 items.append({"code": code, "factors": fac})
         except Exception as exc:
             errors.append(f"{code} 因子计算失败：{_error_text(exc)}")
+
+    if missing_industry:
+        sample = "、".join(missing_industry[:5])
+        suffix = f" 等（示例 {sample}）" if len(missing_industry) > 5 else f"（{sample}）"
+        errors.append(f"{len(missing_industry)} 只股票缺少 {target} 有效行业成分映射被跳过，未写入中性伪值{suffix}")
 
     coverage_ratio = len(items) / len(universe) if universe else 0.0
     quality_ok = coverage_ratio >= MIN_COVERAGE_RATIO and sector_count > 0
@@ -578,11 +589,40 @@ def precompute_daily_factors(p: dict) -> dict:
     }
 
 
+# 列表接口的异常摘要限额：只回传前若干条、每条截断，完整明细按需经 precompute_run_errors 拉取。
+ERROR_PREVIEW_COUNT = 2
+ERROR_PREVIEW_LEN = 80
+
+
+def _coerce_errors(errors: Any) -> list[str]:
+    """把质量记录里的 errors 统一成字符串列表。"""
+    if errors is None:
+        return []
+    if isinstance(errors, list):
+        return [str(e) for e in errors]
+    return [str(errors)]
+
+
+def _summarize_run(run: dict[str, Any]) -> dict[str, Any]:
+    """列表返回只保留异常摘要（条数 + 截断预览），避免超长文本撑爆响应与表格。"""
+    item = dict(run)
+    errors = _coerce_errors(item.get("errors"))
+    preview = [e[:ERROR_PREVIEW_LEN] for e in errors[:ERROR_PREVIEW_COUNT]]
+    item.pop("errors", None)
+    item["error_count"] = len(errors)
+    item["errors_preview"] = preview
+    item["errors_truncated"] = (
+        len(errors) > ERROR_PREVIEW_COUNT
+        or any(len(e) > ERROR_PREVIEW_LEN for e in errors[:ERROR_PREVIEW_COUNT])
+    )
+    return item
+
+
 @register("precompute_status", "screening",
-          "预计算覆盖状态：日期覆盖数量、任务质量、因子版本和失败信息",
+          "预计算覆盖状态：日期覆盖数量、任务质量、因子版本和失败信息摘要（异常仅回传条数与预览，完整明细用 precompute_run_errors 按日拉取）",
           params=[{"name": "limit", "type": "int", "required": False, "default": 30,
                    "desc": "返回最近多少个交易日"}],
-          returns="latest_date / latest_usable_date / runs[{status,coverage_ratio,errors}]")
+          returns="latest_date / latest_usable_date / runs[{status,coverage_ratio,error_count,errors_preview,errors_truncated}]")
 def precompute_status(p: dict) -> dict:
     limit = int(p.get("limit", 30))
     current = _shanghai_now()
@@ -593,7 +633,7 @@ def precompute_status(p: dict) -> dict:
     current_dependencies = factor_contract.stock_data_dependencies(
         factor_config.model_contract("sector"))
     current_dependency_hash = factor_contract.fingerprint(current_dependencies)
-    runs = [run for run in db.daily_factor_run_status(limit)
+    runs = [_summarize_run(run) for run in db.daily_factor_run_status(limit)
             if str(run.get("trade_date") or "") <= cutoff_text]
     coverage = [row for row in db.usable_factor_date_counts(
         FACTOR_VERSION, STOCK_CONTRACT["schema_hash"], current_dependency_hash, limit,
@@ -619,6 +659,36 @@ def precompute_status(p: dict) -> dict:
         "coverage_threshold": MIN_COVERAGE_RATIO,
         "note": "只有 success、覆盖率达标、公式版本/结构哈希/完整依赖指纹一致且 run_id 绑定一致的日期会被筛选读取；活跃任务可通过 task 持续读取进度",
     }
+
+
+@register("precompute_run_errors", "screening",
+          "按交易日拉取该日预计算的完整异常明细；供前端在列表点击「查看」时按需加载，避免状态接口回传超长文本",
+          params=[{"name": "trade_date", "type": "string", "required": True,
+                   "desc": "YYYYMMDD 交易日"}],
+          returns="trade_date / status / error_count / errors[]")
+def precompute_run_errors(p: dict) -> dict:
+    trade_date = str(p.get("trade_date") or "").strip()
+    if not trade_date:
+        raise ParamError("trade_date 必填")
+    run = db.get_daily_factor_run(trade_date)
+    base = {
+        "source": "precompute_run_errors",
+        "fetched_at": common.now_str(),
+        "trade_date": trade_date,
+    }
+    if not run:
+        base.update({"status": None, "run_id": None, "finished_at": None,
+                     "error_count": 0, "errors": []})
+        return base
+    errors = _coerce_errors(run.get("errors"))
+    base.update({
+        "status": run.get("status"),
+        "run_id": run.get("run_id"),
+        "finished_at": run.get("finished_at"),
+        "error_count": len(errors),
+        "errors": errors,
+    })
+    return base
 
 
 if __name__ == "__main__":

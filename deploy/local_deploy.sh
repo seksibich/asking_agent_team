@@ -16,8 +16,9 @@
 # =============================================================================
 set -euo pipefail
 
-# SSH_HOST：若设置了 ~/.ssh/config 别名（如 aliyun-stock），优先按别名连接
-SSH_HOST="${SSH_HOST:-}"
+# SSH_HOST：默认用 ~/.ssh/config 别名 aliyun-stock 连接（该别名已配置 IdentityFile 免密）；
+# 传空字符串 SSH_HOST= 可强制回退到 SERVER_IP 直连。
+SSH_HOST="${SSH_HOST:-aliyun-stock}"
 SERVER_IP="${SERVER_IP:-8.153.99.132}"
 SSH_USER="${SSH_USER:-root}"
 SSH_PORT="${SSH_PORT:-22}"

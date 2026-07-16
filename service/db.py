@@ -408,6 +408,45 @@ def fetch_selections(date_from: Optional[Any] = None, date_to: Optional[Any] = N
     return [dict(r) for r in rows]
 
 
+def delete_selection(selection_id: int, confirm_code: str) -> dict[str, Any]:
+    """按主键删除一条选股及两版关联收益；回测快照保留用于历史审计。"""
+    eng = get_engine()
+    with eng.begin() as conn:
+        stmt = select(selections).where(selections.c.id == selection_id)
+        if eng.dialect.name == "mysql":
+            stmt = stmt.with_for_update()
+        row = conn.execute(stmt).mappings().first()
+        if not row:
+            return {"deleted": False, "reason": "not_found", "id": selection_id}
+
+        record = dict(row)
+        expected_code = str(record.get("code") or "").strip().upper()
+        if str(confirm_code or "").strip().upper() != expected_code:
+            return {"deleted": False, "reason": "confirm_mismatch", "id": selection_id}
+
+        v2_result = conn.execute(selection_forward_returns_v2.delete().where(
+            selection_forward_returns_v2.c.selection_id == selection_id))
+        legacy_result = conn.execute(selection_forward_returns.delete().where(
+            selection_forward_returns.c.selection_id == selection_id))
+        selection_result = conn.execute(selections.delete().where(selections.c.id == selection_id))
+        return {
+            "deleted": bool(selection_result.rowcount),
+            "selection": {
+                "id": selection_id,
+                "date": str(record.get("sel_date") or ""),
+                "code": expected_code,
+                "name": str(record.get("name") or ""),
+                "category": str(record.get("category") or ""),
+            },
+            "deleted_counts": {
+                "selections": int(selection_result.rowcount or 0),
+                "selection_forward_returns_v2": int(v2_result.rowcount or 0),
+                "selection_forward_returns": int(legacy_result.rowcount or 0),
+            },
+            "backtest_snapshots_preserved": True,
+        }
+
+
 # ---------- forward returns cache ----------
 def get_cached_returns(selection_id: int) -> dict[int, dict[str, Any]]:
     eng = get_engine()

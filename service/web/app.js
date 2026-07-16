@@ -158,8 +158,14 @@ function applyRoleUI() {
   }
   if (!admin) {
     _selectionsLoaded = false;
+    _selectionRows = [];
+    _selectionData = {};
+    _selectionTag = "";
     if ($("sl-meta")) $("sl-meta").textContent = "";
-    if ($("sl-hotspots")) $("sl-hotspots").innerHTML = "";
+    if ($("sl-list-meta")) $("sl-list-meta").textContent = "";
+    if ($("sl-tag-meta")) $("sl-tag-meta").textContent = "";
+    if ($("sl-tags")) $("sl-tags").innerHTML = '<span class="selection-tag-empty">查询后生成标签统计</span>';
+    if ($("sl-clear-tag")) $("sl-clear-tag").disabled = true;
     if ($("sl-result")) $("sl-result").innerHTML = '<div class="empty">进入页面后自动加载</div>';
   }
   // 回测结果对管理员和访客均可查看，但访客结果由服务端排除关注和持仓
@@ -479,18 +485,89 @@ $("i-run").onclick = () => loadIndustry(true);
 const CATEGORY_LABEL = { auto: "每日自动", manual: "用户触发", watch: "关注", holding: "持仓" };
 const fmtMaybe = (value, digits = 2) => value == null ? "—" : Number(value).toFixed(digits);
 const pctText = (value) => value == null ? "—" : `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(2)}%`;
+let _selectionRows = [];
+let _selectionData = {};
+let _selectionTag = "";
+let _selectionSort = "score-desc";
 
-function drawSelections(data) {
-  const rows = data.rows || [];
-  $("sl-meta").textContent = `${data.quote_trade_date || "行情不可用"} · ${rows.length} 条${data.quote_errors?.length ? " · 行情有缺失" : ""}`;
-  const hotspots = data.hotspots || [];
-  $("sl-hotspots").innerHTML = hotspots.map((h) =>
-    `<button class="hotspot-pill" data-hotspot="${esc(h.name)}">${esc(h.name)} <b>${h.count}</b></button>`).join("");
+const isCoreSelection = (row) => String(row.market_role || "").trim() === "核心";
+const selectionScore = (row) => {
+  const value = row.score_percentile ?? row.score;
+  const score = Number(value);
+  return Number.isFinite(score) ? score : null;
+};
+const selectionScoreText = (row) => {
+  const score = selectionScore(row);
+  return score == null ? "—" : (score >= 0 && score <= 1 ? (score * 100).toFixed(1) : score.toFixed(2));
+};
+
+function selectionTagsFor(row) {
+  const tags = [];
+  const role = String(row.market_role || "").trim();
+  const hotspot = String(row.hotspot || "").trim();
+  const driver = String(row.driver || "").trim();
+  const category = String(row.category || "").trim();
+  if (role) tags.push({ key: `role:${role}`, label: role, core: role === "核心" });
+  if (hotspot) tags.push({ key: `hotspot:${hotspot}`, label: hotspot, core: false });
+  if (driver) tags.push({ key: `driver:${driver}`, label: driver, core: false });
+  if (category) tags.push({ key: `category:${category}`, label: CATEGORY_LABEL[category] || category, core: false });
+  if (Number(row.score_percentile) >= 0.75) tags.push({ key: "score:top25", label: "评分前25%", core: false });
+  return tags;
+}
+
+function renderSelectionTags() {
+  const counts = new Map();
+  _selectionRows.forEach((row) => selectionTagsFor(row).forEach((tag) => {
+    const current = counts.get(tag.key) || { ...tag, count: 0 };
+    current.count += 1;
+    counts.set(tag.key, current);
+  }));
+  if (_selectionTag && !counts.has(_selectionTag)) _selectionTag = "";
+  const tags = [...counts.values()].sort((a, b) =>
+    Number(b.core) - Number(a.core) || b.count - a.count || a.label.localeCompare(b.label, "zh-CN"));
+  $("sl-tags").innerHTML = tags.length ? tags.map((tag) =>
+    `<button type="button" class="selection-tag ${tag.core ? "core" : ""} ${_selectionTag === tag.key ? "active" : ""}" data-selection-tag="${esc(tag.key)}">${esc(tag.label)} <b>${tag.count}</b></button>`
+  ).join("") : '<span class="selection-tag-empty">当前结果没有可统计标签</span>';
+  const active = counts.get(_selectionTag);
+  $("sl-tag-meta").textContent = active ? `已选：${active.label}` : `${_selectionRows.length} 只股票`;
+  $("sl-clear-tag").disabled = !_selectionTag;
+}
+
+function sortedSelectionRows(rows) {
+  return [...rows].sort((a, b) => {
+    const coreOrder = Number(isCoreSelection(b)) - Number(isCoreSelection(a));
+    if (coreOrder) return coreOrder;
+    if (_selectionSort === "latest") {
+      const dateOrder = String(b.logged_at || b.date || "").localeCompare(String(a.logged_at || a.date || ""));
+      if (dateOrder) return dateOrder;
+    } else {
+      const aScore = selectionScore(a);
+      const bScore = selectionScore(b);
+      const left = aScore == null ? (_selectionSort === "score-asc" ? Infinity : -Infinity) : aScore;
+      const right = bScore == null ? (_selectionSort === "score-asc" ? Infinity : -Infinity) : bScore;
+      const scoreOrder = _selectionSort === "score-asc" ? left - right : right - left;
+      if (scoreOrder) return scoreOrder;
+    }
+    const dateOrder = String(b.date || "").localeCompare(String(a.date || ""));
+    if (dateOrder) return dateOrder;
+    return Number(a.screening_rank ?? Number.MAX_SAFE_INTEGER) - Number(b.screening_rank ?? Number.MAX_SAFE_INTEGER);
+  });
+}
+
+function renderSelectionRows() {
+  const filtered = _selectionTag
+    ? _selectionRows.filter((row) => selectionTagsFor(row).some((tag) => tag.key === _selectionTag))
+    : _selectionRows;
+  const rows = sortedSelectionRows(filtered);
+  $("sl-list-meta").textContent = `显示 ${rows.length} / 查询 ${_selectionRows.length}`;
+  const quoteLabel = _selectionData.quote_trade_date || "行情不可用";
+  $("sl-meta").textContent = `${quoteLabel} · ${_selectionRows.length} 条${_selectionData.quote_errors?.length ? " · 行情有缺失" : ""}`;
   if (!rows.length) {
-    $("sl-result").innerHTML = '<div class="empty">没有符合条件的选股记录</div>';
+    $("sl-result").innerHTML = `<div class="empty">${_selectionRows.length ? "当前标签下没有股票" : "没有符合条件的选股记录"}</div>`;
     return;
   }
   $("sl-result").innerHTML = rows.map((r) => {
+    const core = isCoreSelection(r);
     const sinceCls = r.since_selection_pct == null ? "" : (r.since_selection_pct >= 0 ? "pos" : "neg");
     const chgCls = r.latest_chg_pct == null ? "" : (r.latest_chg_pct >= 0 ? "pos" : "neg");
     const amountYi = r.amount == null ? "—" : `${(Number(r.amount) / 100000).toFixed(2)} 亿`;
@@ -498,27 +575,52 @@ function drawSelections(data) {
     const factors = r.factor_error
       ? `因子快照缺失：${esc(r.factor_error)}`
       : (factorEntries.length
-        ? factorEntries.map(([key, value]) => `${esc(factorLabel(key))}：${typeof value === "number" ? value.toFixed(4) : esc(value)}`).join(" ｜ ")
+        ? factorEntries.map(([key, value]) => `${esc(factorLabel(key))}：${typeof value === "number" ? value.toFixed(4) : esc(typeof value === "object" ? JSON.stringify(value) : value)}`).join(" ｜ ")
         : "未保存量化因子快照");
-    return `<article class="selection-item">
-      <div class="selection-head">
-        <div class="selection-ticker"><b>${esc(r.name || "-")}</b><span>${esc(r.code)}</span></div>
-        <div class="selection-tags"><span>${esc(CATEGORY_LABEL[r.category] || r.category)}</span><span>${esc(r.hotspot)}</span><span>${esc(r.market_role || "地位未标注")}</span></div>
-        <div class="selection-date">${esc(r.date)}<small>${esc(r.logged_at || "")}</small></div>
+    const rowTags = selectionTagsFor(r).slice(0, 3).map((tag) =>
+      `<span class="selection-row-tag ${tag.core ? "core" : ""}">${esc(tag.label)}</span>`).join("");
+    const rank = r.screening_rank == null ? "—" : `#${esc(r.screening_rank)}`;
+    const deleteButton = isAdmin()
+      ? `<button type="button" class="selection-delete" data-selection-delete="${esc(r.id)}">永久删除</button>` : "";
+    return `<details class="selection-item ${core ? "core" : ""}" data-selection-id="${esc(r.id)}">
+      <summary class="selection-summary">
+        <div class="selection-ticker"><b class="${core ? "core-name" : ""}">${esc(r.name || "-")}</b><span>${esc(r.code)}</span></div>
+        <div class="selection-stat"><small>选股评分</small><b>${selectionScoreText(r)}</b></div>
+        <div class="selection-stat"><small>选股后</small><b class="${sinceCls}">${pctText(r.since_selection_pct)}</b></div>
+        <div class="selection-stat selection-latest"><small>最新价</small><b>${fmtMaybe(r.latest_price)}</b></div>
+        <div class="selection-row-tags">${rowTags}</div>
+        <div class="selection-date">${esc(r.date)}<small>${esc(CATEGORY_LABEL[r.category] || r.category)}</small></div>
+        <span class="selection-expand" aria-hidden="true"></span>
+      </summary>
+      <div class="selection-detail-body">
+        <div class="selection-detail-grid">
+          <div><small>选股价</small><b>${fmtMaybe(r.selected_price)}</b></div>
+          <div><small>最新价</small><b>${fmtMaybe(r.latest_price)}</b></div>
+          <div><small>当日涨幅</small><b class="${chgCls}">${pctText(r.latest_chg_pct)}</b></div>
+          <div><small>换手率</small><b>${pctText(r.turnover_rate)}</b></div>
+          <div><small>成交额</small><b>${amountYi}</b></div>
+          <div><small>筛选排名</small><b>${rank}</b></div>
+        </div>
+        <div class="selection-context"><b>核心事件：</b>${esc(r.event || "未标注")}</div>
+        <div class="selection-context"><b>入选理由：</b>${esc(r.reason || "未填写")}</div>
+        <div class="selection-detail-footer">
+          <div class="factor-snapshot-wrap">
+            <details class="factor-snapshot"><summary>查看因子快照</summary><p>${factors}</p></details>
+            <div class="selection-audit">登记 ${esc(r.logged_at || "—")} · 原始分 ${fmtMaybe(r.score_raw, 4)} · 运行 ${esc(r.screening_run_id || "legacy")}</div>
+          </div>
+          ${deleteButton}
+        </div>
       </div>
-      <div class="selection-metrics">
-        <div><small>选股价</small><b>${fmtMaybe(r.selected_price)}</b></div>
-        <div><small>最新价</small><b>${fmtMaybe(r.latest_price)}</b></div>
-        <div><small>选股后</small><b class="${sinceCls}">${pctText(r.since_selection_pct)}</b></div>
-        <div><small>当日涨幅</small><b class="${chgCls}">${pctText(r.latest_chg_pct)}</b></div>
-        <div><small>换手率</small><b>${pctText(r.turnover_rate)}</b></div>
-        <div><small>成交额</small><b>${amountYi}</b></div>
-        <div><small>综合分</small><b>${fmtMaybe(r.score, 3)}</b></div>
-      </div>
-      <div class="selection-context"><b>核心事件：</b>${esc(r.event || "未标注")}<br><b>入选理由：</b>${esc(r.reason || "未填写")}</div>
-      <details><summary>查看选股时量化因子快照</summary><p>${factors}</p></details>
-    </article>`;
+    </details>`;
   }).join("");
+}
+
+function drawSelections(data) {
+  _selectionData = data || {};
+  _selectionRows = Array.isArray(data?.rows) ? data.rows : [];
+  _selectionTag = "";
+  renderSelectionTags();
+  renderSelectionRows();
 }
 
 async function loadSelections(force = false) {
@@ -535,14 +637,61 @@ async function loadSelections(force = false) {
   if (hotspot) params.hotspot = hotspot;
   if (category) params.category = category;
   try { drawSelections(await call("selection_dashboard", params)); }
-  catch (e) { $("sl-result").innerHTML = '<div class="empty">选股看板加载失败：' + esc(e.message) + "</div>"; }
+  catch (e) {
+    _selectionRows = [];
+    _selectionData = {};
+    renderSelectionTags();
+    $("sl-list-meta").textContent = "";
+    $("sl-result").innerHTML = '<div class="empty">选股看板加载失败：' + esc(e.message) + "</div>";
+  }
 }
 $("sl-run").onclick = () => loadSelections(true);
-$("sl-hotspots").addEventListener("click", (e) => {
-  const pill = e.target.closest("[data-hotspot]");
-  if (!pill) return;
-  $("sl-hotspot").value = pill.getAttribute("data-hotspot");
-  loadSelections(true);
+$("sl-tags").addEventListener("click", (e) => {
+  const tag = e.target.closest("[data-selection-tag]");
+  if (!tag) return;
+  const key = tag.getAttribute("data-selection-tag");
+  _selectionTag = _selectionTag === key ? "" : key;
+  renderSelectionTags();
+  renderSelectionRows();
+});
+$("sl-clear-tag").onclick = () => {
+  _selectionTag = "";
+  renderSelectionTags();
+  renderSelectionRows();
+};
+$("sl-sort").onchange = (e) => {
+  _selectionSort = e.target.value;
+  renderSelectionRows();
+};
+$("sl-result").addEventListener("click", async (e) => {
+  const button = e.target.closest("[data-selection-delete]");
+  if (!button) return;
+  if (!isAdmin()) { toast("仅管理员可删除选股记录", "bad"); return; }
+  const id = Number(button.getAttribute("data-selection-delete"));
+  const row = _selectionRows.find((item) => Number(item.id) === id);
+  if (!row) { toast("记录已不在当前列表，请重新查询", "bad"); return; }
+  const title = `${row.name || "未命名"}（${row.code}）`;
+  if (!confirm(`高风险操作：将永久删除 ${title} 在 ${row.date} 的选股记录，并一并删除两版关联收益。历史回测快照会保留，但本操作不可恢复。\n\n确认继续？`)) return;
+  const input = prompt(`最后确认：请输入股票代码 ${row.code}`);
+  if (input == null) return;
+  if (input.trim().toUpperCase() !== String(row.code || "").trim().toUpperCase()) {
+    toast("股票代码不匹配，已取消删除", "bad");
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "删除中…";
+  try {
+    const result = await adminApi("/admin/selections/delete", "POST", { id, confirm_code: input });
+    _selectionRows = _selectionRows.filter((item) => Number(item.id) !== id);
+    renderSelectionTags();
+    renderSelectionRows();
+    const counts = result.deleted_counts || {};
+    toast(`已删除选股记录，关联收益 ${Number(counts.selection_forward_returns_v2 || 0) + Number(counts.selection_forward_returns || 0)} 条`, "ok");
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = "永久删除";
+    toast("删除失败：" + err.message, "bad");
+  }
 });
 
 /* ---------- 轻量 SVG 图表（无外部依赖） ---------- */
@@ -1128,17 +1277,55 @@ function renderPrecompute(d) {
   } else {
     const rows = runs.map((run) => {
       const label = PC_STATUS[run.status] || run.status || "未知";
-      const errors = Array.isArray(run.errors) ? run.errors.join("；") : (run.errors || "");
       return `<tr><td>${esc(run.trade_date)}</td>
         <td><span class="pc-quality ${esc(run.status)}">${esc(label)}</span></td>
         <td>${((Number(run.coverage_ratio) || 0) * 100).toFixed(1)}%</td>
         <td>${esc(run.computed_count ?? 0)} / ${esc(run.universe_count ?? 0)}</td>
-        <td title="${esc(errors)}">${esc(errors || "—")}</td>
+        <td>${renderErrorCell(run)}</td>
         <td>${esc(run.finished_at || "—")}</td></tr>`;
     }).join("");
     $("pc-table").innerHTML = `<table><thead><tr><th>交易日</th><th>质量</th><th>覆盖率</th><th>已计算 / 股票池</th><th>异常</th><th>完成时间</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
   return renderPrecomputeTask(d.task);
+}
+
+// 异常列只展示摘要（条数 + 截断预览），完整明细点击「查看」时按需拉取
+function renderErrorCell(run) {
+  const previewArr = Array.isArray(run.errors_preview) ? run.errors_preview
+    : (Array.isArray(run.errors) ? run.errors : []);
+  const count = Number(
+    run.error_count ?? (Array.isArray(run.errors) ? run.errors.length : 0)
+  ) || 0;
+  if (!count) return "—";
+  let preview = previewArr.join("；");
+  const truncated = run.errors_truncated || preview.length > 60 || count > previewArr.length;
+  if (preview.length > 60) preview = preview.slice(0, 60);
+  const text = preview ? esc(preview) + (truncated ? "…" : "") : `${count} 条异常`;
+  return `<div class="pc-err-cell"><span class="pc-err-preview" title="点击查看完整异常">${text}</span>`
+    + `<button type="button" class="btn-link pc-err-btn" data-date="${esc(run.trade_date)}">查看 ${count} 条</button></div>`;
+}
+
+async function openPrecomputeErrors(date) {
+  const modal = $("pc-error-modal");
+  const body = $("pc-error-body");
+  if (!modal || !body) return;
+  $("pc-error-date").textContent = date || "";
+  body.innerHTML = '<div class="empty">正在加载异常明细…</div>';
+  modal.classList.remove("hidden");
+  try {
+    const d = await call("precompute_run_errors", { trade_date: date });
+    const errors = d.errors || [];
+    if (!errors.length) {
+      body.innerHTML = '<div class="empty">该交易日无异常记录</div>';
+      return;
+    }
+    const list = errors.map((e, i) =>
+      `<li><span class="pc-err-idx">${i + 1}</span><span>${esc(e)}</span></li>`).join("");
+    body.innerHTML = `<div class="pc-err-meta">状态 ${esc(d.status || "—")} · 共 ${errors.length} 条 · 完成 ${esc(d.finished_at || "—")}</div>`
+      + `<ol class="pc-err-list">${list}</ol>`;
+  } catch (e) {
+    body.innerHTML = `<div class="pc-message bad">加载失败：${esc(e.message)}</div>`;
+  }
 }
 
 async function loadPrecompute(force = false) {
@@ -1162,6 +1349,20 @@ async function loadPrecompute(force = false) {
 }
 
 $("pc-refresh").onclick = () => loadPrecompute(true);
+
+// 异常列「查看」按钮：事件委托到表格容器，点击时按日拉取完整异常
+$("pc-table").addEventListener("click", (ev) => {
+  const btn = ev.target.closest(".pc-err-btn");
+  if (btn) openPrecomputeErrors(btn.dataset.date);
+});
+(function bindPrecomputeErrorModal() {
+  const modal = $("pc-error-modal");
+  if (!modal) return;
+  const close = () => modal.classList.add("hidden");
+  const closeBtn = $("pc-error-close");
+  if (closeBtn) closeBtn.onclick = close;
+  modal.addEventListener("click", (ev) => { if (ev.target === modal) close(); });
+})();
 $("pc-run").onclick = async () => {
   const btn = $("pc-run");
   const status = $("pc-status");

@@ -55,7 +55,8 @@ ADMIN_ONLY_FUNCTIONS = {
     "set_sentiment_config",     # 修改情绪归一窗口
     "restore_config_version",   # 回滚配置到历史版本
     "precompute_daily_factors", # 启动全市场因子预计算任务
-    "precompute_status",        # 查看预计算任务进度与错误明细
+    "precompute_status",        # 查看预计算任务进度与错误摘要
+    "precompute_run_errors",    # 查看单日预计算完整错误明细
 }
 
 # 选股读取安全红线：访客不得读取关注或持仓；默认查询由 DB 层自动排除。
@@ -243,6 +244,27 @@ def delete_user_key(req: UserKeyOp, x_api_key: Optional[str] = Header(None)):
     if deleted:
         _save_user_keys(new_keys)
     return _versioned({"deleted": deleted, "id": req.id})
+
+
+class SelectionDeleteReq(BaseModel):
+    id: int
+    confirm_code: str
+
+
+@app.post("/admin/selections/delete")
+def delete_selection(req: SelectionDeleteReq, x_api_key: Optional[str] = Header(None)):
+    """按数字主键永久删除选股及关联收益；历史回测快照保留，仅管理员可用。"""
+    _require_admin(x_api_key)
+    if req.id <= 0:
+        raise HTTPException(status_code=400, detail="选股记录 id 必须为正整数")
+    result = db.delete_selection(req.id, req.confirm_code)
+    if result.get("reason") == "not_found":
+        raise HTTPException(status_code=404, detail="选股记录不存在或已删除")
+    if result.get("reason") == "confirm_mismatch":
+        raise HTTPException(status_code=400, detail="确认股票代码不匹配，已取消删除")
+    if not result.get("deleted"):
+        raise HTTPException(status_code=500, detail="选股记录删除失败")
+    return _versioned(result)
 
 
 @app.post("/call")

@@ -138,9 +138,26 @@
         </div>
         <button id="sl-run" class="btn-primary">查询选股记录</button>
       </div>
-      <div id="sl-hotspots" class="hotspot-strip"></div>
-      <div class="card">
-        <div class="card-title">选股列表</div>
+      <div class="card selection-local-tools">
+        <div class="selection-local-head">
+          <div>
+            <div class="card-title">当前结果标签 <span id="sl-tag-meta" class="meta"></span></div>
+            <p class="hint">标签仅过滤本次查询返回的股票，不会重新请求，也不会改动上方查询条件。</p>
+          </div>
+          <div class="selection-local-actions">
+            <label for="sl-sort">排序</label>
+            <select id="sl-sort">
+              <option value="score-desc">核心优先 · 评分高到低</option>
+              <option value="score-asc">核心优先 · 评分低到高</option>
+              <option value="latest">核心优先 · 最新登记</option>
+            </select>
+            <button id="sl-clear-tag" class="btn-ghost selection-clear-tag" type="button" disabled>清除标签</button>
+          </div>
+        </div>
+        <div id="sl-tags" class="selection-tag-strip"><span class="selection-tag-empty">查询后生成标签统计</span></div>
+      </div>
+      <div class="card selection-list-card">
+        <div class="card-title">选股列表 <span id="sl-list-meta" class="meta"></span></div>
         <div id="sl-result" class="selection-list"><div class="empty">进入页面后自动加载</div></div>
       </div>
     </section>
@@ -378,6 +395,15 @@
       <div class="card-title"><span id="fm-title">因子说明</span> <span id="fm-key" class="meta"></span></div>
       <div id="fm-body" class="factor-desc"></div>
       <div class="modal-actions"><button id="fm-close" class="btn-primary">知道了</button></div>
+    </div>
+  </div>
+
+  <!-- 预计算异常明细弹层（点击「查看」时按日拉取） -->
+  <div id="pc-error-modal" class="modal hidden">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pc-error-title">
+      <div class="card-title"><span id="pc-error-title">异常明细</span> <span id="pc-error-date" class="meta"></span></div>
+      <div id="pc-error-body" class="pc-error-body"><div class="empty">—</div></div>
+      <div class="modal-actions"><button id="pc-error-close" class="btn-primary">关闭</button></div>
     </div>
   </div>
 

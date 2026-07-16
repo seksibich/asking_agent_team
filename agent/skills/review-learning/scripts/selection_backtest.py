@@ -518,6 +518,7 @@ def selection_dashboard(p: dict) -> dict:
             "category": record.get("category", ""), "score": float(record.get("score") or 0),
             "score_raw": extra.get("score_raw"),
             "score_percentile": extra.get("score_percentile"),
+            "screening_rank": extra.get("screening_rank"),
             "driver": record.get("driver", ""), "hotspot": hotspot,
             "event": extra.get("event", ""), "market_role": extra.get("market_role", ""),
             "reason": record.get("reason", ""),

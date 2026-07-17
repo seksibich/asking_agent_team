@@ -33,6 +33,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       量化选股
     </button>
+    <button class="tab admin-only" data-tab="quant-watch">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      量化盯盘
+    </button>
     <button class="tab" data-tab="industry">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 17V9h4v8m2 0V4h4v13m2 0v-6h3v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       行业分析
@@ -120,6 +124,60 @@
           </div>
           <div class="modal-actions"><button id="quant-help-close" class="btn-primary">知道了</button></div>
         </div>
+      </div>
+    </section>
+
+    <!-- 服务端量化盯盘：只在管理员停留本页时建立 WebSocket -->
+    <section id="tab-quant-watch" class="panel admin-only quant-watch-panel">
+      <div class="card qw-hero">
+        <div class="card-title-row">
+          <div>
+            <span class="sentiment-eyebrow">盘中扫描</span>
+            <div class="card-title qw-title">量化盯盘 <span id="qw-connection" class="qw-connection off">未连接</span></div>
+            <p class="hint">服务端在交易日连续竞价按设置频率扫描；离开本页即断开浏览器长连接，但不会停止服务端确定性扫描。</p>
+          </div>
+          <div class="qw-head-actions"><button id="qw-refresh" class="btn-ghost" type="button">刷新</button><button id="qw-scan" class="btn-primary" type="button">立即扫描</button></div>
+        </div>
+        <div class="qw-kpis">
+          <div><small>运行状态</small><b id="qw-kpi-status">—</b></div>
+          <div><small>最近扫描</small><b id="qw-kpi-time">—</b></div>
+          <div><small>扫描标的</small><b id="qw-kpi-count">—</b></div>
+          <div><small>达标 / 异动</small><b id="qw-kpi-signal">—</b></div>
+        </div>
+        <div id="qw-quality" class="qw-quality">等待读取数据质量</div>
+      </div>
+
+      <div class="card qw-settings-card">
+        <div class="card-title-row"><div><div class="card-title">扫描设置</div><p class="hint">关注、持仓和近三交易日选股始终优先纳入；逐笔大单源未接入时不会以窗口成交额冒充。</p></div><button id="qw-save" class="btn-primary" type="button">保存设置</button></div>
+        <div class="qw-settings-grid">
+          <div class="form-row"><label for="qw-mode">扫描范围</label><select id="qw-mode"><option value="market">市场范围 + 优先标的</option><option value="priority_only">只看关注/持仓/近期选股</option></select></div>
+          <div class="form-row"><label for="qw-interval">扫描频率（秒）</label><input id="qw-interval" type="number" min="30" max="600" value="60" /></div>
+          <div class="form-row"><label for="qw-window">涨速/成交额窗口（分钟）</label><input id="qw-window" type="number" min="1" max="30" value="5" /></div>
+          <div class="form-row"><label for="qw-threshold">达标分</label><input id="qw-threshold" type="number" min="0" max="100" step="0.5" value="72" /></div>
+          <div class="form-row qw-wide"><label for="qw-industries">筛选行业（多项取交集）</label><input id="qw-industries" type="text" placeholder="留空不限制，如 通信,设备" /></div>
+          <div class="form-row qw-wide"><label for="qw-themes">筛选题材（多项取交集）</label><input id="qw-themes" type="text" placeholder="留空不限制，如 机器人" /></div>
+        </div>
+        <div class="quant-board-filter"><span class="board-filter-label">市场范围</span><div class="board-options" id="qw-boards"><label class="board-chip"><input type="checkbox" value="main" checked /><span>沪深主板</span></label><label class="board-chip"><input type="checkbox" value="star" /><span>科创板</span></label><label class="board-chip"><input type="checkbox" value="gem" checked /><span>创业板</span></label></div></div>
+        <div class="qw-switches">
+          <label><input id="qw-enabled" type="checkbox" checked />启用服务端扫描</label>
+          <label><input id="qw-notify" type="checkbox" />启用通知</label>
+          <label><input id="qw-feishu" type="checkbox" />飞书</label>
+          <label><input id="qw-wecom" type="checkbox" />企业微信</label>
+          <span id="qw-setting-status" class="status"></span>
+        </div>
+      </div>
+
+      <div class="card qw-latest-card">
+        <div class="card-title">最新盯盘结论 <span id="qw-meta" class="meta"></span></div>
+        <div id="qw-latest"><div class="empty">进入页面后建立长连接并加载当天结果</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">板块轮动 <span class="meta">申万可用分级 · 窗口涨速与成交额</span></div>
+        <div id="qw-sectors" class="table-wrap"><div class="empty">等待扫描结果</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">当日历史消息 <span class="meta">默认折叠，最新一条在上方展开</span></div>
+        <div id="qw-history" class="qw-history"><div class="empty">当天暂无历史消息</div></div>
       </div>
     </section>
 
@@ -437,18 +495,57 @@
 
       <div class="card backtest-detail-card">
         <div class="backtest-section-head">
-          <div class="card-title">选股明细 <span id="b-detail-meta" class="meta"></span></div>
-          <label class="backtest-filter" for="b-category">类别
-            <select id="b-category">
-              <option value="">全部类别</option>
-              <option value="auto">每日自动选股</option>
-              <option value="manual">用户触发选股</option>
-              <option value="watch">历史关注</option>
-              <option value="holding">历史持仓</option>
-            </select>
-          </label>
+          <div>
+            <div class="card-title">选股明细 <span id="b-detail-meta" class="meta"></span></div>
+            <p class="hint">按选股日期筛选并在本地排序、翻页；红色表示上涨，绿色表示下跌。</p>
+          </div>
+          <button id="b-export" class="btn-ghost" type="button">导出当前筛选</button>
         </div>
+        <div class="backtest-detail-toolbar">
+          <div class="backtest-quick-range" role="group" aria-label="选股日期快捷范围">
+            <button id="b-quick-all" class="active" type="button">全部日期</button>
+            <button id="b-quick-3" type="button">最新3日选股</button>
+            <button id="b-quick-1" type="button">最新1日选股</button>
+          </div>
+          <label>开始日期<input id="b-date-from" type="date" /></label>
+          <label>结束日期<input id="b-date-to" type="date" /></label>
+          <label>类别<select id="b-category">
+            <option value="">全部类别</option>
+            <option value="auto">每日自动选股</option>
+            <option value="manual">用户触发选股</option>
+            <option value="watch">历史关注</option>
+            <option value="holding">历史持仓</option>
+          </select></label>
+          <label>收益口径<select id="b-return-mode">
+            <option value="return">个股涨幅</option>
+            <option value="excess">相对沪深300超额</option>
+          </select></label>
+          <label>30日状态<select id="b-maturity">
+            <option value="">全部状态</option>
+            <option value="success">已成熟</option>
+            <option value="not_matured">未成熟</option>
+            <option value="failed">计算失败</option>
+          </select></label>
+          <label>排序字段<select id="b-sort">
+            <option value="date">选股日期</option>
+            <option value="score">选股评分</option>
+            <option value="since">选股至今涨幅</option>
+            <option value="1t">1交易日收益 / 超额</option>
+            <option value="2t">2交易日收益 / 超额</option>
+            <option value="3t">3交易日收益 / 超额</option>
+            <option value="7c">7自然日收益 / 超额</option>
+            <option value="30c">30自然日收益 / 超额</option>
+          </select></label>
+          <label>顺序<select id="b-order"><option value="desc">从高到低 / 新到旧</option><option value="asc">从低到高 / 旧到新</option></select></label>
+          <label>每页<select id="b-page-size"><option value="10">10条</option><option value="20" selected>20条</option><option value="50">50条</option></select></label>
+        </div>
+        <div id="b-detail-summary" class="backtest-detail-summary">
+          <div><small>筛选记录</small><b>—</b></div><div><small>至今平均</small><b>—</b></div>
+          <div><small>至今盈利占比</small><b>—</b></div><div><small>30日成熟占比</small><b>—</b></div>
+        </div>
+        <div id="b-page-top" class="backtest-pagination"></div>
         <div id="b-detail" class="backtest-details"><div class="empty">—</div></div>
+        <div id="b-page-bottom" class="backtest-pagination"></div>
       </div>
 
       <div class="card backtest-log-card admin-only">

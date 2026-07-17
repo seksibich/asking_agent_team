@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 import threading
@@ -19,8 +20,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
@@ -83,6 +85,10 @@ ADMIN_ONLY_FUNCTIONS = {
     "portfolio_get",           # 获取管理员当前关注与持仓
     "portfolio_stock_search",  # 模糊搜索可加入自选的股票
     "portfolio_upload",        # 上传、更新或删除管理员关注与持仓
+    "quant_watch_status",      # 盯盘结果含持仓、关注与近期选股
+    "quant_watch_get_config",  # 读取管理员盯盘范围和通知设置
+    "quant_watch_set_config",  # 修改并版本化盯盘设置
+    "quant_watch_scan_once",   # 管理员盘中手动诊断扫描
 }
 
 # 选股读取安全红线：访客不得读取关注或持仓；默认查询由 DB 层自动排除。
@@ -96,22 +102,84 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 
 app = FastAPI(title="Stock Data Service", version="1.0.0")
 
+# 数据库初始化结果为进程级事实；初始化失败时量化盯盘不得再次探测数据库。
+_DB_READY = False
+_DB_INIT_ERROR: Optional[str] = None
+_QUANT_WATCH_STARTED = False
+_WS_TICKET_TTL_SECONDS = 60
+
+
+def _issue_ws_ticket(role: str) -> str:
+    """签发数据库一次性票据，进程内不保留原始票据或摘要。"""
+    return db.issue_quant_watch_ticket(
+        role=role, purpose="quant_watch_ws", ttl_seconds=_WS_TICKET_TTL_SECONDS)
+
+
+def _consume_ws_ticket(ticket: str) -> Optional[str]:
+    """通过数据库原子消费管理员量化盯盘 WebSocket 票据。"""
+    return db.consume_quant_watch_ticket(
+        ticket, role="admin", purpose="quant_watch_ws")
+
+
+def _normalized_authority(value: str, default_scheme: str) -> Optional[tuple[str, int]]:
+    """规范化 hostname 与默认端口，拒绝非法端口或缺失主机名。"""
+    try:
+        parsed = urlsplit(value if "://" in value else f"{default_scheme}://{value}")
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+        if not hostname:
+            return None
+        scheme = (parsed.scheme or default_scheme).lower()
+        if scheme not in {"http", "https", "ws", "wss"}:
+            return None
+        default_port = 443 if scheme in {"https", "wss"} else 80
+        return hostname, parsed.port or default_port
+    except ValueError:
+        return None
+
+
+def _websocket_origin_allowed(websocket: WebSocket) -> bool:
+    """有 Origin 时仅允许其主机和显式/默认端口与 WebSocket Host 一致。"""
+    origin = str(websocket.headers.get("origin") or "").strip()
+    if not origin:
+        return True
+    if origin == "null":
+        return False
+    origin_authority = _normalized_authority(origin, "http")
+    host_authority = _normalized_authority(
+        str(websocket.headers.get("host") or ""), str(websocket.url.scheme or "ws"))
+    return origin_authority is not None and origin_authority == host_authority
+
 
 @app.on_event("startup")
 def _startup() -> None:
+    global _DB_READY, _DB_INIT_ERROR, _QUANT_WATCH_STARTED
+    _DB_READY = False
+    _DB_INIT_ERROR = None
+    _QUANT_WATCH_STARTED = False
     try:
-        import db
         db.init_db()
+        _DB_READY = True
         print("[startup] db ready:", db.db_url())
-    except Exception as e:  # noqa: BLE001
-        print(f"[startup] db init skipped: {e}")
+    except Exception as exc:  # noqa: BLE001
+        _DB_INIT_ERROR = f"{type(exc).__name__}: {exc}"[:500]
+        print(f"[startup] db init skipped: {exc}")
     imported = loader.discover()
     try:
         import daily_scheduler
         daily_scheduler.start()
         print("[startup] daily finalize scheduler enabled: 16:00 Asia/Shanghai")
-    except Exception as e:  # noqa: BLE001
-        print(f"[startup] daily finalize scheduler skipped: {e}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[startup] daily finalize scheduler skipped: {exc}")
+    if _DB_READY:
+        try:
+            import quant_watch
+            quant_watch.start()
+            _QUANT_WATCH_STARTED = True
+            print("[startup] quant watch scheduler enabled")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[startup] quant watch scheduler skipped: {exc}")
+    else:
+        print("[startup] quant watch scheduler skipped: database unavailable")
     print(f"[startup] auth configured: admin_keys={len(ADMIN_API_KEYS)}, "
           f"user_key={bool(USER_API_KEY)}")
     print(f"[startup] loaded {len(imported)} function modules, "
@@ -120,6 +188,12 @@ def _startup() -> None:
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
+    if _QUANT_WATCH_STARTED:
+        try:
+            import quant_watch
+            quant_watch.stop()
+        except Exception:
+            pass
     try:
         import daily_scheduler
         daily_scheduler.stop()
@@ -282,14 +356,21 @@ def _build_health_snapshot() -> dict[str, Any]:
     db_ready = False
     portfolio_version = "unavailable"
     daily_finalize: dict[str, Any] = {"status": "unavailable"}
-    try:
-        db.get_engine().connect().close()
-        db_ready = True
-        portfolio_version = _safe_health_value(db.get_portfolio_version, "unavailable")
-        import daily_scheduler
-        daily_finalize = _safe_health_value(daily_scheduler.status, {"status": "unavailable"})
-    except Exception:
-        pass
+    quant_watch_status: dict[str, Any] = (
+        {"status": "unavailable", "reason": "数据库初始化失败"}
+        if not _DB_READY else {"status": "degraded", "reason": "数据库当前不可用"})
+    if _DB_READY:
+        try:
+            db.get_engine().connect().close()
+            db_ready = True
+            portfolio_version = _safe_health_value(db.get_portfolio_version, "unavailable")
+            import daily_scheduler
+            import quant_watch
+            daily_finalize = _safe_health_value(daily_scheduler.status, {"status": "unavailable"})
+            quant_watch_status = _safe_health_value(
+                quant_watch.health_summary, {"status": "degraded"})
+        except Exception:
+            quant_watch_status = {"status": "degraded", "reason": "数据库当前不可用"}
 
     return {
         "status": "ok",
@@ -303,6 +384,7 @@ def _build_health_snapshot() -> dict[str, Any]:
         "last_data_ready_date": clock.get("last_data_ready_date"),
         "final_ready_time": clock.get("final_ready_time"),
         "daily_finalize": daily_finalize,
+        "quant_watch": quant_watch_status,
         "market_time": clock.get("market_time") or common.now_str(),
         "tushare_ready": tushare_ready,
         "db_ready": db_ready,
@@ -534,6 +616,58 @@ def download_logs(scene: str, request: Request, scope: str = "date",
     )
 
 
+@app.post("/quant-watch/ticket")
+def quant_watch_ticket(request: Request, x_api_key: Optional[str] = Header(None)):
+    """管理员用 HTTP Key 换取数据库一次性 WebSocket 短期票据。"""
+    _require_admin(x_api_key)
+    request.state.role = "admin"
+    headers = {"Cache-Control": "no-store"}
+    if not _DB_READY:
+        return _error_response(503, "量化盯盘数据库不可用", headers=headers)
+    try:
+        ticket = _issue_ws_ticket("admin")
+    except Exception:
+        return _error_response(503, "量化盯盘票据签发失败", headers=headers)
+    return _versioned({"ok": True, "data": {
+        "ticket": ticket, "expires_in": int(_WS_TICKET_TTL_SECONDS),
+    }}, headers=headers)
+
+
+@app.websocket("/ws/quant-watch")
+async def quant_watch_socket(websocket: WebSocket, ticket: str = ""):
+    """校验直连 Host/Origin 后原子消费票据并建立量化盯盘长连接。"""
+    if not _websocket_origin_allowed(websocket):
+        await websocket.close(code=4403, reason="Origin 与 Host 不一致")
+        return
+    if not _DB_READY:
+        await websocket.close(code=1013, reason="量化盯盘数据库不可用")
+        return
+    try:
+        role = _consume_ws_ticket(ticket)
+    except Exception:
+        role = None
+    if role != "admin":
+        await websocket.close(code=4401, reason="票据无效或已过期")
+        return
+    await websocket.accept()
+    sequence = -1
+    try:
+        import quant_watch
+        while True:
+            sequence, data = await asyncio.to_thread(
+                quant_watch.wait_for_update, sequence, 20.0)
+            await websocket.send_json(jsonable_encoder({
+                "type": "quant_watch", "sequence": sequence, "data": data,
+            }))
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        try:
+            await websocket.close(code=1011, reason="盯盘连接异常")
+        except Exception:
+            pass
+
+
 @app.post("/call")
 def call(req: CallReq, request: Request, x_api_key: Optional[str] = Header(None)):
     started = time.perf_counter()
@@ -562,6 +696,8 @@ def call(req: CallReq, request: Request, x_api_key: Optional[str] = Header(None)
         # 全部注册函数共享同一请求级读取范围；即使未来新增 DB 查询调用点，
         # 访客也只能在 SQL 层读取 auto/manual，不能通过省略 category 绕过。
         with db.selection_read_scope(include_sensitive=role == "admin"):
+            if req.function.startswith("quant_watch_") and not _DB_READY:
+                raise RuntimeError("量化盯盘数据库不可用")
             data = registry.call(req.function, params)
     except registry.ParamError as exc:
         _audit_function(req.function, params, role,

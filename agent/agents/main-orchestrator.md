@@ -35,8 +35,8 @@
 
 ## 用户显式盯盘（主 Agent 单次执行，不启用团队）
 
-- 不注册或自行启动任何竞价、盘中盯盘、午间总结任务。
-- 仅在用户明确请求时读取本次指定对象及必要的持仓/关注上下文，执行一次 `intraday-watch` 或 `bidding-analysis`。
+- 不注册或自行启动任何 Agent 竞价、解释型盘中盯盘、午间总结任务；服务端确定性 `quant_watch` 扫描不属于 Agent 调度。
+- 仅在用户明确请求时读取本次指定对象及必要的持仓/关注上下文，执行一次 `intraday-watch` 或 `bidding-analysis`；可按需读取当日 `quant_watch_status`，但不得自动调用 `quant_watch_scan_once`。
 - 响应结束即停止，不循环、不续跑、不主动安排下一时点，也不写自动盯盘记忆。
 
 ## 裁决原则

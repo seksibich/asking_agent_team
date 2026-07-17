@@ -9,6 +9,24 @@ const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
 }[ch]));
+
+// 统一拒绝空值、布尔值及非有限数，避免 Number(null) 被误显示为 0。
+const finiteNumber = (value) => {
+  if (value == null || value === "" || typeof value === "boolean") return null;
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+const finiteNumberText = (value, { digits = 2, trim = false, sign = false, suffix = "", fallback = "—" } = {}) => {
+  const number = finiteNumber(value);
+  if (number == null) return fallback;
+  let text = number.toFixed(digits);
+  if (trim) text = text.replace(/\.?0+$/, "");
+  return `${sign && number >= 0 ? "+" : ""}${text}${suffix}`;
+};
+const finiteNumberClass = (value) => {
+  const number = finiteNumber(value);
+  return number == null ? "" : (number >= 0 ? "pos" : "neg");
+};
 const toast = (msg, type = "") => {
   const t = $("toast");
   t.textContent = msg; t.className = "toast " + type;
@@ -41,7 +59,7 @@ async function health() {
 
 /* ---------- 角色 / 权限（管理员 vs 用户） ---------- */
 // 未通过 Key 验证前禁止调用功能，服务端鉴权作为最终安全边界
-const ADMIN_ONLY_TABS = new Set(["portfolio", "precompute"]);
+const ADMIN_ONLY_TABS = new Set(["portfolio", "precompute", "quant-watch"]);
 let _role = "user";
 let _authReady = false;
 let _selectionsLoaded = false;
@@ -162,6 +180,7 @@ function applyRoleUI() {
     category.value = "";
   }
   if (!admin) {
+    stopQuantWatchSocket();
     _selectionsLoaded = false;
     _selectionRows = [];
     _selectionData = {};
@@ -203,6 +222,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
       openLogin("请先输入有效的服务 Key");
       return;
     }
+    if (btn.dataset.tab !== "quant-watch") stopQuantWatchSocket();
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
@@ -210,6 +230,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "weights") loadWeights();
     if (btn.dataset.tab === "backtest") loadBacktest();
     if (btn.dataset.tab === "precompute") loadPrecompute();
+    if (btn.dataset.tab === "quant-watch") loadQuantWatch(true);
     // 情绪与行业均为时效敏感页面：每次进入都重新请求；情绪连续交易时段额外强刷盘中快照。
     if (btn.dataset.tab === "sentiment") loadSentiment(true, true);
     if (btn.dataset.tab === "industry") loadIndustry(true);
@@ -312,6 +333,7 @@ function reloadActiveTab() {
   if (t === "weights") loadWeights();
   else if (t === "backtest") loadBacktest(true);
   else if (t === "precompute") loadPrecompute(true);
+  else if (t === "quant-watch") loadQuantWatch(true);
   else if (t === "sentiment") loadSentiment(true);
   else if (t === "industry") loadIndustry(true);
   else if (t === "selections") loadSelections(true);
@@ -331,6 +353,21 @@ async function resetActiveTab() {
     $("q-meta").textContent = "";
     $("q-result").innerHTML = '<div class="empty">点击「运行量化选股」查看结果</div>';
     quantHelpModal.classList.add("hidden");
+  } else if (tab === "quant-watch") {
+    $("qw-mode").value = "market";
+    $("qw-interval").value = "60";
+    $("qw-window").value = "5";
+    $("qw-threshold").value = "72";
+    $("qw-industries").value = "";
+    $("qw-themes").value = "";
+    $("qw-enabled").checked = true;
+    $("qw-notify").checked = false;
+    $("qw-feishu").checked = false;
+    $("qw-wecom").checked = false;
+    document.querySelectorAll('#qw-boards input[type="checkbox"]').forEach((input) => {
+      input.checked = ["main", "gem"].includes(input.value);
+    });
+    await saveQuantWatchConfig();
   } else if (tab === "industry") {
     $("i-mode").value = "latest_complete";
     $("i-date").value = "";
@@ -620,10 +657,7 @@ function localTodayCompact() {
 }
 
 function industryNumber(row, key) {
-  const value = row?.[key];
-  if (value == null || value === "") return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+  return finiteNumber(row?.[key]);
 }
 
 function industryBaseRow(row) {
@@ -637,15 +671,11 @@ function industryStrength(row) {
 }
 
 function industryValueText(value, digits = 4) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
-  return number.toFixed(digits).replace(/\.?0+$/, "");
+  return finiteNumberText(value, { digits, trim: true });
 }
 
 function industryPercentText(value, digits = 1) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
-  return `${number >= 0 ? "+" : ""}${number.toFixed(digits)}%`;
+  return finiteNumberText(value, { digits, sign: true, suffix: "%" });
 }
 
 function industrySortRows(rows) {
@@ -678,8 +708,10 @@ function renderIndustryStatus(data) {
   const intradayView = $("i-mode").value === "intraday";
   const isComplete = data.is_complete !== false;
   const mode = intradayView ? "盘中视图 · 最终完整基线" : (isComplete ? "完整收盘" : "非完整数据");
-  const staleDays = Number(data.stale_trade_days || 0);
-  const stale = data.is_stale ? `数据陈旧 ${staleDays} 个交易日` : "数据时效正常";
+  const staleDays = finiteNumber(data.stale_trade_days);
+  const stale = data.is_stale
+    ? `数据陈旧 ${finiteNumberText(staleDays, { digits: 0, fallback: "未知" })} 个交易日`
+    : "数据时效正常";
   const phaseLabels = {
     preopen: "盘前", call_auction: "集合竞价", morning: "上午交易", afternoon: "下午交易",
     lunch: "午间休市", closed_pending: "收盘待确认", final: "日终数据就绪", non_trading_day: "非交易日",
@@ -700,28 +732,31 @@ function renderIndustryKpis() {
   const momentums = _industryRows.map((row) => industryNumber(row, "sec_mom_5d")).filter((value) => value != null).sort((a, b) => a - b);
   const middle = Math.floor(momentums.length / 2);
   const median = !momentums.length ? null : (momentums.length % 2 ? momentums[middle] : (momentums[middle - 1] + momentums[middle]) / 2);
-  const top = [..._industryRows].sort((a, b) => (industryStrength(b) ?? -Infinity) - (industryStrength(a) ?? -Infinity))[0];
+  const top = [..._industryRows].filter((row) => industryStrength(row) != null)
+    .sort((a, b) => industryStrength(b) - industryStrength(a))[0];
   const medianDisplay = median == null ? null : (Math.abs(median) <= 1 ? median * 100 : median);
-  $("i-kpi-strong").textContent = String(strengths.filter((value) => value >= 0.7).length);
-  $("i-kpi-weak").textContent = String(strengths.filter((value) => value <= 0.3).length);
-  $("i-kpi-median").textContent = medianDisplay == null ? "—" : industryPercentText(medianDisplay, 2);
-  $("i-kpi-median").className = medianDisplay == null ? "" : (medianDisplay >= 0 ? "pos" : "neg");
+  $("i-kpi-strong").textContent = finiteNumberText(strengths.filter((value) => value >= 0.7).length, { digits: 0 });
+  $("i-kpi-weak").textContent = finiteNumberText(strengths.filter((value) => value <= 0.3).length, { digits: 0 });
+  $("i-kpi-median").textContent = industryPercentText(medianDisplay, 2);
+  $("i-kpi-median").className = finiteNumberClass(medianDisplay);
   $("i-kpi-top").textContent = top?.name || top?.code || "—";
   const topStrength = top ? industryStrength(top) : null;
-  $("i-kpi-top-sub").textContent = topStrength == null ? "强度数据缺失" : `强度 ${(topStrength * 100).toFixed(1)}`;
+  $("i-kpi-top-sub").textContent = topStrength == null ? "强度数据缺失" : `强度 ${finiteNumberText(topStrength * 100, { digits: 1 })}`;
 }
 
 function renderIndustryBars() {
-  if (!_industryRows.length) { $("i-bars").innerHTML = '<div class="empty">暂无行业评分</div>'; return; }
-  const sorted = [..._industryRows].sort((a, b) => (industryStrength(b) ?? -Infinity) - (industryStrength(a) ?? -Infinity));
+  const sorted = _industryRows.filter((row) => industryStrength(row) != null)
+    .sort((a, b) => industryStrength(b) - industryStrength(a));
+  if (!sorted.length) { $("i-bars").innerHTML = '<div class="empty">暂无可靠行业评分</div>'; return; }
   const top = sorted.slice(0, 5).map((row) => ({ row, side: "top" }));
   const used = new Set(top.map((item) => item.row.code));
   const bottom = sorted.slice(-5).reverse().filter((row) => !used.has(row.code)).map((row) => ({ row, side: "bottom" }));
   const group = (title, items) => `<div class="industry-bar-group"><b>${title}</b>${items.map(({ row, side }) => {
-    const strength = Math.max(0, Math.min(1, industryStrength(row) ?? 0));
+    const strength = Math.max(0, Math.min(1, industryStrength(row)));
+    const strengthText = finiteNumberText(strength * 100, { digits: 1 });
     const selected = row.code === _industrySelectedCode;
     return `<button type="button" class="industry-bar ${side} ${selected ? "selected" : ""}" data-industry-code="${esc(row.code)}" title="点击查看 ${esc(row.name || row.code)} 历史">
-      <span class="industry-bar-name">${esc(row.name || row.code)}</span><span class="industry-bar-track"><i style="width:${(strength * 100).toFixed(1)}%"></i></span><strong>${(strength * 100).toFixed(1)}</strong>
+      <span class="industry-bar-name">${esc(row.name || row.code)}</span><span class="industry-bar-track"><i style="width:${strengthText}%"></i></span><strong>${strengthText}</strong>
     </button>`;
   }).join("")}</div>`;
   $("i-bars").innerHTML = group("强势前 5", top) + group("弱势后 5", bottom);
@@ -854,7 +889,7 @@ function renderIndustryTable() {
   }).join("");
   const body = rows.map((row) => `<tr class="industry-detail-row ${row.code === _industrySelectedCode ? "selected" : ""}" data-industry-code="${esc(row.code)}">
     <td class="cell-ticker"><b>${esc(row.name || "—")}</b><span>${esc(row.code || "")}</span></td>
-    <td>${industryStrength(row) == null ? "—" : (industryStrength(row) * 100).toFixed(1)}</td>
+    <td>${finiteNumberText(industryStrength(row) == null ? null : industryStrength(row) * 100, { digits: 1 })}</td>
     <td>${industryValueText(row.score)}</td>${INDUSTRY_FACTORS.map(({ key }) => `<td>${industryValueText(row[key])}</td>`).join("")}
   </tr>`).join("");
   $("i-result").innerHTML = `<table class="sortable-table industry-detail-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -2134,42 +2169,196 @@ const RETURN_STATUS_LABEL = {
 };
 let _backtestDetails = [];
 let _btLoaded = false;
+let _btPage = 1;
+let _btQuickRange = "all";
+
+function backtestReturnValue(row, horizon) {
+  const field = $("b-return-mode").value === "excess" ? "excess_pct" : "returns_pct";
+  return finiteNumber(row[field]?.[horizon]);
+}
 
 function returnChip(row, horizon) {
   const status = row.return_status?.[horizon] || "missing";
-  const value = row.returns_pct?.[horizon];
+  const value = backtestReturnValue(row, horizon);
   const cls = value == null ? "pending" : (value >= 0 ? "pos" : "neg");
   const exitDate = row.return_exit_dates?.[horizon];
-  return `<div class="return-chip ${cls}" title="${esc(RETURN_STATUS_LABEL[status] || status)}${exitDate ? ` · 退出 ${exitDate}` : ""}">
-    <small>${HZ_LABEL[horizon]}</small><b>${pctText(value)}</b><span>${esc(exitDate || RETURN_STATUS_LABEL[status] || status)}</span>
+  const error = row.return_errors?.[horizon];
+  const mode = $("b-return-mode").value === "excess" ? "超额" : "涨幅";
+  const title = [RETURN_STATUS_LABEL[status] || status, exitDate ? `退出 ${exitDate}` : "", error || ""]
+    .filter(Boolean).join(" · ");
+  return `<div class="return-chip ${cls}" title="${esc(title)}">
+    <small>${HZ_LABEL[horizon]}${mode}</small><b>${pctText(value)}</b><span>${esc(exitDate || RETURN_STATUS_LABEL[status] || status)}</span>
   </div>`;
 }
 
-function renderBacktestDetails() {
+function backtestDateList() {
+  return [...new Set(_backtestDetails.map((row) => String(row.date || "").slice(0, 10)).filter(Boolean))].sort().reverse();
+}
+
+function syncBacktestQuickButtons() {
+  [["b-quick-all", "all"], ["b-quick-3", "3"], ["b-quick-1", "1"]].forEach(([id, value]) => {
+    $(id).classList.toggle("active", _btQuickRange === value);
+  });
+}
+
+function setBacktestDateRange(mode) {
+  const dates = backtestDateList();
+  _btQuickRange = mode;
+  _btPage = 1;
+  if (dates.length) {
+    const count = mode === "1" ? 1 : mode === "3" ? 3 : dates.length;
+    const selected = dates.slice(0, count);
+    $("b-date-from").value = selected[selected.length - 1];
+    $("b-date-to").value = selected[0];
+  } else {
+    $("b-date-from").value = "";
+    $("b-date-to").value = "";
+  }
+  syncBacktestQuickButtons();
+  renderBacktestDetails();
+}
+
+function filteredBacktestRows() {
   const category = $("b-category").value;
-  const rows = _backtestDetails.filter((row) => !category || row.category === category);
-  $("b-detail-meta").textContent = `显示 ${rows.length} / ${_backtestDetails.length} 条`;
-  if (!rows.length) {
-    $("b-detail").innerHTML = '<div class="empty">当前类别没有回测明细</div>';
+  const from = $("b-date-from").value;
+  const to = $("b-date-to").value;
+  const maturity = $("b-maturity").value;
+  const rows = _backtestDetails.filter((row) => {
+    const date = String(row.date || "").slice(0, 10);
+    const status = row.return_status?.["30c"] || "missing";
+    return (!category || row.category === category)
+      && (!from || date >= from) && (!to || date <= to)
+      && (!maturity || status === maturity);
+  });
+  const key = $("b-sort").value;
+  const direction = $("b-order").value === "asc" ? 1 : -1;
+  const metric = (row) => {
+    if (key === "date") return String(row.date || "");
+    if (key === "score") return finiteNumber(row.score);
+    if (key === "since") return finiteNumber(row.since_selection_pct);
+    return backtestReturnValue(row, key);
+  };
+  rows.sort((left, right) => {
+    const a = metric(left); const b = metric(right);
+    if (a == null && b != null) return 1;
+    if (a != null && b == null) return -1;
+    if (a != null && b != null) {
+      const compared = typeof a === "string" ? a.localeCompare(b) : a - b;
+      if (compared) return compared * direction;
+    }
+    const dateCompared = String(right.date || "").localeCompare(String(left.date || ""));
+    return dateCompared || Number(right.id || 0) - Number(left.id || 0);
+  });
+  return rows;
+}
+
+function backtestPager(total, totalPages) {
+  if (!total) return "";
+  return `<button type="button" data-bt-page="first" ${_btPage <= 1 ? "disabled" : ""}>首页</button>
+    <button type="button" data-bt-page="prev" ${_btPage <= 1 ? "disabled" : ""}>上一页</button>
+    <span>第 <b>${_btPage}</b> / ${totalPages} 页 · 共 ${total} 条</span>
+    <button type="button" data-bt-page="next" ${_btPage >= totalPages ? "disabled" : ""}>下一页</button>
+    <button type="button" data-bt-page="last" ${_btPage >= totalPages ? "disabled" : ""}>末页</button>`;
+}
+
+function bindBacktestPagers(totalPages) {
+  document.querySelectorAll("[data-bt-page]").forEach((button) => {
+    button.onclick = () => {
+      const action = button.dataset.btPage;
+      if (action === "first") _btPage = 1;
+      if (action === "prev") _btPage = Math.max(1, _btPage - 1);
+      if (action === "next") _btPage = Math.min(totalPages, _btPage + 1);
+      if (action === "last") _btPage = totalPages;
+      renderBacktestDetails();
+    };
+  });
+}
+
+function renderBacktestSummary(rows) {
+  const since = rows.map((row) => finiteNumber(row.since_selection_pct)).filter((value) => value != null);
+  const average = since.length ? since.reduce((sum, value) => sum + value, 0) / since.length : null;
+  const winRate = since.length ? since.filter((value) => value > 0).length / since.length * 100 : null;
+  const mature = rows.filter((row) => row.return_status?.["30c"] === "success").length;
+  const matureRate = rows.length ? mature / rows.length * 100 : null;
+  const signClass = average == null ? "" : average >= 0 ? "bt-up" : "bt-down";
+  $("b-detail-summary").innerHTML = `
+    <div><small>筛选记录</small><b>${rows.length}</b></div>
+    <div><small>至今平均</small><b class="${signClass}">${pctText(average)}</b></div>
+    <div><small>至今盈利占比</small><b>${pctText(winRate)}</b></div>
+    <div><small>30日成熟占比</small><b>${pctText(matureRate)}</b></div>`;
+}
+
+function renderBacktestDetails() {
+  const rows = filteredBacktestRows();
+  const pageSize = Number($("b-page-size").value) || 20;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  _btPage = Math.min(Math.max(1, _btPage), totalPages);
+  const pageRows = rows.slice((_btPage - 1) * pageSize, _btPage * pageSize);
+  $("b-detail-meta").textContent = `筛选 ${rows.length} / ${_backtestDetails.length} 条 · 第 ${_btPage}/${totalPages} 页`;
+  renderBacktestSummary(rows);
+  const pager = backtestPager(rows.length, totalPages);
+  $("b-page-top").innerHTML = pager;
+  $("b-page-bottom").innerHTML = pager;
+  if (!pageRows.length) {
+    $("b-detail").innerHTML = '<div class="empty">当前筛选条件没有回测明细</div>';
+    bindBacktestPagers(totalPages);
     return;
   }
-  $("b-detail").innerHTML = rows.map((row) => {
+  $("b-detail").innerHTML = pageRows.map((row) => {
     const percentile = row.score_percentile == null ? "—" : `${(Number(row.score_percentile) * 100).toFixed(1)}%`;
+    const since = finiteNumber(row.since_selection_pct);
+    const sinceClass = since == null ? "" : since >= 0 ? "bt-up" : "bt-down";
+    const latestChange = finiteNumber(row.latest_chg_pct);
+    const latestClass = latestChange == null ? "" : latestChange >= 0 ? "bt-up" : "bt-down";
     return `<article class="backtest-detail-item">
       <div class="backtest-detail-main">
         <div class="backtest-detail-ticker"><b>${esc(row.name || "-")}</b><code>${esc(row.code)}</code></div>
         <div><small>选股日期</small><b>${esc(row.date || "—")}</b></div>
         <div><small>来源 / 驱动</small><b>${esc(CATEGORY_LABEL[row.category] || row.category)} · ${esc(row.driver || "未标注")}</b></div>
-        <div><small>评分分位</small><b>${percentile}</b></div>
+        <div><small>评分 / 分位</small><b>${fmtMaybe(row.score)} / ${percentile}</b></div>
+        <div class="backtest-since"><small>选股至今</small><b class="${sinceClass}">${pctText(since)}</b><span>现价 ${fmtMaybe(row.latest_price)} · 当日 <i class="${latestClass}">${pctText(latestChange)}</i></span></div>
         <span class="controlled-badge ${row.controlled_auto ? "yes" : "no"}">${row.controlled_auto ? "受控样本" : "非调参样本"}</span>
       </div>
       <div class="return-chip-row">${HZ_ORDER.map((horizon) => returnChip(row, horizon)).join("")}</div>
-      <div class="backtest-detail-foot">选股价 ${fmtMaybe(row.selected_price)} · 分桶 ${esc(row.bucket || "—")} · 计算 ${esc(row.return_calc_version || "—")}</div>
+      <div class="backtest-detail-foot">选股价 ${fmtMaybe(row.selected_price)} · 分桶 ${esc(row.bucket || "—")} · 行情 ${esc(row.latest_quote_time || "不可用")}（${esc(row.quote_source || "不可用")}） · 计算 ${esc(row.return_calc_version || "—")}</div>
     </article>`;
   }).join("");
+  bindBacktestPagers(totalPages);
 }
 
-$("b-category").onchange = renderBacktestDetails;
+function exportBacktestRows() {
+  const rows = filteredBacktestRows();
+  if (!rows.length) { toast("当前筛选没有可导出的明细", "bad"); return; }
+  const headers = ["选股日期", "股票名称", "股票代码", "类别", "驱动", "选股评分", "评分分位", "选股价", "最新价", "选股至今涨幅"];
+  HZ_ORDER.forEach((horizon) => headers.push(`${HZ_LABEL[horizon]}涨幅`, `${HZ_LABEL[horizon]}超额`, `${HZ_LABEL[horizon]}状态`));
+  const csvCell = (value) => {
+    let text = value == null ? "" : String(value);
+    if (/^[=+@]/.test(text)) text = `'${text}`;
+    return `"${text.replaceAll('"', '""')}"`;
+  };
+  const lines = [headers.map(csvCell).join(",")];
+  rows.forEach((row) => {
+    const values = [row.date, row.name, row.code, CATEGORY_LABEL[row.category] || row.category, row.driver,
+      row.score, row.score_percentile, row.selected_price, row.latest_price, row.since_selection_pct];
+    HZ_ORDER.forEach((horizon) => values.push(row.returns_pct?.[horizon], row.excess_pct?.[horizon], RETURN_STATUS_LABEL[row.return_status?.[horizon]] || row.return_status?.[horizon]));
+    lines.push(values.map(csvCell).join(","));
+  });
+  const blob = new Blob(["\ufeff", lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
+  anchor.href = url; anchor.download = `选股回测_${$("b-date-from").value || "开始"}_${$("b-date-to").value || "最新"}.csv`;
+  document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+}
+
+["b-category", "b-return-mode", "b-maturity", "b-sort", "b-order", "b-page-size"].forEach((id) => {
+  $(id).onchange = () => { _btPage = 1; renderBacktestDetails(); };
+});
+["b-date-from", "b-date-to"].forEach((id) => {
+  $(id).onchange = () => { _btQuickRange = "custom"; _btPage = 1; syncBacktestQuickButtons(); renderBacktestDetails(); };
+});
+$("b-quick-all").onclick = () => setBacktestDateRange("all");
+$("b-quick-3").onclick = () => setBacktestDateRange("3");
+$("b-quick-1").onclick = () => setBacktestDateRange("1");
+$("b-export").onclick = exportBacktestRows;
 $("b-run").onclick = () => loadBacktest(true);
 
 async function loadBacktest(force = false) {
@@ -2180,6 +2369,9 @@ async function loadBacktest(force = false) {
   button.lastChild.textContent = " 加载中…";
   const setLoading = (id) => ($(id).innerHTML = '<div class="empty">加载中…</div>');
   ["b-auto-ret", "b-auto-win", "b-driver", "b-pred-acc", "b-detail"].forEach(setLoading);
+  $("b-page-top").innerHTML = "";
+  $("b-page-bottom").innerHTML = "";
+  $("b-detail-summary").innerHTML = '<div class="empty">正在汇总筛选结果…</div>';
   $("b-hints").innerHTML = '<div class="empty">加载中…</div>';
   $("b-gate-reasons").innerHTML = "";
 
@@ -2196,7 +2388,8 @@ async function loadBacktest(force = false) {
     $("b-kpi-gate-sub").textContent = eligible ? "可依据建议人工调参" : `${(gate.reasons || []).length} 项条件未满足`;
     $("b-gate-badge").textContent = eligible ? "允许分析调参" : "禁止自动调参";
     $("b-gate-badge").className = `gate-badge ${eligible ? "open" : "locked"}`;
-    $("b-version").textContent = `计算版本 ${d.return_calc_version || "—"} · 快照 ${d.snapshot_id ?? "未保存"} · 本次重算 ${d.recomputed_samples ?? 0} 条 · 自动补价 ${d.backfilled_prices ?? 0} 条`;
+    const quoteErrors = Array.isArray(d.quote_errors) ? d.quote_errors : [];
+    $("b-version").textContent = `计算版本 ${d.return_calc_version || "—"} · 快照 ${d.snapshot_id ?? "未保存"} · 本次重算 ${d.recomputed_samples ?? 0} 条 · 自动补价 ${d.backfilled_prices ?? 0} 条 · 行情 ${d.quote_refreshed_at || "不可用"}${quoteErrors.length ? ` · ${quoteErrors.length} 项行情缺口` : ""}`;
     $("b-gate-reasons").innerHTML = (gate.reasons || []).length
       ? (gate.reasons || []).map((reason) => `<span>${esc(reason)}</span>`).join("")
       : '<span class="passed">样本量、日期覆盖与样本外表现均通过</span>';
@@ -2225,11 +2418,20 @@ async function loadBacktest(force = false) {
       ? '<ul class="hint-list">' + hints.map((hint) => `<li>${esc(hint)}</li>`).join("") + "</ul>"
       : '<div class="empty">暂无建议</div>';
 
-    _backtestDetails = (d.details || []).slice().reverse();
-    renderBacktestDetails();
+    const hadDetails = _backtestDetails.length > 0;
+    _backtestDetails = (d.details || []).slice();
+    if (!hadDetails || !$("b-date-from").value || !$("b-date-to").value) {
+      setBacktestDateRange("all");
+    } else {
+      _btPage = 1;
+      renderBacktestDetails();
+    }
   } catch (error) {
     _btLoaded = false;
     _backtestDetails = [];
+    $("b-page-top").innerHTML = "";
+    $("b-page-bottom").innerHTML = "";
+    $("b-detail-summary").innerHTML = '<div class="empty">明细加载失败</div>';
     ["b-auto-ret", "b-auto-win", "b-driver", "b-detail"].forEach((id) => ($(id).innerHTML = ""));
     $("b-hints").innerHTML = "";
     $("b-meta").textContent = "加载失败";
@@ -2640,6 +2842,268 @@ $("pc-run").onclick = async () => {
     btn.disabled = false;
   }
 };
+
+/* ---------- 服务端量化盯盘 ---------- */
+let _qwSocket = null;
+let _qwReconnectTimer = null;
+let _qwSocketGeneration = 0;
+let _qwConfigLoaded = false;
+
+const quantWatchActive = () => document.querySelector('.tab.active')?.dataset.tab === "quant-watch";
+const quantWatchShouldConnect = () => isAdmin() && quantWatchActive() && document.visibilityState === "visible";
+const splitTerms = (value) => String(value || "").replaceAll("，", ",").split(",").map((item) => item.trim()).filter(Boolean);
+const amountText = (value) => {
+  const number = finiteNumber(value);
+  if (number == null) return "—";
+  if (Math.abs(number) >= 1e8) return `${finiteNumberText(number / 1e8, { digits: 2 })}亿`;
+  if (Math.abs(number) >= 1e4) return `${finiteNumberText(number / 1e4, { digits: 1 })}万`;
+  return finiteNumberText(number, { digits: 0 });
+};
+
+function stopQuantWatchSocket() {
+  _qwSocketGeneration += 1;
+  if (_qwReconnectTimer) clearTimeout(_qwReconnectTimer);
+  _qwReconnectTimer = null;
+  const socket = _qwSocket;
+  _qwSocket = null;
+  if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "量化盯盘连接已停止");
+  const badge = $("qw-connection");
+  if (badge) { badge.textContent = "未连接"; badge.className = "qw-connection off"; }
+}
+
+function fillQuantWatchConfig(data, force = false) {
+  if (_qwConfigLoaded && !force) return;
+  const config = data.config || {};
+  $("qw-mode").value = config.universe_mode || "market";
+  $("qw-interval").value = config.interval_seconds ?? 60;
+  $("qw-window").value = config.window_minutes ?? 5;
+  $("qw-threshold").value = config.qualified_score ?? 72;
+  $("qw-industries").value = (config.industries || []).join(",");
+  $("qw-themes").value = (config.themes || []).join(",");
+  $("qw-enabled").checked = config.enabled !== false;
+  $("qw-notify").checked = Boolean(config.notify_enabled);
+  $("qw-feishu").checked = (config.notify_channels || []).includes("feishu");
+  $("qw-wecom").checked = (config.notify_channels || []).includes("wecom");
+  document.querySelectorAll('#qw-boards input[type="checkbox"]').forEach((input) => {
+    input.checked = (config.boards || ["main", "gem"]).includes(input.value);
+  });
+  const channels = data.notification_channels || {};
+  [["qw-feishu", "feishu"], ["qw-wecom", "wecom"]].forEach(([id, name]) => {
+    const input = $(id);
+    input.title = channels[name] ? "webhook 已配置" : "服务端尚未配置 webhook，保存后也不会发送";
+  });
+  _qwConfigLoaded = true;
+}
+
+function qwStockTable(title, rows, limit = 20) {
+  const items = (rows || []).slice(0, limit);
+  if (!items.length) return `<div class="qw-block"><h4>${esc(title)}</h4><div class="empty compact">本轮没有达到条件的标的</div></div>`;
+  const body = items.map((row) => {
+    const pctChange = finiteNumber(row.pct_change);
+    const speedPct = finiteNumber(row.speed_pct);
+    return `<tr class="${row.is_priority ? "priority" : ""}"><td><b>${esc(row.name || "—")}</b><code>${esc(row.code || "")}</code>${row.is_priority ? '<span class="qw-priority">优先</span>' : ""}</td><td class="score">${finiteNumberText(row.score, { digits: 2, trim: true })}</td><td class="${finiteNumberClass(pctChange)}">${finiteNumberText(pctChange, { digits: 2, suffix: "%" })}</td><td class="${finiteNumberClass(speedPct)}">${finiteNumberText(speedPct, { digits: 3, suffix: "%", fallback: "样本不足" })}</td><td>${amountText(row.window_amount)}</td><td>${finiteNumberText(row.sector_score, { digits: 2, trim: true })}</td><td>${esc(row.reason || "—")}</td></tr>`;
+  }).join("");
+  return `<div class="qw-block"><h4>${esc(title)} <small>${items.length}只</small></h4><div class="table-wrap"><table class="qw-table"><thead><tr><th>标的</th><th>评分</th><th>涨跌</th><th>窗口涨速</th><th>窗口成交额</th><th>行业分</th><th>依据</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+}
+
+function renderQuantWatchSectors(latest) {
+  const box = $("qw-sectors");
+  const top = latest?.sector_rotation?.top_by_level || {};
+  const rows = ["L1", "L2", "L3"].flatMap((level) => (top[level] || []).slice(0, 8));
+  if (!rows.length) {
+    const quality = latest?.quality?.sector_membership || {};
+    box.innerHTML = `<div class="empty">${esc(quality.reason || "本轮没有可靠行业轮动数据")}</div>`;
+    return;
+  }
+  box.innerHTML = `<table><thead><tr><th>级别</th><th>行业</th><th>轮动分</th><th>窗口涨速</th><th>窗口成交额</th><th>与指数</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${esc(row.level)}</td><td><b>${esc(row.name)}</b><code>${esc(row.code)}</code></td><td>${finiteNumberText(row.score, { digits: 1 })}</td><td class="${finiteNumberClass(row.speed_pct)}">${finiteNumberText(row.speed_pct, { digits: 3, suffix: "%" })}</td><td>${amountText(row.window_amount)}</td><td>${esc(row.index_sync || "—")}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function quantWatchWindowQualityText(quality) {
+  const windowQuality = quality.window;
+  if (windowQuality == null) return "窗口状态 未返回（不可确认）";
+  const status = typeof windowQuality === "object" ? windowQuality.status : windowQuality;
+  const reason = typeof windowQuality === "object"
+    ? windowQuality.warmup_reason || windowQuality.reason || windowQuality.note : "";
+  const statusNames = { available: "可用", warming: "预热中", unavailable: "不可用", stale: "陈旧", error: "异常" };
+  const statusText = statusNames[String(status || "").toLowerCase()] || status || "未知";
+  const reasonText = reason || (String(status).toLowerCase() === "warming" ? "服务未返回预热原因" : "");
+  return `窗口状态 ${statusText}${reasonText ? `（${reasonText}）` : ""}`;
+}
+
+function renderQuantWatch(data, forceConfig = false) {
+  fillQuantWatchConfig(data, forceConfig);
+  const state = data.state || {};
+  const latest = data.latest;
+  const summary = latest?.market_summary || {};
+  const stateNames = {
+    running: "运行中", waiting: "等待交易时段", disabled: "已停用",
+    unavailable: "服务不可用", degraded: "服务降级", error: "异常",
+  };
+  $("qw-kpi-status").textContent = stateNames[state.status] || state.status || "—";
+  $("qw-kpi-time").textContent = latest?.scanned_at?.slice(11) || state.last_scan_at?.slice(11) || "—";
+  $("qw-kpi-count").textContent = finiteNumberText(summary.scanned_count, { digits: 0 });
+  $("qw-kpi-signal").textContent = latest
+    ? `${finiteNumberText(summary.qualified_count, { digits: 0 })} / ${finiteNumberText(summary.priority_alert_count, { digits: 0 })}`
+    : "—";
+  if (latest) {
+    const quality = latest.quality || {};
+    const sector = quality.sector_membership || {};
+    const minute = quality.minute_indicators || {};
+    const universe = latest.universe || {};
+    const missingCodes = Array.isArray(universe.missing_priority_codes) ? universe.missing_priority_codes : null;
+    const priorityErrors = Array.isArray(quality.priority_errors) ? quality.priority_errors : null;
+    const completeText = universe.priority_complete === true ? "是" : universe.priority_complete === false ? "否" : "未返回";
+    const qualityParts = [
+      `行情 ${quality.quote_source || "—"}`,
+      `行情时间 ${quality.quote_as_of || "—"}`,
+      `分时样本 ${finiteNumberText(minute.sample_count, { digits: 0 })}`,
+      quantWatchWindowQualityText(quality),
+      `申万层级 ${(sector.levels || []).join("/") || "不可用"}`,
+      `优先标的覆盖完整 ${completeText}`,
+      `缺失优先代码 ${missingCodes == null ? "未返回" : (missingCodes.join("、") || "无")}`,
+      `优先标的读取错误 ${priorityErrors == null ? "未返回" : (priorityErrors.join("；") || "无")}`,
+      "大单逐笔 未接入",
+    ];
+    if (state.last_error) qualityParts.push(`最近错误 ${state.last_error}`);
+    $("qw-quality").innerHTML = qualityParts.map((item) => `<span>${esc(item)}</span>`).join(" · ");
+    $("qw-meta").textContent = `${latest.scanned_at || ""} · ${finiteNumberText(latest.window_minutes, { digits: 0 })}分钟窗口 · ${latest.manual ? "手动诊断" : "自动扫描"}`;
+    $("qw-latest").innerHTML = [
+      qwStockTable("评分达标候选", latest.qualified, 20),
+      qwStockTable("关注 / 持仓 / 近期选股异动", latest.priority_alerts, 30),
+      qwStockTable("窗口成交额前十", latest.top_window_amount, 10),
+      qwStockTable("涨速前十", latest.top_speed, 10),
+      qwStockTable("形态突破", latest.breakouts, 20),
+      qwStockTable("异常上涨 / 下跌", latest.anomalies, 20),
+      qwStockTable("当日总成交额前二十", latest.top_total_amount, 20),
+    ].join("");
+  } else {
+    $("qw-quality").textContent = state.last_error ? `最近错误：${state.last_error}` : "当前交易日暂无扫描结果";
+    $("qw-meta").textContent = "";
+    $("qw-latest").innerHTML = '<div class="empty">连续竞价开始并完成首轮扫描后显示；指标预热期间会明确标注样本不足。</div>';
+  }
+  renderQuantWatchSectors(latest);
+  const history = (data.messages || []).slice(latest ? 1 : 0);
+  $("qw-history").innerHTML = history.length ? history.map((item) => {
+    const payload = item.payload || {};
+    const s = payload.market_summary || {};
+    return `<details class="qw-history-item"><summary><b>${esc(item.scanned_at || "—")}</b><span>扫描 ${finiteNumberText(s.scanned_count, { digits: 0 })} · 达标 ${finiteNumberText(s.qualified_count, { digits: 0 })} · 优先异动 ${finiteNumberText(s.priority_alert_count, { digits: 0 })}</span></summary><div>${qwStockTable("当轮达标", payload.qualified, 12)}${qwStockTable("当轮优先异动", payload.priority_alerts, 12)}</div></details>`;
+  }).join("") : '<div class="empty">当天暂无更早消息</div>';
+}
+
+function renderQuantWatchLoadFailure(error) {
+  const reason = error?.message || "未知错误";
+  stopQuantWatchSocket();
+  $("qw-kpi-status").textContent = "加载失败";
+  $("qw-kpi-time").textContent = "陈旧";
+  $("qw-kpi-count").textContent = "—";
+  $("qw-kpi-signal").textContent = "—";
+  $("qw-quality").textContent = `加载失败，原质量状态已作废：${reason}`;
+  $("qw-meta").textContent = "数据陈旧 · 请刷新重试";
+  $("qw-latest").innerHTML = `<div class="empty">最新扫描加载失败，旧结果不再视为当前：${esc(reason)}</div>`;
+  $("qw-sectors").innerHTML = `<div class="empty">行业轮动加载失败，旧结果已标记为陈旧：${esc(reason)}</div>`;
+  $("qw-history").innerHTML = `<div class="empty">历史消息加载失败，旧记录已标记为陈旧：${esc(reason)}</div>`;
+}
+
+async function connectQuantWatchSocket() {
+  if (!quantWatchShouldConnect()) return;
+  stopQuantWatchSocket();
+  const generation = _qwSocketGeneration;
+  const badge = $("qw-connection");
+  badge.textContent = "连接中"; badge.className = "qw-connection connecting";
+  try {
+    const ticketData = await adminApi("/quant-watch/ticket", "POST", {});
+    if (generation !== _qwSocketGeneration || !quantWatchShouldConnect()) return;
+    const url = new URL(cfg.base.replace(/\/$/, ""));
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/ws/quant-watch`;
+    url.search = `ticket=${encodeURIComponent(ticketData.ticket)}`;
+    const socket = new WebSocket(url.toString());
+    _qwSocket = socket;
+    socket.onopen = () => {
+      if (socket !== _qwSocket) return;
+      if (!quantWatchShouldConnect()) { stopQuantWatchSocket(); return; }
+      badge.textContent = "实时连接"; badge.className = "qw-connection on";
+    };
+    socket.onmessage = (event) => {
+      if (socket !== _qwSocket) return;
+      try { const message = JSON.parse(event.data); if (message.data) renderQuantWatch(message.data); } catch (error) { /* 忽略单条格式异常 */ }
+    };
+    socket.onerror = () => { if (socket === _qwSocket) { badge.textContent = "连接异常"; badge.className = "qw-connection bad"; } };
+    socket.onclose = () => {
+      if (socket !== _qwSocket) return;
+      _qwSocket = null;
+      badge.textContent = "已断开"; badge.className = "qw-connection off";
+      if (quantWatchShouldConnect()) _qwReconnectTimer = setTimeout(connectQuantWatchSocket, 3000);
+    };
+  } catch (error) {
+    if (generation !== _qwSocketGeneration || !quantWatchShouldConnect()) return;
+    badge.textContent = "连接失败"; badge.className = "qw-connection bad";
+    _qwReconnectTimer = setTimeout(connectQuantWatchSocket, 5000);
+  }
+}
+
+async function loadQuantWatch(force = false) {
+  if (!isAdmin()) return;
+  try {
+    const data = await call("quant_watch_status", { limit: 100 });
+    renderQuantWatch(data, force || !_qwConfigLoaded);
+    if (quantWatchShouldConnect()) {
+      if (!_qwSocket || _qwSocket.readyState > WebSocket.OPEN) connectQuantWatchSocket();
+    } else {
+      stopQuantWatchSocket();
+    }
+  } catch (error) {
+    renderQuantWatchLoadFailure(error);
+  }
+}
+
+async function saveQuantWatchConfig() {
+  const boards = [...document.querySelectorAll('#qw-boards input[type="checkbox"]:checked')].map((input) => input.value);
+  const channels = [["qw-feishu", "feishu"], ["qw-wecom", "wecom"]].filter(([id]) => $(id).checked).map(([, name]) => name);
+  const config = {
+    enabled: $("qw-enabled").checked,
+    universe_mode: $("qw-mode").value,
+    interval_seconds: Number($("qw-interval").value),
+    window_minutes: Number($("qw-window").value),
+    qualified_score: Number($("qw-threshold").value),
+    boards,
+    industries: splitTerms($("qw-industries").value),
+    themes: splitTerms($("qw-themes").value),
+    notify_enabled: $("qw-notify").checked,
+    notify_channels: channels,
+  };
+  const status = $("qw-setting-status");
+  status.textContent = "保存中…"; status.className = "status";
+  try {
+    const data = await call("quant_watch_set_config", { config, reason: "前端量化盯盘设置" });
+    _qwConfigLoaded = false;
+    fillQuantWatchConfig(data, true);
+    status.textContent = data.changed ? "设置已保存并生效" : "设置无变化";
+    status.className = "status ok";
+    await loadQuantWatch(true);
+  } catch (error) {
+    status.textContent = `保存失败：${error.message}`; status.className = "status bad";
+  }
+}
+
+$("qw-refresh").onclick = () => loadQuantWatch(true);
+$("qw-save").onclick = saveQuantWatchConfig;
+$("qw-scan").onclick = async () => {
+  const button = $("qw-scan");
+  button.disabled = true; button.textContent = "扫描中…";
+  try { await call("quant_watch_scan_once", {}); await loadQuantWatch(true); toast("手动扫描完成", "ok"); }
+  catch (error) { toast("扫描失败：" + error.message, "bad"); }
+  finally { button.disabled = false; button.textContent = "立即扫描"; }
+};
+window.addEventListener("pagehide", stopQuantWatchSocket);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") {
+    stopQuantWatchSocket();
+    return;
+  }
+  if (quantWatchShouldConnect()) loadQuantWatch(true);
+});
+window.addEventListener("beforeunload", stopQuantWatchSocket);
 
 /* 首屏：没有本地 Key 时必须先登录；已有 Key 仍需重新向服务端验证 */
 applyRoleUI();

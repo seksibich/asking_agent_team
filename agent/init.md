@@ -24,11 +24,19 @@
 
 ## 文档版本与同步（AGENT_DOC_VERSION，与 git 版本对齐）★
 
-- **AGENT_DOC_VERSION：`v2.2.0`**（服务端 16:00 日终收口、Agent 调度连续编号与预计算职责下沉，2026-07-17）
+- **AGENT_DOC_VERSION：`v2.3.0`**（服务端量化盯盘与 Agent 手动盯盘职责分层，2026-07-17）
 - 变更日志：`profile/CHANGELOG-AGENT.md`（每条版本记录含摘要 + **对应 git commit** + 变更文件清单 + Agent 动作）。
 - 仓库（公开）：`https://github.com/seksibich/asking_agent_team`
 
-### v2.2.0 当前版本执行约束（覆盖旧编号与旧自动职责）
+### v2.3.0 当前版本执行约束（覆盖旧版对“自动盯盘”的笼统表述）
+
+1. **允许服务端确定性量化扫描**：数据服务可在交易日连续竞价时按配置频率自动扫描，并通过 `quant_watch_status` 与前端 WebSocket 提供当日聚合结论；这是无 LLM、无 Agent、自带质量门禁的数据基础设施。
+2. **Agent 自动盯盘仍禁止**：Agent 不创建调度器、Hook、cron、固定间隔循环或后台任务，不自动调用 `watch_intraday` / `quant_watch_scan_once`，也不因服务端新消息自行生成报告、记忆或交易指令。
+3. **服务端通知必须显式启用**：飞书/企业微信等渠道默认关闭，只有管理员在盯盘设置中明确启用且服务端配置 webhook 后才发送；Agent 不代替用户开启、修改或扩散通知。
+4. **盘中与日终严格隔离**：量化盯盘结果是当日临时聚合，不写 `daily_factors`、`daily_sector_scores`、`daily_sentiment`、predictions 或 selections，不得冒充完整日因子与正式选股。
+5. **能力缺口必须如实披露**：没有逐笔委托/成交源时，大单指标标记不可用；申万二三级映射、分钟样本或行情覆盖不达门禁时不参与评分，不以窗口成交额或推断补齐。
+
+### v2.2.0 日终与任务编号约束
 
 1. **仅注册现行任务**：只允许注册 `schedule.md` 中的 T1、T2、T3、W1、M1、P1；其中 T2 是 17:30 当日总结，T3 是 22:00 综合复盘。任何现行规范、模板、角色与 Skill 均使用这一编号。
 2. **初始化必须清理旧任务**：删除旧 T6、旧 T7、旧 D1，以及旧 T2/T3/T4/T5 和任何自动竞价、自动盘中盯盘、午间总结、Agent 预计算任务；不得迁移为其他自动任务。
@@ -130,7 +138,7 @@
 读取 `schedule.md`，先删除旧 T6/T7/D1、历史 T2/T3/T4/T5，以及所有自动竞价、盘中扫描、午间总结、Agent 预计算任务，再且仅注册 T1/T2/T3/W1/M1/P1。禁止创建调用 `bidding_analysis`、`watch_intraday`、`precompute_daily_factors` 的调度器、Hook、cron 或 Agent 循环；服务端交易日 16:00 日终收口不由 Agent 注册。
 
 ### 第 9 步：初始化回执
-输出确认：文档版本与 `git_revision`、人格与团队、12 个 Skills、分析重心、服务连通与 `data_version`、`MEMORY.md` / `USER.md` / 服务状态 / 持仓镜像 / 短期目录状态、已删除的过期事项及附件；明确报告已删除旧 T6/T7/D1、历史 T2/T3/T4/T5 及旧自动盯盘/预计算任务，仅保留 T1/T2/T3/W1/M1/P1，并确认日终只读 `health.daily_finalize` / `precompute_status`。
+输出确认：文档版本与 `git_revision`、人格与团队、12 个 Skills、分析重心、服务连通与 `data_version`、`MEMORY.md` / `USER.md` / 服务状态 / 持仓镜像 / 短期目录状态、已删除的过期事项及附件；明确报告已删除旧 T6/T7/D1、历史 T2/T3/T4/T5 及旧 Agent 自动盯盘/预计算任务，仅保留 T1/T2/T3/W1/M1/P1，并确认服务端 `quant_watch` 与 Agent 手动盯盘职责隔离、日终只读 `health.daily_finalize` / `precompute_status`。
 
 ## 运行期常驻规则
 
@@ -141,7 +149,7 @@
 5. 普通临时脚本、文档和转换产物只写工作文件根 `tmp/tmp_YYYYMMDD-HHmmss_文件名`，不得进入记忆；Coze 严格区分左侧工作文件与右侧记忆。
 6. daily、predictions、学习日志、报告和服务端 selections 属于业务快照/审计，只按任务读取，不复制到主 MEMORY 或 USER。
 7. 复盘/回测，以及用户明确发起的竞价或盯盘请求开工前按需读取当日 daily；持仓/关注只作为当前请求上下文，不得据此自动启动监控。
-8. 正式选股、回测和调参继续执行当前 Skills 与服务端证据门禁；自动竞价、自动盯盘和午间总结始终禁止，手动能力仅按当前用户明确请求单轮执行。
+8. 正式选股、回测和调参继续执行当前 Skills 与服务端证据门禁；Agent 自动竞价、Agent 自动盯盘和午间总结始终禁止。服务端确定性 `quant_watch` 可独立运行，但手动解释能力仍仅按当前用户明确请求单轮执行。
 9. 不给确定性买卖指令，只做分析与风险提示；PE 仅作风险背景。
 
 ## v1.2.0 补充执行约束

@@ -5,11 +5,11 @@ user-invocable: true
 disable-model-invocation: false
 ---
 
-# 盘中盯盘（仅用户显式触发）
+# 盘中盯盘（Agent 仅用户显式触发）
 
-> 本 Skill 不属于任何定时任务。只有用户当前明确提出“帮我盯一下”“看下上午盘面”等请求时，主 Agent 才执行一轮；不得创建调度器、Hook、cron、固定间隔循环、后台任务或后续主动通知。
+> 本 Skill 不属于任何 Agent 定时任务。只有用户当前明确提出“帮我盯一下”“看下上午盘面”等请求时，主 Agent 才执行一轮；不得创建 Agent 调度器、Hook、cron、固定间隔循环、后台任务或后续主动通知。服务端获准独立运行无 LLM 的确定性 `quant_watch` 扫描并按管理员显式配置通知，但这不构成本 Skill 的自动调用授权。
 >
-> 产出进入 `投研/yyyyMMdd-手动盯盘/`，不覆盖自动日报，不改 predictions、daily、短期事项或 `category=auto`。没有当前用户请求时，不得调用 `watch_intraday`。
+> Agent 可在用户当前明确请求时读取 `quant_watch_status` 作为当日临时证据；不得自动调用 `quant_watch_scan_once`，不得把服务端盘中评分冒充正式选股或完整日因子。产出进入 `投研/yyyyMMdd-手动盯盘/`，不覆盖自动日报，不改 predictions、daily、短期事项或 `category=auto`。没有当前用户请求时，不得调用 `watch_intraday`。
 
 ## 前置步骤
 

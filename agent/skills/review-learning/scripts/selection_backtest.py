@@ -717,7 +717,7 @@ def _tuning_hints(by_driver: dict[str, dict[str, list[float]]]) -> list[str]:
           "只有筛选来源、因子契约、样本量和时序样本外表现均合格时才开放调参。",
           params=[{"name": "save_snapshot", "type": "bool", "required": False, "default": True,
                    "desc": "默认保存本次聚合、样本哈希和优化门禁"}],
-          returns="收益统计、optimization_gate、snapshot_id、tuning_hints 与明细")
+          returns="收益统计、optimization_gate、snapshot_id、tuning_hints、逐周期收益/超额与最新行情明细")
 def selection_backtest(p: dict) -> dict:
     pro = common.get_pro()
     sels = db.fetch_selections()
@@ -774,18 +774,23 @@ def selection_backtest(p: dict) -> dict:
                     sid, spec["storage"], RETURN_CALC_VERSION, **item)
 
         returns: dict[str, float] = {}
+        excess_returns: dict[str, float] = {}
         return_status: dict[str, str] = {}
         return_dates: dict[str, Optional[str]] = {}
+        return_errors: dict[str, Optional[str]] = {}
         for spec in HORIZON_SPECS:
             key = spec["key"]
             item = cached.get(spec["storage"]) or {}
             return_status[key] = item.get("status", "missing")
             return_dates[key] = item.get("exit_trade_date")
+            return_errors[key] = item.get("error")
             if item.get("status") != "success" or item.get("ret_pct") is None:
                 continue
             ret = float(item["ret_pct"])
             excess = float(item["excess_pct"]) if item.get("excess_pct") is not None else None
             returns[key] = ret
+            if excess is not None:
+                excess_returns[key] = excess
             cat_returns[category][key].append(ret)
             if excess is not None:
                 cat_excess[category][key].append(excess)
@@ -799,10 +804,28 @@ def selection_backtest(p: dict) -> dict:
         details.append({
             "id": sid, "date": str(selection["sel_date"]), "code": selection["code"],
             "name": selection.get("name", ""), "category": category, "driver": driver,
+            "score": _finite_float(selection.get("score")),
             "selected_price": _valid_price(extra.get("selected_price")),
             "score_percentile": percentile, "bucket": bucket, "controlled_auto": controlled,
-            "returns_pct": returns, "return_status": return_status,
+            "returns_pct": returns, "excess_pct": excess_returns,
+            "return_status": return_status, "return_errors": return_errors,
             "return_exit_dates": return_dates, "return_calc_version": RETURN_CALC_VERSION,
+        })
+
+    market = _market_snapshot([str(row.get("code") or "") for row in details])
+    quote_map = market.get("quotes") or {}
+    for row in details:
+        quote = quote_map.get(str(row.get("code") or "").upper(), {})
+        latest_price = _valid_price(quote.get("latest_price"))
+        selected_price = _valid_price(row.get("selected_price"))
+        row.update({
+            "latest_price": latest_price,
+            "latest_chg_pct": _finite_float(quote.get("latest_chg_pct")),
+            "latest_quote_time": quote.get("latest_quote_time"),
+            "latest_trade_date": quote.get("latest_trade_date"),
+            "quote_source": quote.get("quote_source"),
+            "since_selection_pct": round((latest_price / selected_price - 1) * 100, 4)
+            if latest_price is not None and selected_price is not None else None,
         })
 
     def summarize(values_by_horizon: dict[str, list[float]]) -> dict[str, Any]:
@@ -867,7 +890,11 @@ def selection_backtest(p: dict) -> dict:
         "auto_by_driver_excess": {key: summarize(value) for key, value in auto_by_driver.items()},
         "auto_by_bucket_return": {key: summarize(value) for key, value in auto_by_bucket.items()},
         "optimization_gate": gate, "sample_hash": sample_hash,
-        "tuning_hints": tuning_hints, "details": details[:500],
+        "tuning_hints": tuning_hints, "details": details,
+        "detail_total": len(details),
+        "quote_refreshed_at": market.get("refreshed_at"),
+        "quote_trade_date": market.get("quote_date"),
+        "quote_errors": market.get("errors") or [],
         "note": "1/2/3日按交易日，7/30日按自然日目标后的首个交易日；仅受控auto样本可进入优化门禁。",
     }
     if p.get("save_snapshot", True):

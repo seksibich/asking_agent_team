@@ -16,14 +16,15 @@ import hashlib
 import json as _json
 import math
 import os
+import secrets
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Any, Iterator, Optional
 
-from sqlalchemy import (JSON, Column, Date, DateTime, Integer, MetaData, Numeric,
-                        SmallInteger, String, Table, Text, UniqueConstraint,
-                        create_engine, func, inspect, select, text)
+from sqlalchemy import (JSON, BigInteger, CheckConstraint, Column, Date, DateTime,
+                        Integer, MetaData, Numeric, SmallInteger, String, Table, Text,
+                        UniqueConstraint, create_engine, func, inspect, select, text)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -287,7 +288,66 @@ precompute_jobs = Table(
     Column("finished_at", DateTime),
 )
 
+# 量化盯盘跨进程租约与运行状态：固定 task_key=quant_watch。
+quant_watch_state = Table(
+    "quant_watch_state", metadata,
+    Column("task_key", String(32), primary_key=True),
+    Column("owner_id", String(64)),
+    Column("lease_until", DateTime),
+    Column("fence_token", BigInteger, nullable=False, default=0),
+    Column("next_scan_at", DateTime),
+    Column("status", String(16), nullable=False, default="waiting"),
+    Column("trade_date", String(8), index=True),
+    Column("phase", String(32)),
+    Column("last_scan_at", DateTime),
+    Column("last_error", Text),
+    Column("last_message_id", String(64)),
+    Column("heartbeat_at", DateTime, nullable=False, default=datetime.now),
+)
+
+# 只保存每轮聚合结论，不保存全市场原始分钟快照。
+quant_watch_messages = Table(
+    "quant_watch_messages", metadata,
+    Column("message_id", String(64), primary_key=True),
+    Column("trade_date", String(8), nullable=False, index=True),
+    Column("scanned_at", DateTime, nullable=False, index=True),
+    Column("phase", String(32), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("payload", JSON, nullable=False),
+    Column("created_at", DateTime, nullable=False, default=datetime.now),
+)
+
+# WebSocket 票据只持久化摘要，原始票据仅返回给签发方。
+quant_watch_tickets = Table(
+    "quant_watch_tickets", metadata,
+    Column("ticket_hash", String(64), primary_key=True),
+    Column("role", String(16), nullable=False),
+    Column("purpose", String(32), nullable=False),
+    Column("expires_at", DateTime, nullable=False, index=True),
+    Column("consumed_at", DateTime),
+    Column("created_at", DateTime, nullable=False, default=datetime.now),
+)
+
+# 通知事件按业务事件键全局幂等，避免多实例重复发送。
+quant_watch_notification_events = Table(
+    "quant_watch_notification_events", metadata,
+    Column("event_key", String(255), primary_key=True),
+    Column("trade_date", String(8), nullable=False, index=True),
+    Column("status", String(16), nullable=False),
+    Column("owner_id", String(64), nullable=False),
+    Column("fence_token", BigInteger, nullable=False),
+    Column("retry_count", Integer, nullable=False, default=0),
+    Column("result", JSON),
+    Column("claimed_at", DateTime, nullable=False, default=datetime.now),
+    Column("finished_at", DateTime),
+    CheckConstraint(
+        "status IN ('claimed','success','partial','failed')",
+        name="chk_qwne_status"),
+)
+
 _engine: Optional[Engine] = None
+_quant_watch_claim_context: ContextVar[Optional[tuple[str, int]]] = ContextVar(
+    "quant_watch_claim_context", default=None)
 
 
 def db_url() -> str:
@@ -395,6 +455,13 @@ def init_db() -> None:
         "target_trade_date": ("DATE NULL", "DATE NULL"),
         "predicted_at": ("DATETIME NULL", "DATETIME NULL"),
         "calc_version": ("VARCHAR(32) NULL", "VARCHAR(32) NULL"),
+    })
+    _ensure_columns(engine, "quant_watch_state", {
+        "fence_token": ("BIGINT NOT NULL DEFAULT 0", "BIGINT NOT NULL DEFAULT 0"),
+        "next_scan_at": ("DATETIME NULL", "DATETIME NULL"),
+    })
+    _ensure_columns(engine, "quant_watch_notification_events", {
+        "retry_count": ("INTEGER NOT NULL DEFAULT 0", "INT NOT NULL DEFAULT 0"),
     })
 
     # 旧版 MySQL selections.category 为 ENUM，补入 manual 以隔离用户触发正式选股。
@@ -1707,3 +1774,396 @@ def fetch_daily_sentiment(dates: list[str], factor_version: Optional[str] = None
     with eng.connect() as conn:
         rows = conn.execute(stmt).mappings().all()
     return {row["trade_date"]: row["indicators"] for row in rows}
+
+
+# ---------- 量化盯盘 ----------
+def _quant_watch_claim_identity(owner_id: Optional[str],
+                                fence_token: Optional[int]) -> tuple[str, int]:
+    """解析显式 fencing 身份；仅为旧扫描调用保留当前执行上下文兼容。"""
+    if owner_id is not None and fence_token is not None:
+        return str(owner_id), int(fence_token)
+    current = _quant_watch_claim_context.get()
+    if current is None:
+        return "", -1
+    return current
+
+
+def current_quant_watch_claim() -> Optional[tuple[str, int]]:
+    """返回当前执行上下文的租约身份，仅供服务内部通知桥接使用。"""
+    return _quant_watch_claim_context.get()
+
+
+def claim_quant_watch_scan(owner_id: str, lease_seconds: int,
+                           interval_seconds: int, manual: bool = False) -> dict[str, Any]:
+    """原子认领扫描并返回 fencing token；自动和手动扫描均受 next_scan_at 控频。"""
+    owner = str(owner_id or "").strip()
+    if not owner:
+        return {"claimed": False, "reason": "invalid_owner", "message": "扫描实例标识不能为空"}
+    try:
+        lease = max(1, int(lease_seconds))
+        interval = max(1, int(interval_seconds))
+    except (TypeError, ValueError):
+        return {"claimed": False, "reason": "invalid_interval", "message": "租约和扫描间隔必须为整数"}
+    eng = get_engine()
+    now = datetime.now()
+    lease_until = now + timedelta(seconds=lease)
+    next_scan_at = now + timedelta(seconds=interval)
+    lease_available = (
+        quant_watch_state.c.owner_id.is_(None)
+        | quant_watch_state.c.lease_until.is_(None)
+        | (quant_watch_state.c.lease_until <= now)
+    )
+    conditions = [
+        quant_watch_state.c.task_key == "quant_watch",
+        lease_available,
+        quant_watch_state.c.next_scan_at.is_(None)
+        | (quant_watch_state.c.next_scan_at <= now),
+    ]
+    with eng.begin() as conn:
+        updated = conn.execute(
+            quant_watch_state.update().where(*conditions).values(
+                owner_id=owner, lease_until=lease_until,
+                fence_token=quant_watch_state.c.fence_token + 1,
+                next_scan_at=next_scan_at, status="running", heartbeat_at=now))
+        if updated.rowcount:
+            row = conn.execute(select(
+                quant_watch_state.c.fence_token,
+                quant_watch_state.c.lease_until,
+                quant_watch_state.c.next_scan_at,
+            ).where(quant_watch_state.c.task_key == "quant_watch")).mappings().one()
+            token = int(row["fence_token"])
+            result = {
+                "claimed": True, "reason": "claimed", "fence_token": token,
+                "lease_until": row["lease_until"], "next_scan_at": row["next_scan_at"],
+                "manual": bool(manual),
+            }
+        else:
+            row = conn.execute(select(quant_watch_state).where(
+                quant_watch_state.c.task_key == "quant_watch")).mappings().first()
+            result = None
+    if result is not None:
+        _quant_watch_claim_context.set((owner, token))
+        return result
+    if row is None:
+        try:
+            with eng.begin() as conn:
+                conn.execute(quant_watch_state.insert().values(
+                    task_key="quant_watch", owner_id=owner, lease_until=lease_until,
+                    fence_token=1, next_scan_at=next_scan_at, status="running",
+                    heartbeat_at=now))
+            _quant_watch_claim_context.set((owner, 1))
+            return {
+                "claimed": True, "reason": "claimed", "fence_token": 1,
+                "lease_until": lease_until, "next_scan_at": next_scan_at,
+                "manual": bool(manual),
+            }
+        except IntegrityError:
+            with eng.connect() as conn:
+                row = conn.execute(select(quant_watch_state).where(
+                    quant_watch_state.c.task_key == "quant_watch")).mappings().first()
+    if row and row.get("owner_id") is not None and row.get("lease_until") and row["lease_until"] > now:
+        message = ("当前实例已有扫描正在执行，租约尚未到期"
+                   if row.get("owner_id") == owner else "其他实例正在扫描，租约尚未到期")
+        return {"claimed": False, "reason": "lease_active", "message": message}
+    if row and row.get("next_scan_at") and row["next_scan_at"] > now:
+        return {
+            "claimed": False, "reason": "not_due", "message": "尚未到达下一次允许扫描时间",
+            "next_scan_at": row["next_scan_at"],
+        }
+    return {"claimed": False, "reason": "claim_conflict", "message": "扫描认领发生并发冲突，请稍后重试"}
+
+
+def claim_quant_watch_lease(owner_id: str, lease_seconds: int) -> bool:
+    """兼容旧扫描线程；内部统一走原子认领并保存本次 fencing 上下文。"""
+    result = claim_quant_watch_scan(
+        owner_id, lease_seconds, max(1, int(lease_seconds) // 4), manual=False)
+    return bool(result.get("claimed"))
+
+
+def renew_quant_watch_lease(owner_id: str, fence_token: int,
+                            lease_seconds: int) -> bool:
+    """仅当前未过期的 owner_id 与 fence_token 可续租。"""
+    now = datetime.now()
+    lease_until = now + timedelta(seconds=max(1, int(lease_seconds)))
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(quant_watch_state.update().where(
+            quant_watch_state.c.task_key == "quant_watch",
+            quant_watch_state.c.owner_id == str(owner_id),
+            quant_watch_state.c.fence_token == int(fence_token),
+            quant_watch_state.c.lease_until > now,
+        ).values(lease_until=lease_until, heartbeat_at=now))
+    return bool(result.rowcount)
+
+
+def quant_watch_scan_owned(owner_id: str, fence_token: int) -> bool:
+    """校验扫描所有权、fencing token 与租约有效期。"""
+    now = datetime.now()
+    eng = get_engine()
+    with eng.connect() as conn:
+        row = conn.execute(select(quant_watch_state.c.task_key).where(
+            quant_watch_state.c.task_key == "quant_watch",
+            quant_watch_state.c.owner_id == str(owner_id),
+            quant_watch_state.c.fence_token == int(fence_token),
+            quant_watch_state.c.lease_until > now,
+        )).first()
+    return row is not None
+
+
+def update_quant_watch_state(owner_id: str, fence_token: Optional[int] = None,
+                             **changes: Any) -> bool:
+    """仅当前未过期租约持有者可更新状态，旧调用从认领上下文取得 token。"""
+    owner, token = _quant_watch_claim_identity(owner_id, fence_token)
+    allowed = {
+        "status", "trade_date", "phase", "last_scan_at", "last_error",
+        "last_message_id", "lease_until",
+    }
+    values = {key: value for key, value in changes.items() if key in allowed}
+    values["heartbeat_at"] = datetime.now()
+    now = datetime.now()
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(quant_watch_state.update().where(
+            quant_watch_state.c.task_key == "quant_watch",
+            quant_watch_state.c.owner_id == owner,
+            quant_watch_state.c.fence_token == token,
+            quant_watch_state.c.lease_until > now,
+        ).values(**values))
+    return bool(result.rowcount)
+
+
+def release_quant_watch_lease(owner_id: str, fence_token: Optional[int] = None) -> bool:
+    """只释放匹配所有者的租约，不改写最近运行状态或错误。"""
+    owner = str(owner_id)
+    conditions = [quant_watch_state.c.task_key == "quant_watch",
+                  quant_watch_state.c.owner_id == owner]
+    if fence_token is not None:
+        conditions.append(quant_watch_state.c.fence_token == int(fence_token))
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(quant_watch_state.update().where(*conditions).values(
+            owner_id=None, lease_until=None, heartbeat_at=datetime.now()))
+    current = _quant_watch_claim_context.get()
+    if result.rowcount and current and current[0] == owner:
+        _quant_watch_claim_context.set(None)
+    return bool(result.rowcount)
+
+
+def get_quant_watch_state() -> Optional[dict[str, Any]]:
+    """读取可公开运行状态；不返回所有者与 fencing 凭据。"""
+    eng = get_engine()
+    with eng.connect() as conn:
+        row = conn.execute(select(quant_watch_state).where(
+            quant_watch_state.c.task_key == "quant_watch")).mappings().first()
+    if not row:
+        return None
+    result = dict(row)
+    for field in ("lease_until", "next_scan_at", "last_scan_at", "heartbeat_at"):
+        value = result.get(field)
+        result[field] = value.strftime("%Y-%m-%d %H:%M:%S") if value else None
+    result.pop("owner_id", None)
+    result.pop("fence_token", None)
+    return result
+
+
+def save_quant_watch_message(record: dict[str, Any], owner_id: Optional[str] = None,
+                             fence_token: Optional[int] = None) -> bool:
+    """同一事务内验证有效租约后保存消息；失去所有权时返回 False。"""
+    owner, token = _quant_watch_claim_identity(owner_id, fence_token)
+    values = {key: record.get(key) for key in
+              ("message_id", "trade_date", "scanned_at", "phase", "status", "payload")}
+    # 拒绝 NaN、无穷值和不可序列化对象，绝不静默改写业务载荷。
+    _json.dumps(values["payload"], ensure_ascii=False, allow_nan=False)
+    values["created_at"] = datetime.now()
+    now = datetime.now()
+    eng = get_engine()
+    with eng.begin() as conn:
+        owned = conn.execute(select(quant_watch_state.c.task_key).where(
+            quant_watch_state.c.task_key == "quant_watch",
+            quant_watch_state.c.owner_id == owner,
+            quant_watch_state.c.fence_token == token,
+            quant_watch_state.c.lease_until > now,
+        ).with_for_update()).first()
+        if not owned:
+            return False
+        exists = conn.execute(select(quant_watch_messages.c.message_id).where(
+            quant_watch_messages.c.message_id == values["message_id"])).first()
+        if exists:
+            return True
+        conn.execute(quant_watch_messages.insert().values(**values))
+    return True
+
+
+def cleanup_quant_watch_tickets() -> int:
+    """删除已过期或已消费票据，避免凭据表持续增长。"""
+    eng = get_engine()
+    now = datetime.now()
+    with eng.begin() as conn:
+        result = conn.execute(quant_watch_tickets.delete().where(
+            (quant_watch_tickets.c.expires_at <= now)
+            | quant_watch_tickets.c.consumed_at.is_not(None)))
+    return int(result.rowcount or 0)
+
+
+def issue_quant_watch_ticket(role: str, purpose: str,
+                             ttl_seconds: int = 60) -> str:
+    """签发原始随机票据，数据库仅保存其 SHA-256 摘要。"""
+    cleanup_quant_watch_tickets()
+    ticket = secrets.token_urlsafe(32)
+    now = datetime.now()
+    digest = hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+    eng = get_engine()
+    with eng.begin() as conn:
+        conn.execute(quant_watch_tickets.insert().values(
+            ticket_hash=digest, role=str(role), purpose=str(purpose),
+            expires_at=now + timedelta(seconds=max(1, int(ttl_seconds))),
+            consumed_at=None, created_at=now))
+    return ticket
+
+
+def consume_quant_watch_ticket(ticket: str, role: str = "admin",
+                               purpose: str = "quant_watch_ws") -> Optional[str]:
+    """原子消费一次性票据，并同时校验角色、用途和有效期。"""
+    raw = str(ticket or "")
+    if not raw:
+        return None
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    now = datetime.now()
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(quant_watch_tickets.update().where(
+            quant_watch_tickets.c.ticket_hash == digest,
+            quant_watch_tickets.c.role == str(role),
+            quant_watch_tickets.c.purpose == str(purpose),
+            quant_watch_tickets.c.expires_at > now,
+            quant_watch_tickets.c.consumed_at.is_(None),
+        ).values(consumed_at=now))
+    return str(role) if result.rowcount else None
+
+
+def claim_quant_watch_notification_event(event_key: str, trade_date: str,
+                                         owner_id: str, fence_token: int,
+                                         retry_after_seconds: int = 60,
+                                         max_attempts: int = 3) -> dict[str, Any]:
+    """在有效扫描租约下认领按渠道事件；失败或超时事件可有限重试。"""
+    key = str(event_key or "").strip()
+    if not key:
+        return {"claimed": False, "reason": "invalid_event_key", "message": "通知事件键不能为空"}
+    now = datetime.now()
+    retry_before = now - timedelta(seconds=max(1, int(retry_after_seconds)))
+    attempts = max(1, int(max_attempts))
+    eng = get_engine()
+    try:
+        with eng.begin() as conn:
+            owned = conn.execute(select(quant_watch_state.c.task_key).where(
+                quant_watch_state.c.task_key == "quant_watch",
+                quant_watch_state.c.owner_id == str(owner_id),
+                quant_watch_state.c.fence_token == int(fence_token),
+                quant_watch_state.c.lease_until > now,
+            ).with_for_update()).first()
+            if not owned:
+                return {"claimed": False, "reason": "lease_lost", "message": "扫描租约已失效"}
+            conn.execute(quant_watch_notification_events.insert().values(
+                event_key=key, trade_date=str(trade_date), status="claimed",
+                owner_id=str(owner_id), fence_token=int(fence_token),
+                retry_count=1, result=None, claimed_at=now, finished_at=None))
+        return {"claimed": True, "reason": "claimed", "attempt": 1}
+    except IntegrityError:
+        pass
+    with eng.begin() as conn:
+        owned = conn.execute(select(quant_watch_state.c.task_key).where(
+            quant_watch_state.c.task_key == "quant_watch",
+            quant_watch_state.c.owner_id == str(owner_id),
+            quant_watch_state.c.fence_token == int(fence_token),
+            quant_watch_state.c.lease_until > now,
+        ).with_for_update()).first()
+        if not owned:
+            return {"claimed": False, "reason": "lease_lost", "message": "扫描租约已失效"}
+        retryable = (
+            ((quant_watch_notification_events.c.status == "failed")
+             & (quant_watch_notification_events.c.claimed_at <= retry_before))
+            | ((quant_watch_notification_events.c.status == "claimed")
+               & (quant_watch_notification_events.c.claimed_at <= retry_before))
+        )
+        updated = conn.execute(quant_watch_notification_events.update().where(
+            quant_watch_notification_events.c.event_key == key,
+            quant_watch_notification_events.c.retry_count < attempts,
+            retryable,
+        ).values(
+            status="claimed", owner_id=str(owner_id), fence_token=int(fence_token),
+            retry_count=quant_watch_notification_events.c.retry_count + 1,
+            result=None, claimed_at=now, finished_at=None,
+        ))
+        if updated.rowcount:
+            row = conn.execute(select(quant_watch_notification_events.c.retry_count).where(
+                quant_watch_notification_events.c.event_key == key)).first()
+            return {"claimed": True, "reason": "retry", "attempt": int(row[0])}
+    return {"claimed": False, "reason": "already_processed", "message": "通知事件已处理或已达重试上限"}
+
+
+def save_quant_watch_notification_result(event_key: str, owner_id: str,
+                                         fence_token: int, status: str,
+                                         result: Any) -> bool:
+    """仅认领者可保存通知终态结果，并在同一事务验证 fencing 所有权。"""
+    final_status = str(status)
+    if final_status not in {"success", "partial", "failed"}:
+        raise ValueError("通知结果状态必须为 success、partial 或 failed")
+    _json.dumps(result, ensure_ascii=False, allow_nan=False)
+    now = datetime.now()
+    eng = get_engine()
+    with eng.begin() as conn:
+        owned = conn.execute(select(quant_watch_state.c.task_key).where(
+            quant_watch_state.c.task_key == "quant_watch",
+            quant_watch_state.c.owner_id == str(owner_id),
+            quant_watch_state.c.fence_token == int(fence_token),
+            quant_watch_state.c.lease_until > now,
+        ).with_for_update()).first()
+        if not owned:
+            return False
+        updated = conn.execute(quant_watch_notification_events.update().where(
+            quant_watch_notification_events.c.event_key == str(event_key),
+            quant_watch_notification_events.c.status == "claimed",
+            quant_watch_notification_events.c.owner_id == str(owner_id),
+            quant_watch_notification_events.c.fence_token == int(fence_token),
+        ).values(status=final_status, result=result, finished_at=now))
+    return bool(updated.rowcount)
+
+
+def fetch_quant_watch_messages(trade_date: str, limit: int = 60) -> list[dict[str, Any]]:
+    """只读取指定交易日的盯盘聚合消息，最新在前。"""
+    eng = get_engine()
+    stmt = (select(quant_watch_messages)
+            .where(quant_watch_messages.c.trade_date == str(trade_date))
+            .order_by(quant_watch_messages.c.scanned_at.desc())
+            .limit(max(1, min(int(limit), 300))))
+    with eng.connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    result = []
+    for row in rows:
+        item = dict(row)
+        for field in ("scanned_at", "created_at"):
+            value = item.get(field)
+            item[field] = value.strftime("%Y-%m-%d %H:%M:%S") if value else None
+        result.append(item)
+    return result
+
+
+def clear_quant_watch_before(trade_date: str) -> int:
+    """下一交易日 09:00 删除更早聚合消息，并在无活跃租约时清空旧日指针。"""
+    eng = get_engine()
+    now = datetime.now()
+    with eng.begin() as conn:
+        result = conn.execute(quant_watch_messages.delete().where(
+            quant_watch_messages.c.trade_date < str(trade_date)))
+        conn.execute(quant_watch_notification_events.delete().where(
+            quant_watch_notification_events.c.trade_date < str(trade_date)))
+        conn.execute(quant_watch_state.update().where(
+            quant_watch_state.c.task_key == "quant_watch",
+            quant_watch_state.c.trade_date < str(trade_date),
+            quant_watch_state.c.owner_id.is_(None)
+            | quant_watch_state.c.lease_until.is_(None)
+            | (quant_watch_state.c.lease_until <= now),
+        ).values(last_message_id=None, last_scan_at=None, last_error=None,
+                 next_scan_at=None, status="waiting", trade_date=str(trade_date),
+                 heartbeat_at=now))
+    return int(result.rowcount or 0)

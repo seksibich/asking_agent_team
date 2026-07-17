@@ -31,6 +31,21 @@
 
 ## 版本记录（最新在上）
 
+### v2.3.0 — 2026-07-17（服务端量化盯盘与 Agent 职责分层）
+
+- **摘要**：新增服务端确定性量化盯盘基础设施，允许数据服务在交易日连续竞价时按配置频率扫描并通过当日接口、WebSocket 与显式启用的通知渠道发布聚合结论；同时继续禁止 Agent 调度、循环或主动触发盯盘。盘中评分与完整日因子、正式选股、预测及记忆严格隔离；分钟样本、申万层级或逐笔大单源缺失时必须披露并停止对应指标参与评分。
+- **对应 git commit**：待提交。
+- **变更文件清单（Agent 相关）**：
+  - `agent/init.md`、`agent/index.md`、`agent/schedule.md`
+  - `agent/agents/TEAM.md`、`agent/agents/ORCHESTRATION.md`、`agent/agents/main-orchestrator.md`
+  - `agent/skills/data-service/SKILL.md`、`agent/skills/intraday-watch/SKILL.md`
+  - `profile/CHANGELOG-AGENT.md`
+- **Agent 动作**：
+  1. 删除和禁止的仍是 Agent/平台层自动竞价、自动盯盘、午间总结、Hook、cron 与循环；不得把服务端 `quant_watch` 迁移成 Agent 任务。
+  2. 只有用户当前明确请求盘中分析时，才读取 `quant_watch_status` 作为当日临时证据；不得轮询或自动调用 `quant_watch_scan_once`。
+  3. 服务端飞书/企业微信通知默认关闭；除非用户明确要求，不修改盯盘设置或通知开关。
+  4. 盘中结果不得写入完整日因子、正式选股、预测、daily 或记忆；大单与行业层级等不可用项必须原样披露。
+
 ### v2.2.0 — 2026-07-17（现行任务连续编号 + 服务端 16:00 日终收口）
 
 - **摘要**：以 `agent/schedule.md` 为现行基准，将 17:30 当日总结由旧 T6 统一为 T2、22:00 综合复盘由旧 T7 统一为 T3；Agent 仅注册 T1/T2/T3/W1/M1/P1，初始化清理旧 T6/T7/D1、历史 T2/T3/T4/T5 及旧自动盯盘任务。全市场行业与个股因子改由服务端在交易日 16:00 自动补齐，Agent 只读 `health.daily_finalize` / `precompute_status`，不得定时、自动补跑或失败触发 `precompute_daily_factors`；管理员手动调用仅限用户当前明确要求的单次诊断或补数。

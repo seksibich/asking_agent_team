@@ -334,3 +334,63 @@ CREATE TABLE IF NOT EXISTS daily_sentiment (
 -- 留存一次回测聚合结果
 -- INSERT INTO backtest_snapshots (kind, as_of, payload)
 -- VALUES ('selection', NOW(), CAST('{"total_selections":42}' AS JSON));
+
+
+-- ---------- 量化盯盘：跨实例租约、票据、通知幂等与当日聚合消息 ----------
+CREATE TABLE IF NOT EXISTS quant_watch_state (
+  task_key       VARCHAR(32)  NOT NULL COMMENT '固定 quant_watch，全服务唯一',
+  owner_id       VARCHAR(64)  NULL COMMENT '当前扫描实例，不对外返回',
+  lease_until    DATETIME     NULL COMMENT '跨进程租约到期时间',
+  fence_token    BIGINT       NOT NULL DEFAULT 0 COMMENT '每次成功认领单调递增的 fencing token',
+  next_scan_at   DATETIME     NULL COMMENT '自动与手动扫描下一次允许认领时间',
+  status         VARCHAR(16)  NOT NULL DEFAULT 'waiting' COMMENT 'waiting/running/success/degraded/error',
+  trade_date     CHAR(8)      NULL COMMENT '当前交易日 YYYYMMDD',
+  phase          VARCHAR(32)  NULL COMMENT '统一市场阶段',
+  last_scan_at   DATETIME     NULL COMMENT '最近成功扫描时间',
+  last_error     TEXT         NULL COMMENT '最近错误摘要',
+  last_message_id VARCHAR(64) NULL COMMENT '最近聚合消息 ID',
+  heartbeat_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_key),
+  KEY idx_qws_trade_date (trade_date),
+  KEY idx_qws_lease (lease_until),
+  KEY idx_qws_next_scan (next_scan_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='量化盯盘跨实例租约、fencing 与运行状态';
+
+CREATE TABLE IF NOT EXISTS quant_watch_messages (
+  message_id  VARCHAR(64) NOT NULL COMMENT '每轮扫描唯一 ID',
+  trade_date  CHAR(8)     NOT NULL COMMENT '交易日 YYYYMMDD',
+  scanned_at  DATETIME    NOT NULL COMMENT '扫描完成时间',
+  phase       VARCHAR(32) NOT NULL COMMENT '统一市场阶段',
+  status      VARCHAR(16) NOT NULL COMMENT 'success/degraded',
+  payload     JSON        NOT NULL COMMENT '聚合结论、榜单、质量与能力边界',
+  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (message_id),
+  KEY idx_qwm_date_time (trade_date, scanned_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='量化盯盘当日聚合消息，不保存原始分钟快照';
+
+CREATE TABLE IF NOT EXISTS quant_watch_tickets (
+  ticket_hash CHAR(64)    NOT NULL COMMENT '原始票据的 SHA-256 摘要',
+  role        VARCHAR(16) NOT NULL COMMENT '票据角色，量化盯盘仅允许 admin',
+  purpose     VARCHAR(32) NOT NULL COMMENT '票据用途，量化盯盘为 quant_watch_ws',
+  expires_at  DATETIME    NOT NULL COMMENT '票据失效时间',
+  consumed_at DATETIME    NULL COMMENT '原子消费时间；非空后不可再次使用',
+  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (ticket_hash),
+  KEY idx_qwt_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='量化盯盘 WebSocket 一次性短期票据，仅保存摘要';
+
+CREATE TABLE IF NOT EXISTS quant_watch_notification_events (
+  event_key   VARCHAR(255) NOT NULL COMMENT '通知业务事件唯一键（含渠道）',
+  trade_date  CHAR(8)      NOT NULL COMMENT '交易日 YYYYMMDD',
+  status      VARCHAR(16)  NOT NULL COMMENT 'claimed/success/partial/failed',
+  owner_id    VARCHAR(64)  NOT NULL COMMENT '认领扫描实例，不对外返回',
+  fence_token BIGINT       NOT NULL COMMENT '认领时的 fencing token',
+  retry_count INT          NOT NULL DEFAULT 0 COMMENT '已认领发送次数，最多3次',
+  result      JSON         NULL COMMENT '通知渠道执行结果',
+  claimed_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finished_at DATETIME     NULL COMMENT '终态写入时间',
+  PRIMARY KEY (event_key),
+  KEY idx_qwne_trade_date (trade_date),
+  KEY idx_qwne_status_claimed (status, claimed_at),
+  CONSTRAINT chk_qwne_status CHECK (status IN ('claimed','success','partial','failed'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='量化盯盘按渠道幂等通知事件，失败或超时可有限重试';

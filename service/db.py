@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+import math
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -609,6 +610,59 @@ def fetch_selections(date_from: Optional[Any] = None, date_to: Optional[Any] = N
     with eng.connect() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [dict(r) for r in rows]
+
+
+def fetch_selections_by_ids(selection_ids: list[int]) -> list[dict[str, Any]]:
+    """按主键批量读取当前权限可见记录，供当前列表行情刷新使用。"""
+    ids = sorted({int(value) for value in selection_ids if int(value) > 0})
+    if not ids:
+        return []
+    allowed = _selection_allowed_categories.get()
+    stmt = select(selections).where(selections.c.id.in_(ids))
+    if allowed is not None:
+        stmt = stmt.where(selections.c.category.in_(sorted(allowed)))
+    with get_engine().connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def patch_selection_price_if_missing(selection_id: int, selected_price: float,
+                                     trade_date: str, source: str) -> dict[str, Any]:
+    """仅在选股价缺失时补选股日收盘价；不改变 immutable 记录的其他字段。"""
+    price = float(selected_price)
+    if not math.isfinite(price) or price <= 0:
+        return {"updated": False, "reason": "invalid_price", "id": selection_id}
+    eng = get_engine()
+    with eng.begin() as conn:
+        stmt = select(selections).where(selections.c.id == int(selection_id))
+        if eng.dialect.name == "mysql":
+            stmt = stmt.with_for_update()
+        row = conn.execute(stmt).mappings().first()
+        if not row:
+            return {"updated": False, "reason": "not_found", "id": selection_id}
+        record = dict(row)
+        extra = dict(record.get("extra") or {})
+        try:
+            current = float(extra.get("selected_price"))
+        except (TypeError, ValueError):
+            current = 0.0
+        if math.isfinite(current) and current > 0:
+            return {"updated": False, "reason": "already_present", "id": selection_id,
+                    "selected_price": current, "record": record}
+        now = datetime.now()
+        extra.update({
+            "selected_price": price,
+            "price_trade_date": str(trade_date).replace("-", ""),
+            "price_source": str(source or "tushare daily close"),
+            "price_backfilled_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        extra.pop("price_error", None)
+        conn.execute(selections.update().where(
+            selections.c.id == int(selection_id)).values(extra=extra))
+        updated = conn.execute(select(selections).where(
+            selections.c.id == int(selection_id))).mappings().one()
+    return {"updated": True, "reason": "backfilled", "id": selection_id,
+            "selected_price": price, "record": dict(updated)}
 
 
 def delete_selection(selection_id: int, confirm_code: str) -> dict[str, Any]:

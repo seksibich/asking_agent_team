@@ -58,7 +58,7 @@ disable-model-invocation: false
 - 交叉核对各子 Agent 关键数据（尤其涨价），并按四维打分 × `buy_weight_hint` 排序。
 - 凡作为正式关注的量化/趋势候选，逐只按 `skills/output-format/SKILL.md` 的「正式候选综合理由表」输出，不得只列四维分或量化分。固定理由链为：**量化信号 → 板块趋势 → 当前主线关系 → 涨价/逻辑/预期催化 → 情绪与择时 → 风险/证伪**。
 - 每只必须写明量化综合分与关键因子、四维分、板块/产业链、板块短中期动量/量能/阶段、主线关系（核心/分支/补涨/非主线）、催化与炒作路径、入选理由链和证伪条件；任一环缺资料写「无可核验证据」，不得省略或臆造。
-- **定时 T1** 的明确正式预判才写 `predictions.jsonl`（标 driver），正式自动候选才登记 `category=auto` 并更新 daily；用户手动盘前默认 ephemeral，不写自动记忆。既有 watch/holding 只维护状态，新增 watch 必须有用户明确指令。
+- **定时 T1** 的明确正式预判才写 `predictions.jsonl`（标 driver）。若本轮新生成正式自动候选，必须实际执行同日 `screen_quant` 或 `screen_trend`，确认候选位于响应中，再以原样 `screening_run_id` 调用 `log_selection(category=auto)` 并更新 daily；未取得有效筛选运行时只能复核既有候选，不得新登记 auto。用户手动盘前默认 ephemeral，不写自动记忆。既有 watch/holding 只维护状态，新增 watch 必须有用户明确指令。
 
 #### 8. 生成详尽报告与独立推送
 - Markdown 正文严格执行 T1 完整模板，标题后第一节为 `## 🎯 一眼结论（核心摘要）`，首屏按顺序给出**📊 今日仓位倾向、🔥 重点题材/具体事件 Top N、🎯 “题材/事件 → 今日关注个股”、⚠️ 最大风险/证伪、题材/事件—个股首屏结论表**，然后才是目录导读和详细证据。首屏四类关键信息与主要章节标题按 output-format 的 emoji 约定加统一图标高亮。

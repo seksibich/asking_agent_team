@@ -3,6 +3,12 @@
 > 本文把「数据服务功能」与「agent 技能 / 定时任务」双向关联，便于开发与排障时快速定位。
 > 权威功能清单以运行时 `GET /functions` 为准（含参数）；调用协议与接口可用性说明见 `doc/AGENT_SERVICE_GUIDE.md` 与 `agent/skills/data-service/SKILL.md` 分组表。功能数随注册内容自动变化，不在本文硬编码。
 
+## 零、统一业务响应与版本自检
+
+- `GET /health` 的健康与五轨版本字段位于顶层；其他已连通的业务 JSON 响应无论成功或失败，都在保留原状态码的同时携带同口径 `health`，并保留顶层 `data_version`。
+- Agent 必须先消费 `health` 并协调 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`、`portfolio_version`，再处理业务结果；同一目标版本元组每个任务只执行一次协调。旧服务缺少 `health` 时只补调一次 `/health`。
+- 404、405、422、未捕获 500 以及权限和业务错误均遵守该结构；静态文件、根路径重定向、文档和 OpenAPI 不在业务 JSON 封装范围。
+
 ## 一、按业务分组的功能索引（功能 → 用途 → 主要使用方）
 
 ### portfolio 管理员自选
@@ -82,9 +88,9 @@
 
 | 任务 | 时间 | 主用 skill | 关键数据接口 | 资讯（外部多源） |
 |---|---|---|---|---|
-| T1 盘前汇总 | 08:30 | pre-market + 全角色 | macro_ppi/cpi/pmi、price_hike_scan、screen_sector、sentiment_temperature/extreme、market_timing、hot_dc/ths/kpl_list、overseas_hk、selection_backtest | 新闻/时政/外盘 |
+| T1 盘前汇总 | 08:30 | pre-market + 全角色 | macro_ppi/cpi/pmi、price_hike_scan、screen_sector、sentiment_temperature/extreme、market_timing、hot_dc/ths/kpl_list、overseas_hk、selection_backtest；新正式 auto 候选必须来自实际 screen_quant/screen_trend 并携带 screening_run_id 后 log_selection | 新闻/时政/外盘 |
 | T6 当日总结 | 17:30 | post-market | market_index、sector_dc、market_limit/lianban、hot_dc/ths/kpl_list、sentiment_*、market_timing、money_hsgt、price_hike_scan | 新闻/公告 |
-| T7 综合复盘+选股+回测+业绩池 | 22:00 | post-market + review + 选股 + 全角色 | 上述 + money_toplist、screen_sector/quant/trend、fundamental_forecast/express、predictions_backtest、selection_backtest、selection_tag_catalog→log_selection（仅正式候选） | 新闻/公告 |
+| T7 综合复盘+选股+新预判登记+成熟历史回测+业绩池 | 22:00 | post-market + review + 选股 + 全角色 | 上述 + money_toplist、screen_sector/quant/trend、fundamental_forecast/express、先 log_prediction 登记下一交易日新预判、再 predictions_backtest 核验已成熟历史预判、selection_backtest、selection_tag_catalog→log_selection（仅正式候选） | 新闻/公告 |
 | W1 周回测/周报 | 周日 20:00 | review + 选股 | selection_backtest、predictions_backtest、screen_*、get/set_factor_weights | — |
 | M1 月回测/月报 | 月末 21:00 | review + quant | selection_backtest、get/set_factor_weights | — |
 | D1 全市场预计算 | 交易日 17:45 | quant-screening | precompute_daily_factors（失败按 retryable_dates 重跑） | — |

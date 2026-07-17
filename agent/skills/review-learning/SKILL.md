@@ -9,7 +9,7 @@ disable-model-invocation: false
 
 ## 一、每日回测（并入 22:00 综合复盘）
 
-见 post-market。**仅调度器自动链路中的正式方向性预判**可先用 `log_prediction` 登记到 DB（按 日期+标的+方向 幂等），复盘调 `predictions_backtest`（读 DB 正式预判 → 用 `market_daily` 验证 → 分 `driver` 统计准确率）→ 写 `学习日志`。用户主动单股调研、方向选股、行业/事件研究不调用 `log_prediction`、不写 `predictions.jsonl`；其中用户触发正式选股只以 `manual` selection 做隔离回测，不进入 auto 预判胜率。
+见 post-market。**仅调度器自动链路中的正式方向性预判**可先用 `log_prediction` 登记到 DB（按 日期+标的+方向 幂等）；登记的是面向下一 SSE 交易日的新预判。随后才调用 `predictions_backtest`，且只核验目标交易日已经完成的历史预判，绝不能把刚登记、尚未成熟的新预判纳入当晚准确率；回测继续读 DB 正式预判、用 `market_daily` 验证、分 `driver` 统计并写 `学习日志`。用户主动单股调研、方向选股、行业/事件研究不调用 `log_prediction`、不写 `predictions.jsonl`；其中用户触发正式选股只以 `manual` selection 做隔离回测，不进入 auto 预判胜率。
 
 ## 一之二、选股回测闭环（ephemeral / auto / manual / watch / holding 严格隔离）★
 

@@ -78,7 +78,7 @@
 
 - **当前形态：本地 Mac Docker**。基址 `http://localhost:18901`，统一 `POST /call {function, params}`，鉴权头 `X-API-Key`（值见 `init.md` / `.env`）。
 - **后续上云**：改用公网 API 时，同时更新运行期 `服务状态与能力.md` 和 `关注与持仓.md` 的 `BASE_URL`；真实 Key 只在安全配置中维护。
-- **版本机制**：`data_version`、`selection_tag_version`、`agent_doc_version`、`git_revision` 及功能/标签目录写入 `服务状态与能力.md`；`portfolio_version` 只写入 `关注与持仓.md`。功能或标签版本变化时刷新对应目录，持仓版本变化时调用 `portfolio_get` 全量刷新镜像。
+- **版本机制与响应顺序**：每个已连通的业务 JSON 响应（成功或失败）先读取嵌套 `health`，再处理业务结果；依次比较 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`、`portfolio_version`。同一目标版本元组每个任务只协调一次，升级/刷新请求返回相同元组时不得再次触发。缺少 `health` 时仅补调一次 `/health` 兼容旧服务；补调失败不覆盖原业务结果，只标版本暂不可核验。`data_version` 或标签版本变化时刷新对应目录，持仓版本变化时仅按开场/持仓任务规则调用 `portfolio_get`。401/403 仍先消费 health；权限阻塞的刷新写有时效短期事项，不得声称同步完成。除持仓版本外的版本及功能/标签目录写入 `服务状态与能力.md`，`portfolio_version` 只写入 `关注与持仓.md`。
 - **降级二分（强制）**：数据类接口（行情/资金/财务/宏观/板块/热榜/龙虎榜/涨跌停/情绪等）**禁止降级，失败则失败**并如实披露，仅允许同类数据接口等价回退（如 `market_index`→`market_daily`）；**资讯类（新闻/公告/外盘）不在数据服务**（当前 token 无权限，已移除相关接口），由 agent 从各财经平台多源获取（≥2 来源交叉）。数据宁缺毋编，资讯多方求证。
 - 详见 `skills/data-service/SKILL.md` 与 `doc/AGENT_SERVICE_GUIDE.md`。
 

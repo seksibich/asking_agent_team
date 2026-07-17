@@ -1,13 +1,13 @@
-"""选股回测工具（DB 持久化 + 成熟样本固化）。
+"""选股登记、看板与混合期限回测工具（DB 持久化 + 成熟样本固化）。
 
 - log_selection：登记标的到 DB（selections 表），按 (日期,代码,category) **幂等去重**。
   category=auto(自动选股,用于调参) / manual(用户触发正式选股) /
   watch(用户关注) / holding(用户持仓)。所有正式选股保存选股价、热点/事件、短线地位和量化因子快照。
 - selection_dashboard：按日期/热点/类别查询选股，并补最近交易日行情与选股后涨跌。
-- selection_backtest：统计选出后 1/3/7/30 交易日涨幅、胜率、相对沪深300超额，
-  分 category、auto 再分 driver/分数分桶，产出调参建议。
-  **成熟样本（已满该持有期）的前向收益写入 selection_forward_returns 缓存并固化，
-  下次不再重复回算**，只增量计算未成熟样本，大幅减少 tushare 调用。
+- selection_backtest：统计选出后 1/2/3 个交易日、7/30 个自然日目标后的首个交易日收益，
+  计算胜率及相对沪深300超额，按 category、auto 的 driver/分数分桶产出调参依据。
+  **成功样本按计算版本固化到 selection_forward_returns_v2；未成熟或失败样本后续重试**，
+  避免反复覆盖已成功收益，同时允许长期期限随时间增量成熟。
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+import audit_log
 import common
 import db
 import factor_contract
@@ -32,9 +33,15 @@ try:
 except ImportError:
     ts = None  # type: ignore
 
-HORIZONS = [1, 3, 7, 30]
+HORIZON_SPECS = (
+    {"key": "1t", "storage": 1, "days": 1, "kind": "trading", "label": "1个交易日"},
+    {"key": "2t", "storage": 2, "days": 2, "kind": "trading", "label": "2个交易日"},
+    {"key": "3t", "storage": 3, "days": 3, "kind": "trading", "label": "3个交易日"},
+    {"key": "7c", "storage": 7, "days": 7, "kind": "calendar", "label": "7个自然日"},
+    {"key": "30c", "storage": 30, "days": 30, "kind": "calendar", "label": "30个自然日"},
+)
 BENCHMARK = "000300.SH"
-RETURN_CALC_VERSION = "forward-returns-v2"
+RETURN_CALC_VERSION = "forward-returns-v3-mixed-horizons"
 MIN_OPTIMIZATION_SAMPLES = 50
 MIN_OOS_SAMPLES = 10
 VALID_CATEGORIES = {"auto", "manual", "watch", "holding"}
@@ -291,6 +298,66 @@ def _capture_selection_price(code: str, selected_date: str) -> dict[str, Any]:
             "price_error": "选股交易日当天没有可核验收盘价"}
 
 
+def _valid_price(value: Any) -> Optional[float]:
+    price = _finite_float(value)
+    return price if price is not None and price > 0 else None
+
+
+def _ensure_selection_price(record: dict[str, Any], trigger: str) -> tuple[dict[str, Any], bool]:
+    """缺失时按选股日原始收盘价补齐并落库；失败时保持为空。"""
+    extra = dict(record.get("extra") or {})
+    if _valid_price(extra.get("selected_price")) is not None:
+        return record, False
+    selected_date = str(record.get("sel_date") or "").replace("-", "")
+    snapshot = _capture_selection_price(str(record.get("code") or ""), selected_date)
+    price = _valid_price(snapshot.get("selected_price"))
+    if price is None:
+        return record, False
+    patched = db.patch_selection_price_if_missing(
+        int(record["id"]), price, selected_date,
+        str(snapshot.get("price_source") or "tushare daily close"),
+    )
+    updated = dict(patched.get("record") or record)
+    if patched.get("updated"):
+        audit_log.append("selection", {
+            "event": "price_backfilled", "trigger": trigger,
+            "selection_id": record.get("id"), "date": selected_date,
+            "code": record.get("code"), "name": record.get("name"),
+            "category": record.get("category"), "selected_price": price,
+            "price_source": snapshot.get("price_source"),
+        })
+    return updated, bool(patched.get("updated"))
+
+
+def refresh_selection_quotes(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """仅刷新调用方当前列表的行情，并重试补齐这些记录的缺失选股价。"""
+    selection_ids = []
+    for item in items[:1000]:
+        try:
+            selection_ids.append(int(item.get("id")))
+        except (TypeError, ValueError):
+            continue
+    records = db.fetch_selections_by_ids(selection_ids)
+    refreshed_records = []
+    backfilled = 0
+    for record in records:
+        updated, changed = _ensure_selection_price(record, "quote_refresh")
+        refreshed_records.append(updated)
+        backfilled += int(changed)
+    market = _market_snapshot([str(record.get("code") or "") for record in refreshed_records])
+    selected_prices = {}
+    for record in refreshed_records:
+        extra = record.get("extra") or {}
+        selected_prices[str(record.get("id"))] = {
+            "selected_price": _valid_price(extra.get("selected_price")),
+            "selected_price_date": extra.get("price_trade_date"),
+            "selected_price_source": extra.get("price_source"),
+            "price_backfilled_at": extra.get("price_backfilled_at"),
+        }
+    return {**market, "selected_prices": selected_prices,
+            "backfilled_prices": backfilled, "record_count": len(refreshed_records)}
+
+
 def _capture_factor_snapshot(code: str, selected_date: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
     """只读取 selected_date 当日或之前、质量合格且与当前公式契约一致的因子。"""
     contract = factor_contract.base_contract("stock")
@@ -504,6 +571,8 @@ def log_selection(p: dict) -> dict:
     write = db.upsert_selection(rec)
     inserted = bool(write.get("inserted", True))
     record = dict(write.get("record") or rec)
+    if record.get("id") is not None:
+        record, _ = _ensure_selection_price(record, "log_selection")
     for key in ("sel_date", "logged_at"):
         if record.get(key) is not None:
             record[key] = str(record[key])
@@ -529,36 +598,56 @@ def log_selection(p: dict) -> dict:
 
 
 # ---------------- 前向收益 ----------------
-def _forward_returns_v2(pro, code: str, sel_day: str) -> dict[int, dict[str, Any]]:
-    """按上交所统一交易日精确对齐个股和基准；个股只接受 qfq，失败不降级原始价。"""
-    calendar_end = (datetime.strptime(sel_day, "%Y%m%d") + timedelta(days=180)).strftime("%Y%m%d")
+def _forward_returns(pro, code: str, sel_day: str) -> dict[str, dict[str, Any]]:
+    """按混合期限精确对齐个股和基准；自然日期限取目标日后首个 SSE 交易日。"""
+    selected_date = datetime.strptime(sel_day, "%Y%m%d")
+    calendar_end = (selected_date + timedelta(days=100)).strftime("%Y%m%d")
     try:
         cal = pro.trade_cal(exchange="SSE", start_date=sel_day, end_date=calendar_end)
         dates = sorted(cal[cal["is_open"].astype(int) == 1]["cal_date"].astype(str).tolist())
     except Exception as exc:
-        return {h: {"status": "failed", "error": f"交易日历失败：{type(exc).__name__}: {exc}"[:300]}
-                for h in HORIZONS}
+        return {spec["key"]: {"status": "failed",
+                "error": f"交易日历失败：{type(exc).__name__}: {exc}"[:300]}
+                for spec in HORIZON_SPECS}
     if not dates or dates[0] != sel_day:
-        return {h: {"status": "failed", "error": "选股日期不是交易日"} for h in HORIZONS}
+        return {spec["key"]: {"status": "failed", "error": "选股日期不是交易日"}
+                for spec in HORIZON_SPECS}
+
+    exit_dates: dict[str, Optional[str]] = {}
+    for spec in HORIZON_SPECS:
+        if spec["kind"] == "trading":
+            index = int(spec["days"])
+            exit_dates[spec["key"]] = dates[index] if len(dates) > index else None
+        else:
+            target = (selected_date + timedelta(days=int(spec["days"]))).strftime("%Y%m%d")
+            exit_dates[spec["key"]] = next((day for day in dates if day >= target), None)
+
     last_available = common.last_completed_trade_date()
-    mature_dates = {h: dates[h] for h in HORIZONS if len(dates) > h and dates[h] <= last_available}
-    results = {h: {"status": "not_matured", "entry_trade_date": sel_day,
-                   "exit_trade_date": dates[h] if len(dates) > h else None}
-               for h in HORIZONS}
-    if not mature_dates:
+    results = {
+        spec["key"]: {
+            "status": "not_matured", "entry_trade_date": sel_day,
+            "exit_trade_date": exit_dates.get(spec["key"]),
+        }
+        for spec in HORIZON_SPECS
+    }
+    mature = {key: day for key, day in exit_dates.items()
+              if day is not None and day <= last_available}
+    if not mature:
         return results
 
-    end = max(mature_dates.values())
+    end = max(mature.values())
     try:
         import tushare as ts
         stock_df = ts.pro_bar(ts_code=code, adj="qfq", start_date=sel_day, end_date=end)
     except Exception as exc:
-        return {h: ({**results[h], "status": "failed",
-                     "error": f"前复权行情失败：{type(exc).__name__}: {exc}"[:300]}
-                    if h in mature_dates else results[h]) for h in HORIZONS}
+        for key in mature:
+            results[key].update(status="failed",
+                                error=f"前复权行情失败：{type(exc).__name__}: {exc}"[:300])
+        return results
     if stock_df is None or stock_df.empty:
-        return {h: ({**results[h], "status": "failed", "error": "前复权行情为空"}
-                    if h in mature_dates else results[h]) for h in HORIZONS}
+        for key in mature:
+            results[key].update(status="failed", error="前复权行情为空")
+        return results
     stock_prices = {str(row["trade_date"]): float(row["close"])
                     for row in stock_df.to_dict(orient="records") if row.get("close") is not None}
     try:
@@ -570,10 +659,10 @@ def _forward_returns_v2(pro, code: str, sel_day: str) -> dict[int, dict[str, Any
 
     entry = stock_prices.get(sel_day)
     bench_entry = bench_prices.get(sel_day)
-    for horizon, exit_day in mature_dates.items():
+    for key, exit_day in mature.items():
         exit_price = stock_prices.get(exit_day)
         if entry is None or exit_price is None:
-            results[horizon] = {
+            results[key] = {
                 "status": "failed", "entry_trade_date": sel_day,
                 "exit_trade_date": exit_day,
                 "error": "个股在统一入场或退出交易日无前复权价格（可能停牌）",
@@ -583,7 +672,7 @@ def _forward_returns_v2(pro, code: str, sel_day: str) -> dict[int, dict[str, Any
         bench_exit = bench_prices.get(exit_day)
         benchmark_ret = ((bench_exit / bench_entry - 1) * 100
                          if bench_entry and bench_exit is not None else None)
-        results[horizon] = {
+        results[key] = {
             "status": "success", "ret_pct": round(ret, 6),
             "excess_pct": round(ret - benchmark_ret, 6) if benchmark_ret is not None else None,
             "entry_trade_date": sel_day, "entry_price": entry,
@@ -594,17 +683,18 @@ def _forward_returns_v2(pro, code: str, sel_day: str) -> dict[int, dict[str, Any
     return results
 
 
-def _tuning_hints(by_driver: dict[str, dict[int, list[float]]]) -> list[str]:
+def _tuning_hints(by_driver: dict[str, dict[str, list[float]]]) -> list[str]:
     hints: list[str] = []
-    h = 30
-    avg = {d: sum(v[h]) / len(v[h]) for d, v in by_driver.items() if v.get(h)}
+    horizon_key = "30c"
+    avg = {driver: sum(values[horizon_key]) / len(values[horizon_key])
+           for driver, values in by_driver.items() if values.get(horizon_key)}
     if not avg:
-        return ["样本不足，暂无法给出调参建议（需更多已满 30 交易日的自动选股样本）"]
+        return ["样本不足，暂无法给出调参建议（需更多已满 30 个自然日的自动选股样本）"]
     best = max(avg, key=avg.get)
     worst = min(avg, key=avg.get)
-    hints.append(f"30日超额最优驱动：{best}（+{avg[best]:.2f}pct），可维持/提高其在选股中的权重")
+    hints.append(f"30自然日超额最优驱动：{best}（+{avg[best]:.2f}pct），可维持/提高其在选股中的权重")
     if avg[worst] < 0:
-        hints.append(f"30日超额为负驱动：{worst}（{avg[worst]:.2f}pct），建议降低权重或提高入选门槛（尤其情绪类）")
+        hints.append(f"30自然日超额为负驱动：{worst}（{avg[worst]:.2f}pct），建议降低权重或提高入选门槛（尤其情绪类）")
     return hints
 
 
@@ -619,15 +709,18 @@ def selection_backtest(p: dict) -> dict:
     sels = db.fetch_selections()
     current_contract = factor_contract.base_contract("stock")
 
-    cat_returns: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
-    cat_excess: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
-    auto_by_driver: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
-    auto_by_bucket: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    cat_returns: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    cat_excess: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    auto_by_driver: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    auto_by_bucket: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     details: list[dict[str, Any]] = []
     controlled_30d: list[dict[str, Any]] = []
     computed_calls = 0
+    backfilled_prices = 0
 
-    for selection in sels:
+    for raw_selection in sels:
+        selection, price_changed = _ensure_selection_price(raw_selection, "selection_backtest")
+        backfilled_prices += int(price_changed)
         sid = selection["id"]
         sel_day = str(selection["sel_date"]).replace("-", "")
         category = selection.get("category", "auto")
@@ -656,46 +749,55 @@ def selection_backtest(p: dict) -> dict:
         )
 
         cached = db.get_cached_returns_v2(sid, RETURN_CALC_VERSION)
-        if any(cached.get(h, {}).get("status") != "success" for h in HORIZONS):
-            calculated = _forward_returns_v2(pro, selection["code"], sel_day)
+        pending_specs = [spec for spec in HORIZON_SPECS
+                         if cached.get(spec["storage"], {}).get("status") != "success"]
+        if pending_specs:
+            calculated = _forward_returns(pro, selection["code"], sel_day)
             computed_calls += 1
-            for horizon, item in calculated.items():
-                cached[horizon] = db.save_return_v2(
-                    sid, horizon, RETURN_CALC_VERSION, **item)
+            for spec in pending_specs:
+                item = calculated[spec["key"]]
+                cached[spec["storage"]] = db.save_return_v2(
+                    sid, spec["storage"], RETURN_CALC_VERSION, **item)
 
-        returns: dict[int, float] = {}
-        return_status: dict[int, str] = {}
-        for horizon in HORIZONS:
-            item = cached.get(horizon) or {}
-            return_status[horizon] = item.get("status", "missing")
+        returns: dict[str, float] = {}
+        return_status: dict[str, str] = {}
+        return_dates: dict[str, Optional[str]] = {}
+        for spec in HORIZON_SPECS:
+            key = spec["key"]
+            item = cached.get(spec["storage"]) or {}
+            return_status[key] = item.get("status", "missing")
+            return_dates[key] = item.get("exit_trade_date")
             if item.get("status") != "success" or item.get("ret_pct") is None:
                 continue
             ret = float(item["ret_pct"])
             excess = float(item["excess_pct"]) if item.get("excess_pct") is not None else None
-            returns[horizon] = ret
-            cat_returns[category][horizon].append(ret)
+            returns[key] = ret
+            cat_returns[category][key].append(ret)
             if excess is not None:
-                cat_excess[category][horizon].append(excess)
+                cat_excess[category][key].append(excess)
             if controlled:
-                auto_by_driver[driver][horizon].append(excess if excess is not None else ret)
-                auto_by_bucket[bucket][horizon].append(ret)
-                if horizon == 30 and excess is not None:
+                if excess is not None:
+                    auto_by_driver[driver][key].append(excess)
+                auto_by_bucket[bucket][key].append(ret)
+                if key == "30c" and excess is not None:
                     controlled_30d.append({"id": sid, "date": sel_day, "driver": driver,
                                            "excess": excess, "return": ret})
         details.append({
             "id": sid, "date": str(selection["sel_date"]), "code": selection["code"],
             "name": selection.get("name", ""), "category": category, "driver": driver,
+            "selected_price": _valid_price(extra.get("selected_price")),
             "score_percentile": percentile, "bucket": bucket, "controlled_auto": controlled,
             "returns_pct": returns, "return_status": return_status,
-            "return_calc_version": RETURN_CALC_VERSION,
+            "return_exit_dates": return_dates, "return_calc_version": RETURN_CALC_VERSION,
         })
 
-    def summarize(values_by_horizon: dict[int, list[float]]) -> dict[str, Any]:
+    def summarize(values_by_horizon: dict[str, list[float]]) -> dict[str, Any]:
         output = {}
-        for horizon in HORIZONS:
-            values = values_by_horizon.get(horizon, [])
+        for spec in HORIZON_SPECS:
+            key = spec["key"]
+            values = values_by_horizon.get(key, [])
             if values:
-                output[f"{horizon}d"] = {
+                output[key] = {
                     "n": len(values), "avg_pct": round(sum(values) / len(values), 2),
                     "win_rate": round(sum(value > 0 for value in values) / len(values) * 100, 1),
                 }
@@ -710,15 +812,15 @@ def selection_backtest(p: dict) -> dict:
     oos_win = sum(row["excess"] > 0 for row in oos) / len(oos) if oos else None
     reasons = []
     if sample_count < MIN_OPTIMIZATION_SAMPLES:
-        reasons.append(f"当前契约30日成熟受控样本 {sample_count}，至少需要 {MIN_OPTIMIZATION_SAMPLES}")
+        reasons.append(f"当前契约30自然日成熟受控样本 {sample_count}，至少需要 {MIN_OPTIMIZATION_SAMPLES}")
     if distinct_dates < 10:
         reasons.append(f"样本仅覆盖 {distinct_dates} 个选股日，至少需要10个独立日期")
     if len(oos) < MIN_OOS_SAMPLES:
         reasons.append(f"时序样本外样本 {len(oos)}，至少需要 {MIN_OOS_SAMPLES}")
     if oos_avg is not None and oos_avg <= 0:
-        reasons.append("时序样本外30日平均超额不为正")
+        reasons.append("时序样本外30自然日平均超额不为正")
     if oos_win is not None and oos_win <= 0.5:
-        reasons.append("时序样本外30日超额胜率不高于50%")
+        reasons.append("时序样本外30自然日超额胜率不高于50%")
     current_dependency_hash = factor_contract.fingerprint(
         factor_contract.stock_data_dependencies(factor_config.model_contract("sector")))
     gate = {
@@ -742,15 +844,17 @@ def selection_backtest(p: dict) -> dict:
     result = {
         "source": "selection_backtest", "fetched_at": common.now_str(),
         "return_calc_version": RETURN_CALC_VERSION,
+        "horizons": [dict(spec) for spec in HORIZON_SPECS],
         "factor_contract": factor_config.model_contract("stock"),
         "total_selections": len(sels), "recomputed_samples": computed_calls,
+        "backfilled_prices": backfilled_prices,
         "by_category_return": {key: summarize(value) for key, value in cat_returns.items()},
         "by_category_excess": {key: summarize(value) for key, value in cat_excess.items()},
         "auto_by_driver_excess": {key: summarize(value) for key, value in auto_by_driver.items()},
         "auto_by_bucket_return": {key: summarize(value) for key, value in auto_by_bucket.items()},
         "optimization_gate": gate, "sample_hash": sample_hash,
-        "tuning_hints": tuning_hints, "details": details[:100],
-        "note": "仅当前因子契约下、来自可核验screen_quant运行的auto样本可进入优化门禁。",
+        "tuning_hints": tuning_hints, "details": details[:500],
+        "note": "1/2/3日按交易日，7/30日按自然日目标后的首个交易日；仅受控auto样本可进入优化门禁。",
     }
     if p.get("save_snapshot", True):
         snapshot_payload = {key: value for key, value in result.items() if key != "details"}
@@ -802,6 +906,13 @@ def selection_dashboard(p: dict) -> dict:
     except (TypeError, ValueError) as exc:
         raise ParamError("limit 必须是 1 到 1000 的整数") from exc
     records = records[:limit]
+    refreshed_records = []
+    backfilled_prices = 0
+    for record in records:
+        updated, changed = _ensure_selection_price(record, "selection_dashboard")
+        refreshed_records.append(updated)
+        backfilled_prices += int(changed)
+    records = refreshed_records
 
     market = _market_snapshot([str(record.get("code") or "") for record in records])
     quote_map = market.get("quotes") or {}
@@ -811,14 +922,10 @@ def selection_dashboard(p: dict) -> dict:
         extra = record.get("extra") or {}
         code = str(record.get("code", "")).upper()
         quote = quote_map.get(code, {})
-        selected_price = extra.get("selected_price")
-        current_price = quote.get("latest_price")
-        since_return = None
-        try:
-            if selected_price is not None and current_price is not None and float(selected_price):
-                since_return = round((float(current_price) / float(selected_price) - 1) * 100, 2)
-        except (TypeError, ValueError, ZeroDivisionError):
-            since_return = None
+        selected_price = _valid_price(extra.get("selected_price"))
+        current_price = _valid_price(quote.get("latest_price"))
+        since_return = (round((current_price / selected_price - 1) * 100, 2)
+                        if selected_price is not None and current_price is not None else None)
 
         tags = [tag for tag in _record_tags(extra, str(record.get("driver") or ""))
                 if tag not in selection_tags.AUTO_MARKET_TAGS]
@@ -850,8 +957,10 @@ def selection_dashboard(p: dict) -> dict:
             "event": extra.get("core_event") or extra.get("event", ""),
             "market_role": extra.get("market_role", ""),
             "reason": record.get("reason", ""),
-            "selected_price": float(selected_price) if selected_price is not None else None,
+            "selected_price": selected_price,
             "selected_price_date": extra.get("price_trade_date"),
+            "selected_price_source": extra.get("price_source"),
+            "price_backfilled_at": extra.get("price_backfilled_at"),
             "latest_price": current_price,
             "latest_chg_pct": quote.get("latest_chg_pct"),
             "latest_quote_time": quote.get("latest_quote_time"),
@@ -885,6 +994,7 @@ def selection_dashboard(p: dict) -> dict:
             "default_date_range": default_applied,
             "group_by": "date" if keyword else "theme",
             "total": len(rows), "hotspots": hotspots, "rows": rows,
+            "backfilled_prices": backfilled_prices,
             "note": "优先使用实时行情，失败时回退最近完成交易日收盘；缺失项保持为空，不做推断"}
 
 

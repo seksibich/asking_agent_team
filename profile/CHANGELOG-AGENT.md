@@ -31,6 +31,23 @@
 
 ## 版本记录（最新在上）
 
+### v2.1.0 — 2026-07-16（统一业务响应 health + 五轨版本协调 + 闭环补强）
+
+- **摘要**：所有已连通的服务业务 JSON 响应在保留原状态码与顶层 `data_version` 的同时统一携带 `/health` 同口径快照，覆盖成功、权限/业务错误、404/405、422 与未捕获 500；健康探测逐项容错，不得覆盖原业务结果。Agent 改为先协调五轨版本再处理业务结果，增加旧服务单次 `/health` 回退、目标版本元组一次性锁和权限阻塞待办。同步补齐 T1 正式候选必须来自真实筛选运行，以及 T7 新预判登记与成熟历史回测的顺序隔离。
+- **对应 git commit**：待提交。
+- **变更文件清单（agent 相关）**：
+  - `agent/init.md`、`agent/index.md`、`agent/schedule.md`
+  - `agent/memory/MEMORY.md`、`agent/memory/templates/服务状态与能力.md`
+  - `agent/agents/TEAM.md`、`agent/agents/ORCHESTRATION.md`、`agent/agents/main-orchestrator.md`
+  - `agent/skills/data-service/SKILL.md`、`agent/skills/pre-market/SKILL.md`、`agent/skills/post-market/SKILL.md`、`agent/skills/review-learning/SKILL.md`
+  - `doc/AGENT_SERVICE_GUIDE.md`、`doc/SERVICE_INDEX.md`
+  - 服务端（非 Agent 文档，一并记录）：`service/app.py`
+- **Agent 动作**：
+  1. 重读本条全部文件，把每次业务 JSON 响应的处理顺序改为“先读取 health 并协调版本，再处理成功数据或错误”。
+  2. 以 `agent_doc_version|git_revision|data_version|selection_tag_version|portfolio_version` 目标元组作为单任务一次性锁；相同元组不得因升级或刷新响应再次触发。
+  3. 旧服务缺少 `health` 时整条请求链只补调一次 `/health`；401/403 阻塞刷新时创建有时效短期事项，不得声称同步完成。
+  4. T1 新增正式 auto 候选必须实际执行 `screen_quant`/`screen_trend` 并原样携带 `screening_run_id`；否则只复核既有候选。T7 先登记新方向性预判，再仅回测目标日已成熟的历史预判，二者不得混算。
+
 ### v2.0.0 — 2026-07-16（记忆生命周期分层 + SOUL 纯人格边界）
 
 - **摘要**：对运行期记忆做不兼容分层。主 `MEMORY.md` 只允许永久规范、稳定偏好、经多个独立样本验证的通用经验及专项索引；用户稳定资料独立写 `USER.md`；短期事项改为目录内一事一文件，统一命名 `YYYYMMDD-HHmm-有效至YYYYMMDD-HHmm-描述.md`，接口报错附件复用事项前缀并随事项删除。关注持仓与服务能力分别独立维护。新增本地/Coze 工作文件—记忆双栏映射和 `tmp/tmp_YYYYMMDD-HHmmss_文件名` 普通临时产物规则；本地关键版本缺失时必须全量初始化，禁止未知基线增量。`SOUL.md` 只保留人格、行为边界和查阅路由。

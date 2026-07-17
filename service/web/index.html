@@ -140,7 +140,7 @@
     <section id="tab-selections" class="panel">
       <div class="card selection-hero">
         <div class="card-title">量化选股看板 <span id="sl-meta" class="meta"></span></div>
-        <p class="hint">首次进入默认展示目标交易日及之前三个交易日。切换到本页或点击“刷新行情”会更新实时价格和涨停/跌停标签；实时行情不可用时如实回退最近收盘。</p>
+        <p class="hint">首次进入默认展示目标交易日及之前三个交易日。“查询选股记录”会按条件重新加载；“刷新行情”只更新当前列表的价格、行情标签和缺失选股价，不改变筛选、排序或展开状态。</p>
         <div class="filter-grid">
           <div class="form-row"><label for="sl-from">起始日期</label><input id="sl-from" type="date" /></div>
           <div class="form-row"><label for="sl-to">结束日期</label><input id="sl-to" type="date" /></div>
@@ -334,45 +334,86 @@
 
     <!-- 回测复盘 -->
     <section id="tab-backtest" class="panel">
-      <div class="card">
-        <div class="card-title">回测复盘</div>
-        <div class="form-row inline">
-          <button id="b-run" class="btn-primary">
+      <div class="card backtest-hero">
+        <div class="backtest-hero-main">
+          <div>
+            <div class="card-title backtest-title">回测复盘 <span id="b-meta" class="meta"></span></div>
+            <p class="hint">统一观察选股后 1 / 2 / 3 个交易日，以及 7 / 30 个自然日目标后的首个交易日。收益使用前复权行情；超额收益以同日沪深300为基准。</p>
+          </div>
+          <button id="b-run" class="btn-primary" type="button">
             <svg viewBox="0 0 24 24" class="btn-ic"><path d="M4 4v16h16M8 16l3-4 3 2 4-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            加载回测数据
+            刷新回测
           </button>
-          <span id="b-meta" class="meta"></span>
         </div>
-        <p class="hint">数据源：自动选股跟踪与预判命中回测；选股、预判、前向收益和回测快照统一由数据库持久化。</p>
+        <div class="backtest-kpis">
+          <div class="backtest-kpi"><small>选股记录</small><b id="b-kpi-total">—</b><span>当前可见范围</span></div>
+          <div class="backtest-kpi"><small>30自然日成熟受控样本</small><b id="b-kpi-controlled">—</b><span>符合筛选契约</span></div>
+          <div class="backtest-kpi"><small>时序样本外</small><b id="b-kpi-oos">—</b><span>用于防止过拟合</span></div>
+          <div class="backtest-kpi"><small>调参门禁</small><b id="b-kpi-gate" class="gate-value">—</b><span id="b-kpi-gate-sub">等待加载</span></div>
+        </div>
       </div>
 
-      <!-- 自动选股回测 -->
-      <div class="card">
-        <div class="card-title">自动选股 · 各持有期平均收益 (%)</div>
-        <div id="b-auto-ret" class="chart-wrap"><div class="empty">点击「加载回测数据」</div></div>
+      <div class="backtest-chart-grid">
+        <div class="card backtest-chart-card">
+          <div class="card-title">自动选股平均收益 <span class="meta">五种期限</span></div>
+          <div id="b-auto-ret" class="chart-wrap"><div class="empty">点击「刷新回测」</div></div>
+        </div>
+        <div class="card backtest-chart-card">
+          <div class="card-title">自动选股胜率 <span class="meta">收益大于 0</span></div>
+          <div id="b-auto-win" class="chart-wrap"><div class="empty">—</div></div>
+        </div>
       </div>
-      <div class="card">
-        <div class="card-title">自动选股 · 各持有期胜率 (%)</div>
-        <div id="b-auto-win" class="chart-wrap"><div class="empty">—</div></div>
+
+      <div class="backtest-insight-grid">
+        <div class="card">
+          <div class="card-title">驱动表现 <span class="meta">30自然日相对沪深300超额</span></div>
+          <div id="b-driver" class="chart-wrap"><div class="empty">—</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">预判回测 <span id="b-pred-meta" class="meta"></span></div>
+          <div id="b-pred-acc" class="chart-wrap"><div class="empty">—</div></div>
+        </div>
       </div>
-      <div class="card">
-        <div class="card-title">自动选股 · 分驱动 30 日相对沪深300超额 (%)</div>
-        <div id="b-driver" class="chart-wrap"><div class="empty">—</div></div>
-      </div>
-      <div class="card">
-        <div class="card-title">调参建议</div>
+
+      <div class="card backtest-gate-card">
+        <div class="backtest-section-head">
+          <div>
+            <div class="card-title">调参门禁与建议</div>
+            <p id="b-version" class="hint">加载后展示计算版本、快照和补算情况。</p>
+          </div>
+          <span id="b-gate-badge" class="gate-badge neutral">等待加载</span>
+        </div>
+        <div id="b-gate-reasons" class="gate-reasons"></div>
         <div id="b-hints" class="hints"><div class="empty">—</div></div>
       </div>
 
-      <!-- 预判回测 -->
-      <div class="card">
-        <div class="card-title">预判回测 <span id="b-pred-meta" class="meta"></span></div>
-        <div id="b-pred-acc" class="chart-wrap"><div class="empty">—</div></div>
+      <div class="card backtest-detail-card">
+        <div class="backtest-section-head">
+          <div class="card-title">选股明细 <span id="b-detail-meta" class="meta"></span></div>
+          <label class="backtest-filter" for="b-category">类别
+            <select id="b-category">
+              <option value="">全部类别</option>
+              <option value="auto">每日自动选股</option>
+              <option value="manual">用户触发选股</option>
+              <option value="watch">历史关注</option>
+              <option value="holding">历史持仓</option>
+            </select>
+          </label>
+        </div>
+        <div id="b-detail" class="backtest-details"><div class="empty">—</div></div>
       </div>
 
-      <div class="card">
-        <div class="card-title">选股明细 <span id="b-detail-meta" class="meta"></span></div>
-        <div id="b-detail" class="table-wrap"><div class="empty">—</div></div>
+      <div class="card backtest-log-card admin-only">
+        <div class="card-title">运行审计日志下载 <span class="meta">管理员</span></div>
+        <p class="hint">按场景下载 JSONL，可用于后续分析接口稳定性、回测门禁和选股登记质量。</p>
+        <div class="log-download-grid">
+          <label>场景<select id="log-scene"><option value="api">接口调用</option><option value="backtest">回测记录</option><option value="selection">选股记录</option></select></label>
+          <label>范围<select id="log-scope"><option value="date">单日</option><option value="range">日期区间</option><option value="all">全量</option></select></label>
+          <label class="log-date-field" data-log-mode="date">日期<input id="log-date" type="date" /></label>
+          <label class="log-range-field hidden" data-log-mode="range">开始<input id="log-from" type="date" /></label>
+          <label class="log-range-field hidden" data-log-mode="range">结束<input id="log-to" type="date" /></label>
+          <button id="log-download" class="btn-ghost" type="button">下载日志</button>
+        </div>
       </div>
     </section>
 

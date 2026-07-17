@@ -635,7 +635,7 @@ function selectionCard(r) {
       <div class="selection-detail-footer">
         <div class="factor-snapshot-wrap">
           <details class="factor-snapshot"><summary>查看因子快照</summary><p>${factors}</p></details>
-          <div class="selection-audit">选股 ${esc(r.selected_at || r.logged_at || "—")} · 行情 ${esc(r.latest_quote_time || "—")} · 原始分 ${fmtMaybe(r.score_raw, 4)} · 运行 ${esc(r.screening_run_id || "legacy")}</div>
+          <div class="selection-audit">选股 ${esc(r.selected_at || r.logged_at || "—")} · 选股价 ${esc(r.selected_price_date || "日期未知")} / ${esc(r.selected_price_source || "来源未知")}${r.price_backfilled_at ? ` · 已自动补价 ${esc(r.price_backfilled_at)}` : ""} · 行情 ${esc(r.latest_quote_time || "—")} · 原始分 ${fmtMaybe(r.score_raw, 4)} · 运行 ${esc(r.screening_run_id || "legacy")}</div>
         </div>
         ${deleteButton}
       </div>
@@ -653,7 +653,8 @@ function renderSelectionRows() {
     ? `${_selectionData.quote_trade_date_min || "?"}–${_selectionData.quote_trade_date_max || "?"}（混合行情日）`
     : (_selectionData.quote_trade_date || "行情不可用");
   const quoteErrors = Array.isArray(_selectionData.quote_errors) ? _selectionData.quote_errors : [];
-  $("sl-meta").textContent = `${quoteLabel} · ${_selectionRows.length} 条${quoteErrors.length ? ` · 行情错误 ${quoteErrors.length} 条` : ""}`;
+  const backfilled = Number(_selectionData.backfilled_prices || 0);
+  $("sl-meta").textContent = `${quoteLabel} · ${_selectionRows.length} 条${backfilled ? ` · 自动补价 ${backfilled} 条` : ""}${quoteErrors.length ? ` · 行情错误 ${quoteErrors.length} 条` : ""}`;
   $("sl-meta").title = quoteErrors.join("\n");
   $("sl-refreshed").textContent = _selectionData.refreshed_at ? `最近刷新 ${_selectionData.refreshed_at}` : "尚未刷新";
   if (!filtered.length) {
@@ -726,8 +727,83 @@ async function loadSelections(force = false) {
     refreshButton.textContent = "刷新行情";
   }
 }
+
+function openedSelectionIds() {
+  return new Set([...document.querySelectorAll("details.selection-item[open]")]
+    .map((node) => String(node.dataset.selectionId || "")));
+}
+
+function restoreOpenedSelections(ids) {
+  document.querySelectorAll("details.selection-item").forEach((node) => {
+    if (ids.has(String(node.dataset.selectionId || ""))) node.open = true;
+  });
+}
+
+async function refreshSelectionQuotes() {
+  if (!_selectionRows.length) {
+    toast("当前列表为空，请先查询选股记录");
+    return;
+  }
+  const button = $("sl-refresh-quotes");
+  const opened = openedSelectionIds();
+  button.disabled = true;
+  button.textContent = "刷新中…";
+  try {
+    const res = await fetch(cfg.base.replace(/\/$/, "") + "/selections/quotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": cfg.key },
+      body: JSON.stringify({ items: _selectionRows.map((row) => ({ id: row.id, code: row.code })) }),
+    });
+    const body = await res.json();
+    if (!res.ok || body.ok === false) throw new Error(body.error || `HTTP ${res.status}`);
+    const quotes = body.quotes || {};
+    const prices = body.selected_prices || {};
+    _selectionRows = _selectionRows.map((row) => {
+      const quote = quotes[String(row.code || "").toUpperCase()] || {};
+      const priceInfo = prices[String(row.id)] || {};
+      const selectedPrice = Number(priceInfo.selected_price ?? row.selected_price);
+      const latestPrice = Number(quote.latest_price);
+      const sinceSelection = Number.isFinite(selectedPrice) && selectedPrice > 0
+        && Number.isFinite(latestPrice) && latestPrice > 0
+        ? Math.round((latestPrice / selectedPrice - 1) * 10000) / 100 : null;
+      const previousMarketTags = new Set(row.market_tags || []);
+      const baseTags = (row.tags || []).filter((tag) => !previousMarketTags.has(tag));
+      const marketTags = quote.market_tags || [];
+      return {
+        ...row, ...quote,
+        selected_price: Number.isFinite(selectedPrice) && selectedPrice > 0 ? selectedPrice : null,
+        selected_price_date: priceInfo.selected_price_date || row.selected_price_date,
+        selected_price_source: priceInfo.selected_price_source || row.selected_price_source,
+        price_backfilled_at: priceInfo.price_backfilled_at || row.price_backfilled_at,
+        since_selection_pct: sinceSelection,
+        market_tags: marketTags,
+        tags: [...baseTags, ...marketTags.filter((tag) => !baseTags.includes(tag))],
+      };
+    });
+    _selectionData = {
+      ..._selectionData,
+      refreshed_at: body.refreshed_at,
+      quote_trade_date: body.quote_date,
+      quote_trade_date_min: body.quote_date_min,
+      quote_trade_date_max: body.quote_date_max,
+      mixed_quote_dates: Boolean(body.mixed_quote_dates),
+      quote_errors: body.errors || [],
+      backfilled_prices: body.backfilled_prices || 0,
+    };
+    renderSelectionTags();
+    renderSelectionRows();
+    restoreOpenedSelections(opened);
+    toast(`已刷新当前 ${body.record_count ?? _selectionRows.length} 条记录${body.backfilled_prices ? `，补齐 ${body.backfilled_prices} 条选股价` : ""}`, "ok");
+  } catch (error) {
+    toast("行情刷新失败：" + error.message, "bad");
+  } finally {
+    button.disabled = false;
+    button.textContent = "刷新行情";
+  }
+}
+
 $("sl-run").onclick = () => loadSelections(true);
-$("sl-refresh-quotes").onclick = () => loadSelections(true);
+$("sl-refresh-quotes").onclick = refreshSelectionQuotes;
 $("sl-tags").addEventListener("click", (e) => {
   const tag = e.target.closest("[data-selection-tag]");
   if (!tag) return;
@@ -1236,81 +1312,185 @@ function renderRanges(inds, weights) {
 }
 
 /* ---------- 回测复盘 ---------- */
-const HZ_ORDER = ["1d", "3d", "7d", "30d"];
-const HZ_LABEL = { "1d": "1日", "3d": "3日", "7d": "7日", "30d": "30日" };
+const HZ_ORDER = ["1t", "2t", "3t", "7c", "30c"];
+const HZ_LABEL = {
+  "1t": "1交易日", "2t": "2交易日", "3t": "3交易日",
+  "7c": "7自然日", "30c": "30自然日",
+};
+const RETURN_STATUS_LABEL = {
+  success: "已成熟", not_matured: "未成熟", failed: "计算失败", missing: "待计算",
+};
+let _backtestDetails = [];
+let _btLoaded = false;
 
+function returnChip(row, horizon) {
+  const status = row.return_status?.[horizon] || "missing";
+  const value = row.returns_pct?.[horizon];
+  const cls = value == null ? "pending" : (value >= 0 ? "pos" : "neg");
+  const exitDate = row.return_exit_dates?.[horizon];
+  return `<div class="return-chip ${cls}" title="${esc(RETURN_STATUS_LABEL[status] || status)}${exitDate ? ` · 退出 ${exitDate}` : ""}">
+    <small>${HZ_LABEL[horizon]}</small><b>${pctText(value)}</b><span>${esc(exitDate || RETURN_STATUS_LABEL[status] || status)}</span>
+  </div>`;
+}
+
+function renderBacktestDetails() {
+  const category = $("b-category").value;
+  const rows = _backtestDetails.filter((row) => !category || row.category === category);
+  $("b-detail-meta").textContent = `显示 ${rows.length} / ${_backtestDetails.length} 条`;
+  if (!rows.length) {
+    $("b-detail").innerHTML = '<div class="empty">当前类别没有回测明细</div>';
+    return;
+  }
+  $("b-detail").innerHTML = rows.map((row) => {
+    const percentile = row.score_percentile == null ? "—" : `${(Number(row.score_percentile) * 100).toFixed(1)}%`;
+    return `<article class="backtest-detail-item">
+      <div class="backtest-detail-main">
+        <div class="backtest-detail-ticker"><b>${esc(row.name || "-")}</b><code>${esc(row.code)}</code></div>
+        <div><small>选股日期</small><b>${esc(row.date || "—")}</b></div>
+        <div><small>来源 / 驱动</small><b>${esc(CATEGORY_LABEL[row.category] || row.category)} · ${esc(row.driver || "未标注")}</b></div>
+        <div><small>评分分位</small><b>${percentile}</b></div>
+        <span class="controlled-badge ${row.controlled_auto ? "yes" : "no"}">${row.controlled_auto ? "受控样本" : "非调参样本"}</span>
+      </div>
+      <div class="return-chip-row">${HZ_ORDER.map((horizon) => returnChip(row, horizon)).join("")}</div>
+      <div class="backtest-detail-foot">选股价 ${fmtMaybe(row.selected_price)} · 分桶 ${esc(row.bucket || "—")} · 计算 ${esc(row.return_calc_version || "—")}</div>
+    </article>`;
+  }).join("");
+}
+
+$("b-category").onchange = renderBacktestDetails;
 $("b-run").onclick = () => loadBacktest(true);
 
-let _btLoaded = false;
 async function loadBacktest(force = false) {
   if (_btLoaded && !force) return;
   _btLoaded = true;
+  const button = $("b-run");
+  button.disabled = true;
+  button.lastChild.textContent = " 加载中…";
   const setLoading = (id) => ($(id).innerHTML = '<div class="empty">加载中…</div>');
   ["b-auto-ret", "b-auto-win", "b-driver", "b-pred-acc", "b-detail"].forEach(setLoading);
   $("b-hints").innerHTML = '<div class="empty">加载中…</div>';
+  $("b-gate-reasons").innerHTML = "";
 
-  // 选股回测
   try {
-    const d = await call("selection_backtest", {});
-    $("b-meta").textContent = `共登记 ${d.total_selections ?? 0} 条`;
-    const auto = (d.by_category_return && d.by_category_return.auto) || null;
-    const autoExcess = (d.by_category_excess && d.by_category_excess.auto) || null;
+    const d = await call("selection_backtest", { save_snapshot: true });
+    const gate = d.optimization_gate || {};
+    const eligible = Boolean(gate.eligible);
+    $("b-meta").textContent = `${d.fetched_at || ""} · ${d.total_selections ?? 0} 条`;
+    $("b-kpi-total").textContent = d.total_selections ?? 0;
+    $("b-kpi-controlled").textContent = gate.controlled_sample_count ?? 0;
+    $("b-kpi-oos").textContent = gate.oos_sample_count ?? 0;
+    $("b-kpi-gate").textContent = eligible ? "已开放" : "已锁定";
+    $("b-kpi-gate").className = `gate-value ${eligible ? "open" : "locked"}`;
+    $("b-kpi-gate-sub").textContent = eligible ? "可依据建议人工调参" : `${(gate.reasons || []).length} 项条件未满足`;
+    $("b-gate-badge").textContent = eligible ? "允许分析调参" : "禁止自动调参";
+    $("b-gate-badge").className = `gate-badge ${eligible ? "open" : "locked"}`;
+    $("b-version").textContent = `计算版本 ${d.return_calc_version || "—"} · 快照 ${d.snapshot_id ?? "未保存"} · 本次重算 ${d.recomputed_samples ?? 0} 条 · 自动补价 ${d.backfilled_prices ?? 0} 条`;
+    $("b-gate-reasons").innerHTML = (gate.reasons || []).length
+      ? (gate.reasons || []).map((reason) => `<span>${esc(reason)}</span>`).join("")
+      : '<span class="passed">样本量、日期覆盖与样本外表现均通过</span>';
 
+    const auto = d.by_category_return?.auto || null;
     if (auto) {
       const ret = HZ_ORDER.filter((h) => auto[h]).map((h) => ({ label: HZ_LABEL[h], value: auto[h].avg_pct }));
-      $("b-auto-ret").innerHTML = svgBars(ret, { unit: "%" });
       const win = HZ_ORDER.filter((h) => auto[h]).map((h) => ({ label: HZ_LABEL[h], value: auto[h].win_rate }));
-      $("b-auto-win").innerHTML = svgBars(win, { unit: "%" });
+      $("b-auto-ret").innerHTML = ret.length ? svgBars(ret, { unit: "%" }) : '<div class="empty">暂无成熟收益样本</div>';
+      $("b-auto-win").innerHTML = win.length ? svgBars(win, { unit: "%" }) : '<div class="empty">暂无成熟胜率样本</div>';
     } else {
-      $("b-auto-ret").innerHTML = '<div class="empty">暂无自动选股样本（需先经 log_selection 登记并满持有期）</div>';
+      $("b-auto-ret").innerHTML = '<div class="empty">暂无自动选股成熟样本</div>';
       $("b-auto-win").innerHTML = '<div class="empty">—</div>';
     }
 
-    // 分驱动 30 日超额
-    const drv = d.auto_by_driver_excess || {};
-    const drvItems = Object.keys(drv)
-      .filter((k) => drv[k] && drv[k]["30d"])
-      .map((k) => ({ label: k, value: drv[k]["30d"].avg_pct }));
-    $("b-driver").innerHTML = drvItems.length ? svgBars(drvItems, { unit: "%" }) : '<div class="empty">30 日样本不足</div>';
+    const driver = d.auto_by_driver_excess || {};
+    const driverItems = Object.keys(driver)
+      .filter((key) => driver[key]?.["30c"])
+      .map((key) => ({ label: key, value: driver[key]["30c"].avg_pct }));
+    $("b-driver").innerHTML = driverItems.length
+      ? svgBars(driverItems, { unit: "%" })
+      : '<div class="empty">30自然日受控超额样本不足</div>';
 
-    // 调参建议
     const hints = d.tuning_hints || [];
     $("b-hints").innerHTML = hints.length
-      ? '<ul class="hint-list">' + hints.map((h) => `<li>${h}</li>`).join("") + "</ul>"
+      ? '<ul class="hint-list">' + hints.map((hint) => `<li>${esc(hint)}</li>`).join("") + "</ul>"
       : '<div class="empty">暂无建议</div>';
 
-    // 明细
-    const details = (d.details || []).slice().reverse();
-    $("b-detail-meta").textContent = `${details.length} 条`;
-    const rows = details.map((r) => ({
-      日期: r.date, 代码: r.code, 名称: r.name, 类别: r.category, 驱动: r.driver,
-      分数: r.score,
-      "1日": r.returns_pct?.["1"], "3日": r.returns_pct?.["3"],
-      "7日": r.returns_pct?.["7"], "30日": r.returns_pct?.["30"],
-    }));
-    $("b-detail").innerHTML = rows.length ? renderTable(rows) : '<div class="empty">无明细</div>';
-  } catch (e) {
+    _backtestDetails = (d.details || []).slice().reverse();
+    renderBacktestDetails();
+  } catch (error) {
+    _btLoaded = false;
+    _backtestDetails = [];
     ["b-auto-ret", "b-auto-win", "b-driver", "b-detail"].forEach((id) => ($(id).innerHTML = ""));
     $("b-hints").innerHTML = "";
-    toast("选股回测加载失败：" + e.message, "bad");
+    $("b-meta").textContent = "加载失败";
+    toast("选股回测加载失败：" + error.message, "bad");
   }
 
-  // 预判回测
   try {
     const d = await call("predictions_backtest", {});
     $("b-pred-meta").textContent = d.trade_date ? `${d.trade_date} · ${d.correct}/${d.total} 命中` : "";
-    const acc = d.accuracy_by_driver || {};
-    const items = Object.keys(acc)
-      .filter((k) => acc[k] != null)
-      .map((k) => ({ label: k, value: acc[k] }));
+    const accuracy = d.accuracy_by_driver || {};
+    const items = Object.keys(accuracy)
+      .filter((key) => accuracy[key] != null)
+      .map((key) => ({ label: key, value: accuracy[key] }));
     if (d.accuracy_pct != null) items.unshift({ label: "总体", value: d.accuracy_pct });
     $("b-pred-acc").innerHTML = items.length
       ? svgBars(items, { unit: "%" })
-      : '<div class="empty">当日无可回测预判（数据库中无记录或样本尚未成熟）</div>';
-  } catch (e) {
-    $("b-pred-acc").innerHTML = '<div class="empty">预判回测加载失败：' + e.message + "</div>";
+      : '<div class="empty">当日无可回测预判</div>';
+  } catch (error) {
+    $("b-pred-acc").innerHTML = '<div class="empty">预判回测加载失败：' + esc(error.message) + "</div>";
+  } finally {
+    button.disabled = false;
+    button.lastChild.textContent = " 刷新回测";
   }
 }
+
+function updateLogScopeUI() {
+  const scope = $("log-scope").value;
+  document.querySelectorAll("[data-log-mode]").forEach((node) => {
+    node.classList.toggle("hidden", node.dataset.logMode !== scope);
+  });
+}
+
+$("log-scope").onchange = updateLogScopeUI;
+const todayText = new Date().toISOString().slice(0, 10);
+$("log-date").value = todayText;
+$("log-from").value = todayText;
+$("log-to").value = todayText;
+$("log-download").onclick = async () => {
+  const button = $("log-download");
+  const scope = $("log-scope").value;
+  const params = new URLSearchParams({ scene: $("log-scene").value, scope });
+  if (scope === "date") params.set("date", $("log-date").value.replaceAll("-", ""));
+  if (scope === "range") {
+    params.set("date_from", $("log-from").value.replaceAll("-", ""));
+    params.set("date_to", $("log-to").value.replaceAll("-", ""));
+  }
+  button.disabled = true;
+  button.textContent = "准备下载…";
+  try {
+    const response = await fetch(`${cfg.base.replace(/\/$/, "")}/admin/logs/download?${params}`, {
+      headers: { "X-API-Key": cfg.key },
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "stock-agent-logs.jsonl";
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast("日志下载已开始", "ok");
+  } catch (error) {
+    toast("日志下载失败：" + error.message, "bad");
+  } finally {
+    button.disabled = false;
+    button.textContent = "下载日志";
+  }
+};
 
 /* ---------- 权重配置 ---------- */
 async function loadWeights() {

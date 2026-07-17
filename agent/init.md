@@ -24,9 +24,18 @@
 
 ## 文档版本与同步（AGENT_DOC_VERSION，与 git 版本对齐）★
 
-- **AGENT_DOC_VERSION：`v2.0.0`**（记忆生命周期分层；SOUL 仅保留人格与行为约束，2026-07-16）
+- **AGENT_DOC_VERSION：`v2.1.0`**（统一响应 health 自检、版本协调与闭环补强，2026-07-16）
 - 变更日志：`profile/CHANGELOG-AGENT.md`（每条版本记录含摘要 + **对应 git commit** + 变更文件清单 + agent 动作）。
 - 仓库（公开）：`https://github.com/seksibich/asking_agent_team`
+
+### 业务响应内嵌 health 与版本协调（v2.1.0）
+
+- 除 `GET /health` 继续返回顶层健康字段外，所有已连通的服务业务 JSON 响应，无论 HTTP 成功或失败，均应包含与 `/health` 同口径的 `health` 对象；顶层 `data_version` 保留用于兼容旧 Agent。
+- 每次收到业务 JSON 响应时，必须**先协调版本、后处理本次业务结果**：先读取 `health`，比较 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`、`portfolio_version`，完成当前权限允许的同步后，再消费成功数据或按状态码处理错误。
+- 若响应没有 `health`，视为旧服务兼容场景：本次请求链只额外调用一次 `GET /health`，不得递归补调；若补调仍失败，则保留原业务成功/失败结论，标记“版本状态暂不可核验”。
+- 使用目标五轨版本元组作为本次任务的一次性协调锁；同一元组只触发一次文档升级、功能/标签刷新和持仓同步。升级或刷新请求返回相同元组时只更新状态，不得再次启动升级，防止循环。
+- 文档版本变化按下方同步流程执行；`data_version` 变化刷新 `/functions`；`selection_tag_version` 变化刷新 `selection_tag_catalog`；`portfolio_version` 只在任务涉及关注/持仓或开场规则要求时调用 `portfolio_get`。
+- 401/403 不妨碍读取响应中的公开 health 版本；若权限导致功能、标签或持仓刷新无法完成，只更新已核验版本，把受阻动作写入有时效的短期事项并明确“同步未完成”，不得声称已升级完成。
 
 ### 健康接口中的版本号与记忆归属
 - `portfolio_version`：当前关注与持仓版本，只保存在运行期 `agent记忆/关注与持仓.md`；变化时调用 `portfolio_get` 全量刷新镜像。
@@ -35,7 +44,7 @@
 - 旧 `agent记忆/service_state.json` 停用；迁移有效连接、版本和功能索引后删除，不得继续双写。
 
 ### 何时检查（agent 常驻，多触发点）
-1. 每次收到 init.md（初始化）；2. 每次对话/任务开场（见 index.md 检查清单）；3. 每次调用数据服务后顺带看 `/health` 回传（与 `data_version` 一并比对）。
+1. 每次收到 init.md（初始化）；2. 每次对话/任务开场（见 index.md 检查清单）；3. 每次收到数据服务业务 JSON 响应时先读内嵌 `health`，旧服务缺失时仅按单次回退规则补调 `/health`。
 
 ### 同步流程（每次都执行，先于其它初始化步骤）
 1. 从 `服务状态与能力.md` 读取 `BASE_URL` 及本地 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`，再调 `GET /health` 读取目标版本。

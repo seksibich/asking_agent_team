@@ -33,15 +33,17 @@ disable-model-invocation: false
 POST /call
 {"function": "market_limit", "params": {"date": "20260714"}}
 ```
-返回：`{ "ok": true, "function": "...", "fetched_at": "...", "data": {...}, "data_version": "v1.xxxx" }`
+返回：`{ "ok": true, "function": "...", "fetched_at": "...", "data": {...}, "data_version": "v2.xxxx", "health": {...} }`。失败响应同样带 `data_version` 和 `health`，Agent 必须先协调版本再处理业务结果。
 
-## ★ 版本机制（必须遵守）
+## ★ 响应 health 与版本协调（必须先于业务处理）
 
-1. 每个响应都带 `data_version`（也在响应头 `X-Data-Version`）。
-2. 最近 `data_version` 和完整功能索引只保存在运行期 `服务状态与能力.md`，不得写主 MEMORY。
-3. 每次调用后对比版本：一致则继续；不一致立即 `GET /functions`，全量覆盖该文件的功能索引和检查时间。
-4. 初始化时先 `GET /health` 和 `/functions` 建立基线；接口失败产生的处理事项写入 `短期记忆/`，解决后删除。
-5. 版本号由功能索引内容自动生成，无需人工维护。
+1. `GET /health` 保持顶层健康字段；其他已连通的业务 JSON 响应，无论成功或失败，均应同时带顶层 `data_version` 和嵌套 `health`。`health` 与 `/health` 同口径，至少包含服务状态、交易日状态、数据源/数据库状态、功能数及五轨版本。
+2. 每次响应按固定顺序处理：先读取 `health`，比较 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`、`portfolio_version`；完成当前权限允许的版本协调后，再处理本次 `data` 或错误码。不得因 4xx/5xx 跳过版本检查。
+3. 同一任务以目标五轨版本元组作为一次性协调锁；相同元组只触发一次。升级、`/functions`、标签或持仓刷新响应再次携带同一元组时只更新状态，不得递归触发。
+4. 兼容旧服务：业务 JSON 缺少 `health` 时，本次请求链最多补调一次 `GET /health`；仍不可用则保留原业务结果，标“版本状态暂不可核验”，不得把版本探测失败改写成业务失败。
+5. 文档版本变化按 `agent/init.md` 执行升级；`data_version` 变化立即刷新 `/functions`；标签版本变化刷新 `selection_tag_catalog`；持仓版本变化仅在涉及持仓或开场同步规则要求时调用 `portfolio_get`。
+6. 401/403 响应中的 `health` 仍可用于版本比较。若权限阻塞功能、标签或持仓刷新，把未完成动作写入有时效的 `短期记忆/`，不得声称同步完成；获得权限并完成后立即删除事项及附件。
+7. 版本号由各自契约自动或独立维护；最近状态写入 `服务状态与能力.md`，`portfolio_version` 例外写入 `关注与持仓.md`，不得写主 MEMORY。
 
 ### 独立业务契约版本
 
@@ -112,10 +114,17 @@ POST /call
 
 | 返回 | 含义 | 智能体动作 |
 |---|---|---|
-| `503` | 服务未启动/未连通 | 提示用户启动本地 Docker 服务，停止取数 |
-| `401` | API Key 错误 | 提示检查鉴权配置 |
+| `503` | 服务未启动或运行依赖不可用 | 提示用户启动/检查本地 Docker 服务；若有 JSON 响应仍先消费 `health` |
+| `500` | 未捕获服务异常 | 标记服务内部错误，不使用缺失数据继续推断；保留时间与任务上下文供排障 |
+| `422` | 请求体、路径或查询参数校验失败 | 根据 `details` 修正字段结构、类型或必填项，不盲目重试 |
+| `405` | HTTP 方法错误 | 按端点契约改用正确方法 |
+| `404` | 资源或路由不存在 | 区分业务对象不存在与 URL 错误；必要时核对文档和功能索引 |
+| `403` | 当前 Key 无权限 | 仍先消费 `health`；改用管理员 Key，受阻同步写有时效短期事项 |
+| `402` | tushare 积分/权限不足 | 告知该功能不可用，仅改用允许的真实数据路径或跳过 |
+| `401` | API Key 错误 | 仍先消费 `health`，再提示检查鉴权配置；不盲目重试 |
 | `400` | 参数错误/未知功能 | 检查 function 名与参数；必要时先 `/functions` 刷新索引 |
-| `402` | tushare 积分/权限不足 | 告知该功能不可用，改用替代数据或跳过 |
+
+> 以上已连通的业务 JSON 错误均保留原状态码，并带顶层 `data_version`、响应头 `X-Data-Version` 与嵌套 `health`。必须先协调版本，再执行本表动作。
 
 ## Skill 加载约束 / 依赖 Skills
 

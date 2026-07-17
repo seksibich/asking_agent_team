@@ -43,7 +43,7 @@ disable-model-invocation: false
   ├── 基本面研报分析师：涨价/景气；业绩窗口判定与业绩增长参考池
   ├── 宏观时事分析师：晚间公告/消息、外盘展望、北向
   ├── 资金复盘：龙虎榜、游资/机构动向
-  └── 回测分析师：predictions_backtest + selection_backtest，仅处理正式 auto 样本
+  └── 回测分析师：先确认新方向性预判已由 `log_prediction` 固化；再执行 predictions_backtest + selection_backtest，其中预判回测只处理目标日已成熟的历史记录，选股回测只处理正式 auto 样本
   ↓ 主 Agent 汇总 + 二次验证（单子Agent超时5分钟标[超时]跳过）
   → 详尽综合复盘 + 正式次日候选 + 隔离的业绩增长参考池 + 因子调参
 ```

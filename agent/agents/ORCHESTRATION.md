@@ -11,7 +11,7 @@
 ## 场景一：盘前汇总（08:30，团队）
 
 ```
->> 前置：GET /health（trade_open? data_version 一致?）
+>> 前置：读取当前业务响应或 GET /health 的五轨版本；同一目标版本元组只协调一次，先完成文档/功能/标签及按需持仓同步，再处理业务结果
 >> 强制读取 agent记忆/daily/yyyyMMdd.md（无则用 关注与持仓.md + 近7日auto选股 生成）
 >> 只读取 `短期记忆/` 中与盘前任务相关且未过期的线索，先删除完成、证伪或过期项
 
@@ -76,7 +76,8 @@
    -> 宏观时事：晚间公告/消息、外盘展望（外部多源）、北向（money_hsgt）
    -> 资金复盘：龙虎榜/游资机构（money_toplist/money_topinst/money_hm_detail）
    -> 回测分析师：
-        predictions_backtest（当日正式预判准确率，分驱动）
+        log_prediction（先固化面向下一 SSE 交易日的新方向性预判）
+        predictions_backtest（随后仅核验目标日已成熟的历史预判，分驱动；不得纳入刚登记的新预判）
         selection_backtest（仅 auto 正式选股；排除业绩增长参考池）
 
 << 收集全部意见（超时 5 分钟的子 Agent 标 [超时] 跳过）

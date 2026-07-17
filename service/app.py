@@ -13,16 +13,21 @@ from __future__ import annotations
 
 import os
 import secrets
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+import audit_log
 import common
 import db
 import registry
@@ -139,11 +144,172 @@ def _require_admin(x_api_key: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="forbidden: 需要管理员 Key")
 
 
-def _versioned(body: dict[str, Any]) -> JSONResponse:
-    """统一编码日期、Decimal 等数据库类型，避免写入成功后响应序列化为 HTTP 500。"""
-    body["data_version"] = registry.data_version()
-    return JSONResponse(content=jsonable_encoder(body),
-                        headers={"X-Data-Version": registry.data_version()})
+def _should_audit_path(path: str) -> bool:
+    """只记录业务接口，跳过静态资源和框架文档。"""
+    return path != "/" and not path.startswith(("/ui", "/docs", "/redoc", "/openapi.json"))
+
+
+@app.middleware("http")
+async def audit_http_requests(request: Request, call_next):
+    """统一记录接口状态与耗时；日志失败不得影响请求。"""
+    started = time.perf_counter()
+    request_id = uuid.uuid4().hex
+    request.state.request_id = request_id
+    try:
+        response = await call_next(request)
+    except Exception:
+        if _should_audit_path(request.url.path):
+            audit_log.append("api", {
+                "event": "request_failed", "request_id": request_id,
+                "method": request.method, "path": request.url.path, "status": 500,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                "role": getattr(request.state, "role", None),
+                "key_fingerprint": audit_log.key_fingerprint(
+                    request.headers.get("X-API-Key")),
+                "function": getattr(request.state, "function", None),
+                "params": getattr(request.state, "params", None),
+            })
+        raise
+    response.headers["X-Request-ID"] = request_id
+    if _should_audit_path(request.url.path):
+        role = getattr(request.state, "role", None)
+        if role is None:
+            try:
+                role = _role_for(request.headers.get("X-API-Key"))
+            except Exception:
+                role = None
+        audit_log.append("api", {
+            "event": "request_completed" if response.status_code < 400 else "request_rejected",
+            "request_id": request_id, "method": request.method,
+            "path": request.url.path, "status": response.status_code,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            "role": role,
+            "key_fingerprint": audit_log.key_fingerprint(request.headers.get("X-API-Key")),
+            "function": getattr(request.state, "function", None),
+            "params": getattr(request.state, "params", None),
+        })
+    return response
+
+
+def _audit_function(function: str, params: dict[str, Any], role: str,
+                    duration_ms: float, data: Optional[dict[str, Any]] = None,
+                    error: Optional[str] = None, status: int = 200) -> None:
+    """为回测与选股写入可供后续分析的专业审计摘要。"""
+    if function in {"selection_backtest", "predictions_backtest"}:
+        payload: dict[str, Any] = {
+            "event": "completed" if error is None else "failed",
+            "function": function, "params": params, "role": role,
+            "success": error is None, "status": status,
+            "duration_ms": round(duration_ms, 2), "error": error,
+        }
+        if data:
+            payload["result"] = {key: data.get(key) for key in (
+                "source", "fetched_at", "snapshot_id", "sample_hash",
+                "return_calc_version", "total_selections", "recomputed_samples",
+                "backfilled_prices", "by_category_return", "by_category_excess",
+                "auto_by_driver_excess", "optimization_gate", "tuning_hints",
+                "trade_date", "total", "correct", "accuracy_pct", "accuracy_by_driver",
+            ) if key in data}
+        audit_log.append("backtest", payload)
+    elif function == "log_selection":
+        logged = bool((data or {}).get("logged"))
+        inserted = bool((data or {}).get("inserted"))
+        event = ("failed" if error is not None else "inserted" if logged and inserted
+                 else "duplicate" if logged else "rejected")
+        record = (data or {}).get("record") or {}
+        audit_log.append("selection", {
+            "event": event, "function": function, "role": role,
+            "success": error is None and logged, "status": status,
+            "duration_ms": round(duration_ms, 2), "error": error,
+            "reason": (data or {}).get("reason"),
+            "selection_id": record.get("id"), "date": record.get("sel_date"),
+            "code": record.get("code") or params.get("code"),
+            "name": record.get("name") or params.get("name"),
+            "category": record.get("category") or params.get("category"),
+            "screening_run_id": ((record.get("extra") or {}).get("screening_run_id")
+                                 or params.get("screening_run_id")),
+        })
+
+
+def _safe_health_value(getter, fallback: Any) -> Any:
+    """安全读取单个健康字段，任何探测失败都不得覆盖原业务响应。"""
+    try:
+        return getter()
+    except Exception:
+        return fallback
+
+
+def _health_snapshot() -> dict[str, Any]:
+    """生成与 /health 顶层字段一致的健康快照，并对每个探测项独立容错。"""
+    _safe_health_value(common.clean_expired_cache, None)
+    day = _safe_health_value(common.today_str, datetime.now().strftime("%Y%m%d"))
+    tushare_ready = bool(_safe_health_value(lambda: common.TUSHARE_TOKEN, ""))
+    trade_open = _safe_health_value(
+        lambda: common.is_trade_open(day) if tushare_ready else None,
+        None,
+    )
+
+    db_ready = False
+    portfolio_version = "unavailable"
+    try:
+        db.get_engine().connect().close()
+        db_ready = True
+        portfolio_version = _safe_health_value(db.get_portfolio_version, "unavailable")
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "date": day,
+        "trade_open": trade_open,
+        "tushare_ready": tushare_ready,
+        "db_ready": db_ready,
+        "portfolio_version": portfolio_version,
+        "selection_tag_version": _safe_health_value(
+            lambda: selection_tags.TAG_VERSION, "unknown"
+        ),
+        "functions": _safe_health_value(lambda: len(registry.names()), 0),
+        "agent_doc_version": _safe_health_value(version.agent_doc_version, "unknown"),
+        "git_revision": _safe_health_value(version.git_revision, "unknown"),
+        "data_version": _safe_health_value(registry.data_version, "unknown"),
+    }
+
+
+def _versioned(
+    body: dict[str, Any],
+    *,
+    status_code: int = 200,
+    headers: Optional[dict[str, str]] = None,
+    include_health: bool = True,
+) -> JSONResponse:
+    """统一编码与附加版本/健康数据，避免健康探测失败覆盖原业务结果。"""
+    payload = dict(body)
+    current_data_version = _safe_health_value(registry.data_version, "unknown")
+    payload["data_version"] = current_data_version
+    if include_health:
+        payload["health"] = _health_snapshot()
+
+    response_headers = dict(headers or {})
+    response_headers["X-Data-Version"] = current_data_version
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(payload),
+        headers=response_headers,
+    )
+
+
+def _error_response(
+    status_code: int,
+    error: Any,
+    *,
+    details: Any = None,
+    headers: Optional[dict[str, str]] = None,
+) -> JSONResponse:
+    """构造统一错误响应，保留原状态码并附加完整健康快照。"""
+    body: dict[str, Any] = {"ok": False, "error": error, "status": status_code}
+    if details is not None:
+        body["details"] = details
+    return _versioned(body, status_code=status_code, headers=headers)
 
 
 class CallReq(BaseModel):
@@ -153,29 +319,8 @@ class CallReq(BaseModel):
 
 @app.get("/health")
 def health():
-    common.clean_expired_cache()
-    day = common.today_str()
-    tushare_ready = bool(common.TUSHARE_TOKEN)
-    try:
-        open_ = common.is_trade_open(day) if tushare_ready else None
-    except Exception:
-        open_ = None
-    db_ready = True
-    portfolio_version = "unavailable"
-    try:
-        import db
-        db.get_engine().connect().close()
-        portfolio_version = db.get_portfolio_version()
-    except Exception:
-        db_ready = False
-    return _versioned({"status": "ok", "date": day, "trade_open": open_,
-                       "tushare_ready": tushare_ready, "db_ready": db_ready,
-                       "portfolio_version": portfolio_version,
-                       "selection_tag_version": selection_tags.TAG_VERSION,
-                       "functions": len(registry.names()),
-                       # agent 文档版本对齐：语义版本 + 部署 git 版本（供 agent 增量更新自身文档）
-                       "agent_doc_version": version.agent_doc_version(),
-                       "git_revision": version.git_revision()})
+    """返回顶层健康快照；避免在 /health 内重复嵌套 health。"""
+    return _versioned(_health_snapshot(), include_health=False)
 
 
 @app.get("/functions")
@@ -262,32 +407,100 @@ class SelectionDeleteReq(BaseModel):
     confirm_code: str
 
 
+class SelectionQuotesReq(BaseModel):
+    items: list[dict[str, Any]]
+
+
 @app.post("/admin/selections/delete")
-def delete_selection(req: SelectionDeleteReq, x_api_key: Optional[str] = Header(None)):
+def delete_selection(req: SelectionDeleteReq, request: Request,
+                     x_api_key: Optional[str] = Header(None)):
     """按数字主键永久删除选股及关联收益；历史回测快照保留，仅管理员可用。"""
     _require_admin(x_api_key)
+    request.state.role = "admin"
     if req.id <= 0:
         raise HTTPException(status_code=400, detail="选股记录 id 必须为正整数")
     result = db.delete_selection(req.id, req.confirm_code)
     if result.get("reason") == "not_found":
         raise HTTPException(status_code=404, detail="选股记录不存在或已删除")
     if result.get("reason") == "confirm_mismatch":
+        audit_log.append("selection", {
+            "event": "delete_rejected", "selection_id": req.id,
+            "code": req.confirm_code, "reason": "confirm_mismatch", "role": "admin",
+        })
         raise HTTPException(status_code=400, detail="确认股票代码不匹配，已取消删除")
     if not result.get("deleted"):
         raise HTTPException(status_code=500, detail="选股记录删除失败")
+    audit_log.append("selection", {
+        "event": "deleted", "selection_id": req.id,
+        "code": req.confirm_code, "role": "admin", "result": result,
+    })
     return _versioned(result)
 
 
-@app.post("/call")
-def call(req: CallReq, x_api_key: Optional[str] = Header(None)):
+@app.post("/selections/quotes")
+def refresh_selection_quotes(req: SelectionQuotesReq, request: Request,
+                             x_api_key: Optional[str] = Header(None)):
+    """仅刷新调用方当前可见列表的行情与缺失选股价，不重新执行看板查询。"""
     role = _check_key(x_api_key)
+    request.state.role = role
+    if len(req.items) > 1000:
+        raise HTTPException(status_code=400, detail="单次最多刷新 1000 条选股记录")
+    try:
+        import selection_backtest
+        with db.selection_read_scope(include_sensitive=role == "admin"):
+            result = selection_backtest.refresh_selection_quotes(req.items)
+    except common.ServiceError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    except Exception:
+        raise HTTPException(status_code=500, detail="行情刷新失败")
+    result.update({"source": "selection_quotes", "fetched_at": datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S")})
+    return _versioned(result)
+
+
+@app.get("/admin/logs/download")
+def download_logs(scene: str, request: Request, scope: str = "date",
+                  date: Optional[str] = None, date_from: Optional[str] = None,
+                  date_to: Optional[str] = None,
+                  x_api_key: Optional[str] = Header(None)):
+    """按场景和单日、区间或全量流式下载 JSONL 审计日志，仅管理员可用。"""
+    _require_admin(x_api_key)
+    request.state.role = "admin"
+    try:
+        files = audit_log.resolve_files(scene, scope, date, date_from, date_to)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    suffix = (str(date or "today").replace("-", "") if scope == "date"
+              else f"{str(date_from or 'start').replace('-', '')}-{str(date_to or 'end').replace('-', '')}"
+              if scope == "range" else "all")
+    filename = f"stock-agent-{scene}-{scope}-{suffix}.jsonl"
+    return StreamingResponse(
+        audit_log.stream_jsonl(files), media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/call")
+def call(req: CallReq, request: Request, x_api_key: Optional[str] = Header(None)):
+    started = time.perf_counter()
+    role = _check_key(x_api_key)
+    params = req.params or {}
+    request.state.role = role
+    request.state.function = req.function
+    request.state.params = params
     if role != "admin" and req.function in ADMIN_ONLY_FUNCTIONS:
+        _audit_function(req.function, params, role,
+                        (time.perf_counter() - started) * 1000,
+                        error="管理员专属功能", status=403)
         raise HTTPException(
             status_code=403,
             detail=f"forbidden: 功能 '{req.function}' 需管理员 Key（用户 Key 不可调用管理员专属功能）")
-    requested_category = str((req.params or {}).get("category") or "").strip()
+    requested_category = str(params.get("category") or "").strip()
     if (role != "admin" and req.function in SELECTION_CATEGORY_FILTER_FUNCTIONS
             and requested_category in SENSITIVE_SELECTION_CATEGORIES):
+        _audit_function(req.function, params, role,
+                        (time.perf_counter() - started) * 1000,
+                        error="敏感选股类别", status=403)
         raise HTTPException(
             status_code=403,
             detail=f"forbidden: 选股类别 '{requested_category}' 仅管理员可查看")
@@ -295,28 +508,62 @@ def call(req: CallReq, x_api_key: Optional[str] = Header(None)):
         # 全部注册函数共享同一请求级读取范围；即使未来新增 DB 查询调用点，
         # 访客也只能在 SQL 层读取 auto/manual，不能通过省略 category 绕过。
         with db.selection_read_scope(include_sensitive=role == "admin"):
-            data = registry.call(req.function, req.params)
-    except registry.ParamError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except common.ServiceError as e:
-        raise HTTPException(status_code=e.status, detail=e.message)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:  # tushare 权限/积分等
-        msg = str(e)
-        if "积分" in msg or "quota" in msg.lower() or "权限" in msg or "抱歉" in msg:
-            raise HTTPException(status_code=402, detail=f"tushare quota/permission: {msg}")
-        raise HTTPException(status_code=500, detail=msg)
+            data = registry.call(req.function, params)
+    except registry.ParamError as exc:
+        _audit_function(req.function, params, role,
+                        (time.perf_counter() - started) * 1000,
+                        error=str(exc), status=400)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except common.ServiceError as exc:
+        _audit_function(req.function, params, role,
+                        (time.perf_counter() - started) * 1000,
+                        error=exc.message, status=exc.status)
+        raise HTTPException(status_code=exc.status, detail=exc.message)
+    except RuntimeError as exc:
+        _audit_function(req.function, params, role,
+                        (time.perf_counter() - started) * 1000,
+                        error=str(exc), status=503)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:  # tushare 权限/积分等
+        msg = str(exc)
+        status = 402 if ("积分" in msg or "quota" in msg.lower()
+                         or "权限" in msg or "抱歉" in msg) else 500
+        public_error = f"tushare quota/permission: {msg}" if status == 402 else "服务内部错误"
+        _audit_function(req.function, params, role,
+                        (time.perf_counter() - started) * 1000,
+                        error=public_error, status=status)
+        raise HTTPException(status_code=status, detail=public_error)
+    _audit_function(req.function, params, role,
+                    (time.perf_counter() - started) * 1000, data=data)
     return _versioned({"ok": True, "function": req.function,
                        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                        "data": data})
 
 
-@app.exception_handler(HTTPException)
-def http_exc_handler(request, exc: HTTPException):
-    return JSONResponse(status_code=exc.status_code,
-                        content={"ok": False, "error": exc.detail, "status": exc.status_code,
-                                 "data_version": registry.data_version()})
+@app.exception_handler(StarletteHTTPException)
+def http_exc_handler(request, exc: StarletteHTTPException):
+    """统一处理业务 HTTP 异常及未知路由、方法错误。"""
+    return _error_response(
+        exc.status_code,
+        exc.detail,
+        headers=dict(exc.headers or {}),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+def validation_exc_handler(request, exc: RequestValidationError):
+    """统一处理请求体、路径和查询参数校验错误。"""
+    return _error_response(
+        422,
+        "请求参数校验失败",
+        details=exc.errors(),
+    )
+
+
+@app.exception_handler(Exception)
+def unhandled_exc_handler(request, exc: Exception):
+    """兜住未捕获异常，不向调用方泄漏内部异常细节。"""
+    return _error_response(500, "服务内部错误")
 
 
 @app.get("/")

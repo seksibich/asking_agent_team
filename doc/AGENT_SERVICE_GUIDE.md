@@ -27,6 +27,10 @@
   - `POST /admin/user-keys/delete` `{id}`：删除（立即失效）
   动态访客 Key 与 `.env` 的 `USER_API_KEY` 均视为用户角色（可并存）。
 
+- `GET /health` 保持现有顶层结构。其他已连通的业务 JSON API 响应，无论成功还是失败，均保留原状态码并新增 `health` 对象；其字段与 `/health` 同口径，顶层 `data_version` 和响应头 `X-Data-Version` 继续保留以兼容旧客户端。
+- Agent 收到任一业务 JSON 响应后必须先消费 `health`、完成当前权限允许的五轨版本协调，再处理业务数据或错误；同一目标版本元组每个任务只触发一次。旧服务缺少 `health` 时整条请求链最多补调一次 `/health`。
+- 静态文件、根路径重定向、FastAPI 文档和 OpenAPI 文件不属于业务 JSON 封装范围。
+
 调用返回结构：
 ```json
 {
@@ -34,20 +38,34 @@
   "function": "market_limit",
   "fetched_at": "2026-07-14 15:10:00",
   "data": { "source": "limit_list_d", "fetched_at": "...", "rows": [ ... ] },
-  "data_version": "v1.6d62877a"
+  "data_version": "v2.xxxxxxxx",
+  "health": {
+    "status": "ok",
+    "date": "20260716",
+    "trade_open": true,
+    "tushare_ready": true,
+    "db_ready": true,
+    "portfolio_version": "...",
+    "selection_tag_version": "...",
+    "functions": 65,
+    "agent_doc_version": "v2.1.0",
+    "git_revision": "...",
+    "data_version": "v2.xxxxxxxx"
+  }
 }
 ```
-错误返回：`{"ok": false, "error": "...", "status": 4xx/5xx, "data_version": "..."}`。
+错误返回同样带 `data_version` 和 `health`，例如：`{"ok":false,"error":"...","status":422,"details":[...],"data_version":"...","health":{...}}`。服务端统一覆盖业务 400/401/402/403/503、路由 404、方法 405、请求校验 422 和未捕获 500；健康快照探测失败不得覆盖原业务响应。
 
 ## 2. 版本机制（智能体必须遵守）
 
 - `data_version` 由「功能索引内容」自动哈希生成。**新增功能或修改参数/描述都会改变版本号**。
 - 每个响应（含响应头 `X-Data-Version`）都带 `data_version`。
 - 智能体流程：
-  1. 初始化：`GET /functions`，把 `data_version` 与功能索引存入记忆（见 memory 规则）。
-  2. 每次调用任意功能后，对比返回 `data_version` 与记忆版本。
-  3. 不一致 → 立即重新 `GET /functions`，更新记忆中的版本与索引，再继续。
-- 这样即使服务端新增/调整了功能，智能体也能自动感知并获取最新能力，无需改初始化提示词。
+  1. 初始化：`GET /health` 与 `GET /functions` 建立五轨版本及功能索引基线。
+  2. 每次业务 JSON 响应先读取 `health`，按文档、部署、功能、标签、持仓五轨协调；同一目标版本元组本任务只处理一次。
+  3. `data_version` 不一致时重新 `GET /functions`；标签版本变化时刷新标签目录；持仓版本按任务需要同步；文档版本按 `agent/init.md` 升级。完成当前权限允许的协调后再处理本次业务结果。
+  4. 旧服务缺少 `health` 时整条请求链最多补调一次 `/health`；401/403 阻塞的刷新写有时效短期事项，不得声称同步完成。
+- 这样即使服务端新增功能、更新文档或改变独立业务契约，智能体也能自动感知并按职责刷新，无需把版本状态写入主 MEMORY。
 
 ### 2之一. 独立业务契约版本
 
@@ -116,10 +134,16 @@ Agent 侧逻辑（详见 `agent/init.md`「文档版本与同步」）：
 | status | 含义 | 处理 |
 |---|---|---|
 | 400 | 参数错误 / 未知功能 | 校验 function 与 params；必要时先刷新 `/functions` |
-| 401 | 鉴权失败 | 检查 X-API-Key |
-| 402 | tushare 积分/权限不足 | 跳过该功能或改用替代 |
-| 403 | 权限不足（用户 Key 调用管理员专属功能） | 改用管理员 Key（改权重/窗口或运行全市场预计算需管理员；回测查看不需要管理员） |
-| 503 | 服务未启动 | 提示启动本地 Docker |
+| 401 | 鉴权失败 | 仍先消费响应 `health`，再检查 X-API-Key；不要盲目重试 |
+| 402 | tushare 积分/权限不足 | 跳过该功能或改用已允许的真实数据路径，不得编造 |
+| 403 | 权限不足（用户 Key 调用管理员专属功能） | 仍先消费响应 `health`；改用管理员 Key。被阻塞的同步写有时效短期事项 |
+| 404 | 业务资源或路由不存在 | 区分业务对象不存在与 URL 错误；必要时刷新接口文档/功能索引 |
+| 405 | HTTP 方法错误 | 按端点契约改用正确方法 |
+| 422 | 请求体、路径或查询参数校验失败 | 根据 `details` 修正字段类型、必填项或结构，不盲目重试 |
+| 500 | 未捕获服务异常 | 保留原任务上下文和时间，披露服务内部错误；不得依据缺失数据继续推断 |
+| 503 | 服务未启动或运行依赖不可用 | 提示启动/检查本地 Docker；若服务已返回响应仍先消费其中 `health` |
+
+> 上述业务 JSON 错误均保留原 HTTP 状态码，并携带顶层 `data_version`、响应头 `X-Data-Version` 和嵌套 `health`；错误处理必须后于版本协调。静态文件、重定向、文档和 OpenAPI 不适用该封装。
 
 ## 5. 扩展方式（开发者）
 

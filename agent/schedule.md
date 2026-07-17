@@ -10,9 +10,9 @@
 
 | 序号 | 时间 | 任务 | 模式 | 绑定 Skill / 子 Agent | 关键调用 | 产出 |
 |---|---|---|---|---|---|---|
-| T1 | 08:30 | **盘前汇总**：按“一眼结论→目录导读→详细正文”，首屏给今日仓位、动态题材/具体事件 Top N、关注个股和最大风险 | 团队 | `pre-market`、`data-service`、`priority-framework`、`output-format`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`；角色按 TEAM 主绑定 | 外部多源资讯；`macro_ppi/cpi/pmi`、`price_hike_scan`、`screen_sector`、`sentiment_temperature`、`sentiment_extreme_index`、`market_timing`、`hot_dc/ths`、`hot_kpl_list`、`selection_backtest` | `01-盘前汇总.md` + 独立重点推送 |
+| T1 | 08:30 | **盘前汇总**：按“一眼结论→目录导读→详细正文”，首屏给今日仓位、动态题材/具体事件 Top N、关注个股和最大风险 | 团队 | `pre-market`、`data-service`、`priority-framework`、`output-format`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`；角色按 TEAM 主绑定 | 外部多源资讯；`macro_ppi/cpi/pmi`、`price_hike_scan`、`screen_sector`、`sentiment_temperature`、`sentiment_extreme_index`、`market_timing`、`hot_dc/ths`、`hot_kpl_list`、`selection_backtest`；若新生成正式 auto 候选，必须实际执行 `screen_quant`/`screen_trend`，再以真实 `screening_run_id` 调 `log_selection` | `01-盘前汇总.md` + 独立重点推送 |
 | T6 | 17:30 | **当日总结**：首屏给次日倾向、最强题材/事件、代表个股、最大风险和证伪条件 | 主 | `post-market`、`data-service`、`priority-framework`、`output-format` | `market_index`、`sector_dc`、`market_limit`、`market_lianban`、热榜、情绪、择时、北向资金、涨价扫描及外部多源资讯 | `04-当日总结.md` + 独立重点推送 |
-| T7 | 22:00 | **综合复盘 + 正式选股 + 回测 + 业绩增长参考池**：正式候选和参考池严格隔离 | 团队 | `post-market`、`review-learning`、`quant-screening`、`stock-screening`、`industry-analysis`、`data-service`、`priority-framework`、`output-format`；角色按 TEAM 主绑定 | 热榜、涨跌停、连板、龙虎榜、`screen_sector`、`screen_quant(top_n=50)`、`screen_trend`、财务参考、`predictions_backtest`、`selection_backtest`；`log_selection` 仅正式候选调用 | `05-综合复盘.md` + 独立重点推送 |
+| T7 | 22:00 | **综合复盘 + 正式选股 + 新预判登记 + 成熟历史预判回测 + 业绩增长参考池**：正式候选、预判登记、历史回测和参考池严格隔离 | 团队 | `post-market`、`review-learning`、`quant-screening`、`stock-screening`、`industry-analysis`、`data-service`、`priority-framework`、`output-format`；角色按 TEAM 主绑定 | 热榜、涨跌停、连板、龙虎榜、`screen_sector`、`screen_quant(top_n=50)`、`screen_trend`、财务参考；先用 `log_prediction` 固化新方向性预判，再用 `predictions_backtest` 仅核验已成熟历史预判；`selection_backtest`；`log_selection` 仅正式候选调用 | `05-综合复盘.md` + 独立重点推送 |
 
 ## 周期任务
 
@@ -42,7 +42,7 @@
 ## T7 正式选股、预判与回测
 
 - 正式选股先保存当日 `screen_quant` / `screen_trend` 返回的真实 `screening_run_id`，再登记 `auto`；无有效筛选运行不得持久化为正式候选。
-- 当晚预判目标为下一 SSE 交易日；当晚回测只核验目标日已成熟的历史预判。未成熟、legacy 和行情失败样本必须披露，不得按预判当天行情补算。
+- 当晚先调用 `log_prediction` 固化面向下一 SSE 交易日的新方向性预判；随后调用 `predictions_backtest`，只核验目标日已成熟的历史预判。刚登记的新预判、未成熟、legacy 和行情失败样本必须隔离并披露，不得纳入当晚准确率，更不得按预判当天行情补算。
 - T7/W1/M1 仅当 `optimization_gate.eligible=true` 时调参，并提交 `backtest_snapshot_id`、`expected_parent_version` 和完整因子权重；否则只记录建议，不修改配置。
 - 调参只对当前非零权重因子小步调整并归一，保存执行者与原因；情绪权重仅在回测与情绪指数持续背离时调整，所有版本必须可追溯、可回滚。
 

@@ -74,9 +74,9 @@ disable-model-invocation: false
 
 > 所有微调经服务端留痕：每次 `set_factor_weights` / `set_sentiment_config` 生成类 commit 的 `version_id`（记录 actor/reason/parent/payload）。用 `get_config_history` 查历史、`get_config_version` 定位某版本、`restore_config_version` 回滚。
 
-## 业绩增长参考池隔离（T7 强制）
+## 业绩增长参考池隔离（T3 强制）
 
-- T7 的「业绩增长参考池」仅为公告事实参考，不是自动选股、关注或持仓样本。
+- T3 的「业绩增长参考池」仅为公告事实参考，不是自动选股、关注或持仓样本。
 - 参考池记录不得调用 `log_selection`，不得写 `predictions.jsonl` 或创建短期事项，不得映射为任何选股类别，也不得进入回测或调参。
 - 同一股票若独立通过正式 `screen_quant`/`screen_trend` 流程，只允许以正式候选身份按正常规则进入回测；样本理由和来源必须来自正式流程，不能继承“进入业绩参考池”这一事实。
 - 回测报告须声明已排除业绩增长参考池；若发现误入样本，先剔除并披露，不得据此调参。
@@ -127,7 +127,7 @@ disable-model-invocation: false
 - 回测、调参、周月报前完整读取本文件并确认固定 12 Skills（含 `stock-research`）已完整加载，不得只凭历史调参摘要执行。
 - **直接依赖**：`data-service`（真实行情、错误与重试）、`quant-screening`（因子契约）、`output-format`（回测报告）、`post-market`（每日闭环）。
 - **协同 Skills**：`priority-framework`、`stock-screening`、`industry-analysis`、`stock-research`；其中 `stock-research` 仅在用户明确持久化为 watch 后提供观察样本，禁止进入 auto 调参。
-- 数据缺失时按 `skills/data-service/SKILL.md` 标 `degraded`，不计算伪准确率；T7 的关键接口执行 5/15 分钟延迟重试，非关键接口失败不阻塞已有样本的复盘。
+- 数据缺失时按 `skills/data-service/SKILL.md` 标 `degraded`，不计算伪准确率；T3 的关键接口执行 5/15 分钟延迟重试，非关键接口失败不阻塞已有样本的复盘。
 
 ## v1.6 可审计回测与自动优化门禁（强制）
 
@@ -141,3 +141,7 @@ disable-model-invocation: false
 - `selection_backtest` 默认保存快照；只有当前因子契约和依赖下、来自可核验 `screen_quant` 运行的 `auto` 样本进入优化门禁，分桶唯一口径为 `score_percentile`。
 - 自动调参至少需要50个成熟30日样本、10个独立选股日、10个时序样本外样本，且样本外平均超额为正、超额胜率>50%。未满足时 `optimization_gate.eligible=false`，严禁自动调参。
 - 调参必须提交 `backtest_snapshot_id`、当前 `expected_parent_version` 和全部因子权重；每因子单次变化≤0.03，不得自动启用当前权重0因子。配置与版本必须单事务发布，CAS 冲突后刷新配置，不得覆盖他人版本。
+## v2.2.0 当前调度与日终边界
+
+- 每日回测并入现行 T3，周期回测使用 W1/M1；不使用旧 T6/T7/D1。
+- 服务端交易日 16:00 自动收口；回测只读 `health.daily_finalize` / `precompute_status`，不得因样本缺失、状态失败或门禁未通过自动调用 `precompute_daily_factors`。管理员单次补数仅限用户明确要求。

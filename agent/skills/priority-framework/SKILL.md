@@ -129,3 +129,8 @@ disable-model-invocation: false
 - **直接依赖**：`data-service`（评分事实与 fallback）、`output-format`（打分与来源表）。
 - **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening`、`stock-research` 提供研究/候选；`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market` 应用排序；`review-learning` 验证 auto 与隔离的 watch 效果。
 - 任一评分依据因服务降级而缺失时，按 `skills/data-service/SKILL.md` 标 `degraded` 和缺失来源，不得用估算值补齐。
+## v2.2.0 当前调度与日终边界
+
+- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；所有任务裁决使用现行编号，不使用旧 T6/T7/D1。
+- 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，状态异常时披露缺口，不得自动调用 `precompute_daily_factors`。
+- 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得作为数据缺失、评分失败或门禁未通过时的回退。

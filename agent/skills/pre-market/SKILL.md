@@ -79,3 +79,8 @@ disable-model-invocation: false
 ## 盘前 fallback
 
 T1 关键数据接口 4xx/5xx/空数据时先记失败，5 分钟、15 分钟各重试一次；401/配置错误不盲目重试。`market_index` 失败/空/部分缺失时按 code 逐个调用 `market_daily(code,start,end)` 最近记录并标 `degraded`/实际日期（数据接口间等价回退，非编造）。**数据类接口失败则失败、如实披露，禁止编造兜底**。资讯类（新闻/时政/公告/外盘）不在数据服务，直接从各财经平台多源检索（≥2 来源交叉，标来源与时间）；全部资讯来源失败标“资讯面不可用 + 已尝试来源”，不得解释为无风险。关键数据源最终失败后继续可完成部分，非关键源失败不阻塞整份盘前报告。
+## v2.2.0 当前调度与日终边界
+
+- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；本 Skill 的定时入口仅为 T1，不承接旧 T6/T7/D1 或任何自动盯盘任务。
+- 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
+- 只有用户当前明确要求管理员诊断或补数时，才允许单次手动调用 `precompute_daily_factors`；不得用于定时、自动补跑或失败回退。

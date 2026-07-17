@@ -17,7 +17,7 @@ disable-model-invocation: false
 - **当前：本地 Mac Docker**，基址 `http://localhost:18901`
 - **后续上云**：改为公网 API 后，同时更新运行期 `服务状态与能力.md` 和 `关注与持仓.md` 的 `BASE_URL`；协议与鉴权不变。
 - 鉴权：请求头 `X-API-Key: {service_api_key}`（值见 `init.md` / `.env`）
-- Key 分级：管理员 Key(`API_KEY`) 全权限；访客 Key(`USER_API_KEY`) 可查看/选股/读情绪/查看回测结果，但不能改权重/归一窗口、不能运行全市场预计算（否则 403）。智能体用的是管理员 Key
+- Key 分级：管理员 Key（`API_KEY`）具备诊断与补数权限；访客 Key（`USER_API_KEY`）可查看、选股、读取情绪和回测结果，但不能改权重、归一窗口或运行全市场预计算（否则 403）。Agent 即使持有管理员 Key，也不得自动调用预计算；仅在用户当前明确要求诊断或补数时单次使用。
 - 详细服务文档见 `doc/AGENT_SERVICE_GUIDE.md`
 
 ## 三个核心端点
@@ -82,11 +82,12 @@ POST /call
 - 关注与持仓中的股票先以 `portfolio_get` 为当前清单；新增时必须调用 `portfolio_stock_search` 选择标准股票，再调用 `portfolio_upload`。行情查询继续用 `market_realtime`。
 - `portfolio_upload` 对同一批次重复代码取最后一项，数据库按代码唯一覆盖最新状态；`holding` 必填 `cost_price` 与整数 `lots`，`watch` 不保存这两项。
 
-### 全市场因子预计算
+### 服务端 16:00 日终预计算与 Agent 边界
 
-- `precompute_daily_factors` 只在交易日写入目标日；`full=true` 用于首次补算或断档补算，返回每个日期的成功/部分/失败状态和可重试日期。
-- `precompute_status` 返回覆盖率、任务状态、错误信息和因子公式版本。
-- `screen_quant`/`screen_trend` 只有在任务 `success`、覆盖率达到 80%、因子版本一致时才读取 `daily_factors`；否则自动回退实时路径，禁止把部分数据当成全市场结果。
+- 数据服务在交易日 16:00 自动完成全市场行业与个股因子收口；Agent 只读取 `health.daily_finalize` 与 `precompute_status`，不得注册、定时触发、自动补跑或因失败/缺数调用 `precompute_daily_factors`。
+- `precompute_status` 返回覆盖率、任务状态、错误信息和因子公式版本。T2/T3 发现状态未成功或门禁未满足时，只披露缺口并按报告接口规则重试读取状态，不得把失败处理转换为预计算调用。
+- `precompute_daily_factors` 是管理员诊断/补数能力：只有用户当前明确要求诊断或补数时才可单次调用；必须写明目标日期与用途。`full=true` 仅限该次明确补数，不得由定时任务、自动流程、Hook、cron、Agent 循环或失败回退触发。
+- `screen_quant`/`screen_trend` 只有在任务 `success`、覆盖率达到 80%、因子版本一致时才读取 `daily_factors`；否则按服务端既定实时路径处理，禁止 Agent 自行补算或把部分数据当成全市场结果。
 
 ## 交易日守卫
 
@@ -165,9 +166,12 @@ POST /call
 2. 至少 **2 个可信外部来源**互相印证；标名称、URL/出处与时间，区分事实与传闻。
 3. 全部来源失败：标"资讯面不可用"及已尝试来源；**不得把不可用解释为无消息、无利空或无风险**。
 
-### 定时任务 T1/T6/T7
+### 定时任务 T1/T2/T3
 
 - 关键接口遇 4xx/5xx/空数据：先记录首次失败；延后 **5 分钟**重试一次，再延后至首次失败后 **15 分钟**重试一次。
 - 401 鉴权失败及明确的参数/配置错误不盲目重试：立即标配置问题并提示修复。402 按对应 fallback 执行。
 - 两次延迟重试后关键接口仍失败：执行上述或接口专属 fallback，标 `degraded`、缺失来源、尝试时间与实际数据日期，继续可完成部分。
 - 非关键接口失败不阻塞整份报告；所有任务坚持“缺失可见、报告继续、禁止编造”。用户明确请求竞价或盘中总结时，资讯按「资讯类外部获取」执行；不得因接口或资讯规则自行启动后续盯盘。
+## v2.2.0 当前调度总则
+
+仅 T1/T2/T3/W1/M1/P1 可作为 Agent 定时任务。初始化删除旧 T6/T7/D1 及旧自动盯盘/预计算任务；服务端交易日 16:00 自动收口，Agent 只读状态。管理员 `precompute_daily_factors` 仅限用户当前明确要求的单次诊断或补数。

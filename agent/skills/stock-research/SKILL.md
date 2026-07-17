@@ -80,3 +80,8 @@ disable-model-invocation: false
 - 使用前完整读取本文件并确认固定 12 Skills 已完整加载；本 Skill 不替代其他研究、取数或输出规范。
 - **直接依赖**：`data-service`、`priority-framework`、`output-format`、`industry-analysis`、`quant-screening`、`stock-screening`。
 - **协同 Skills**：`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market` 提供时段事实；`review-learning` 仅在用户明确持久化为 watch 后执行隔离的观察性回测。
+## v2.2.0 当前调度与日终边界
+
+- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；本 Skill 仍仅由用户主动单股调研触发，不加入任何定时任务，也不承接旧 T6/T7/D1。
+- 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
+- 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得因单股数据缺失、调研失败、Hook、cron 或 Agent 循环触发。

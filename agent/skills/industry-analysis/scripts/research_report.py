@@ -49,11 +49,11 @@ def _stock_snapshot(pro, code: str, end: str) -> dict[str, Any]:
 def build(theme: str, codes: Optional[list[str]] = None) -> dict[str, Any]:
     """投研数据包主入口。"""
     pro = common.get_pro()
-    end = common.last_trade_date()
+    end = common.last_data_ready_date()
 
     package: dict[str, Any] = {
         "source": "research/build",
-        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "fetched_at": common.now_str(),
         "theme": theme,
         "trade_date": end,
     }

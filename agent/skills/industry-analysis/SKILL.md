@@ -84,3 +84,8 @@ disable-model-invocation: false
 - **直接依赖**：`data-service`（新闻、宏观与 fallback）、`priority-framework`（四维裁决）、`output-format`（投研目录与来源表）。
 - **协同 Skills**：`stock-screening`、`quant-screening`（候选与板块）、`stock-research`（单股题材与产业链证据）、`pre-market`、`post-market`（时段汇总）、`review-learning`（仅 auto 或明确 watch 的结论复验）。
 - 新闻/价格源失败时完整执行 `skills/data-service/SKILL.md`，保留缺失与冲突，不以简化描述或单一来源替代。
+## v2.2.0 当前调度与日终边界
+
+- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；涉及盘后团队链路时使用 T2/T3，不使用旧 T6/T7/D1。
+- 服务端在交易日 16:00 自动完成行业与个股因子收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
+- 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得用于定时、自动补跑或失败回退。

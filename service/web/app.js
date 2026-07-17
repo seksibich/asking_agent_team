@@ -210,8 +210,9 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "weights") loadWeights();
     if (btn.dataset.tab === "backtest") loadBacktest();
     if (btn.dataset.tab === "precompute") loadPrecompute();
-    if (btn.dataset.tab === "sentiment") loadSentiment();
-    if (btn.dataset.tab === "industry") loadIndustry();
+    // 情绪与行业均为时效敏感页面：每次进入都重新请求；情绪连续交易时段额外强刷盘中快照。
+    if (btn.dataset.tab === "sentiment") loadSentiment(true, true);
+    if (btn.dataset.tab === "industry") loadIndustry(true);
     if (btn.dataset.tab === "selections") loadSelections(true);
     if (btn.dataset.tab === "portfolio") loadPortfolio();
   });
@@ -311,10 +312,99 @@ function reloadActiveTab() {
   if (t === "weights") loadWeights();
   else if (t === "backtest") loadBacktest(true);
   else if (t === "precompute") loadPrecompute(true);
-  else if (t === "sentiment") { _sentLoaded = false; loadSentiment(); }
+  else if (t === "sentiment") loadSentiment(true);
   else if (t === "industry") loadIndustry(true);
   else if (t === "selections") loadSelections(true);
   else if (t === "portfolio") loadPortfolio(true);
+}
+
+async function resetActiveTab() {
+  const tab = document.querySelector(".tab.active")?.dataset.tab;
+  if (!tab) return;
+  if (tab === "quant") {
+    $("q-stock-names").value = "";
+    $("q-industries").value = "";
+    $("q-topn").value = "30";
+    document.querySelectorAll('#q-boards input[type="checkbox"]').forEach((input) => { input.checked = true; });
+    _quantRows = [];
+    _quantSort = { key: "score", dir: "desc" };
+    $("q-meta").textContent = "";
+    $("q-result").innerHTML = '<div class="empty">点击「运行量化选股」查看结果</div>';
+    quantHelpModal.classList.add("hidden");
+  } else if (tab === "industry") {
+    $("i-mode").value = "latest_complete";
+    $("i-date").value = "";
+    $("i-history-days").value = "20";
+    $("i-topn").value = "31";
+    $("i-search").value = "";
+    $("i-sort").value = "percentile-desc";
+    $("i-meta").textContent = "";
+    _industryLoaded = false;
+    _industryRows = [];
+    _industryData = {};
+    _industrySelectedCode = "";
+    _industryAvailableDates = [];
+    _industrySort = { key: "percentile", dir: "desc" };
+    await loadIndustry(true);
+  } else if (tab === "selections") {
+    $("sl-from").value = "";
+    $("sl-to").value = "";
+    $("sl-hotspot").value = "";
+    $("sl-category").value = "";
+    $("sl-sort").value = "grouped";
+    _selectionSort = "grouped";
+    _selectionTag = "";
+    _selectionsLoaded = false;
+    await loadSelections(true);
+  } else if (tab === "portfolio") {
+    resetPortfolioForm();
+    $("pf-search").value = "";
+    $("pf-search-results").classList.add("hidden");
+    _portfolioLoaded = false;
+    await loadPortfolio(true);
+  } else if (tab === "sentiment") {
+    $("s-date").value = "";
+    $("s-days").value = "15";
+    $("sentiment-settings").classList.add("hidden");
+    _sentimentTrendEnd = "";
+    _sentimentMaxDate = "";
+    _sentimentKnownDates = [];
+    _sentLoaded = false;
+    await loadSentiment(true);
+  } else if (tab === "backtest") {
+    $("b-category").value = "";
+    $("log-scene").value = "api";
+    $("log-scope").value = "date";
+    $("log-date").value = todayText;
+    $("log-from").value = todayText;
+    $("log-to").value = todayText;
+    updateLogScopeUI();
+    _btLoaded = false;
+    await loadBacktest(true);
+  } else if (tab === "precompute") {
+    if (_pcPollTimer) clearTimeout(_pcPollTimer);
+    _pcPollTimer = null;
+    _pcLoaded = false;
+    await loadPrecompute(true);
+  } else if (tab === "weights") {
+    await loadWeights();
+  }
+}
+
+$("tab-reset").onclick = async () => {
+  if (!_authReady) { openLogin("请先输入有效的服务 Key"); return; }
+  const button = $("tab-reset");
+  button.disabled = true;
+  button.classList.add("loading");
+  try {
+    await resetActiveTab();
+    toast("当前页已恢复初始化状态", "ok");
+  } catch (error) {
+    toast("页面重置失败：" + error.message, "bad");
+  } finally {
+    button.disabled = false;
+    button.classList.remove("loading");
+  }
 }
 
 $("cfg-save").onclick = async () => {
@@ -359,8 +449,10 @@ quantHelpModal.addEventListener("click", (e) => {
 
 const BOARD_CN = { main: "沪深主板", star: "科创板", gem: "创业板" };
 
-$("q-run").onclick = async () => {
-  const btn = $("q-run"); btn.disabled = true;
+async function runQuantScreen() {
+  const btn = $("q-run");
+  if (btn.disabled) return;
+  btn.disabled = true;
   const stockNames = $("q-stock-names").value.trim();
   const industries = $("q-industries").value.trim();
   const boardInputs = [...document.querySelectorAll('#q-boards input[type="checkbox"]')];
@@ -377,12 +469,21 @@ $("q-run").onclick = async () => {
     const scope = d.filter_type === "stock_names" ? "个股" : d.filter_type === "industries" ? "板块" : "全市场";
     const boardText = Array.isArray(d.boards) && d.boards.length && d.boards.length < Object.keys(BOARD_CN).length
       ? " · " + d.boards.map((board) => BOARD_CN[board] || board).join("/") : "";
-    $("q-meta").textContent = `${d.trade_date || ""} · ${scope}${boardText} · ${rows.length} 只`;
+    $("q-meta").textContent = `${d.trade_date || ""} · 最近完整日收盘行情 · ${scope}${boardText} · ${rows.length} 只`;
     renderCandidates(rows);
     if (!rows.length && d.note) toast(d.note, "bad");
   } catch (e) { $("q-result").innerHTML = ""; toast("选股失败：" + e.message, "bad"); }
-  btn.disabled = false;
-};
+  finally { btn.disabled = false; }
+}
+
+$("q-run").onclick = runQuantScreen;
+["q-stock-names", "q-industries"].forEach((id) => {
+  $(id).addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    runQuantScreen();
+  });
+});
 
 function renderTable(rows) {
   const cols = Object.keys(rows[0]);
@@ -404,9 +505,10 @@ function renderTable(rows) {
 let _quantRows = [];
 let _quantSort = { key: "score", dir: "desc" };
 const QUANT_COLS = [
+  { key: "score", label: "综合分" },
   { key: "__ticker", label: "标的", sort: "code" },
-  { key: "last", label: "最新价" },
-  { key: "chg", label: "当日涨幅", pct: true },
+  { key: "last", label: "最近完整日收盘价" },
+  { key: "chg", label: "最近完整日涨幅", pct: true },
   { key: "ret5", label: "近5日", pct: true },
   { key: "industry_name", label: "所属行业" },
   { key: "industry_strength", label: "行业强度" },
@@ -426,7 +528,6 @@ const QUANT_COLS = [
   { key: "small_size", label: "小市值" },
   { key: "value_bm", label: "账面市值比" },
   { key: "earnings_yield", label: "盈利收益率" },
-  { key: "score", label: "综合分" },
 ];
 const QUANT_ALWAYS = ["__ticker", "last", "chg", "ret5", "score"];
 
@@ -451,20 +552,25 @@ function drawQuant() {
     return 0;
   });
   const head = cols.map((c) => {
+    if (c.key === "__ticker") {
+      return `<th class="quant-ticker-col" title="标的列固定，不支持排序">${c.label}</th>`;
+    }
     const sk = c.sort || c.key;
     const arrow = sk === key ? (dir === "asc" ? " ▲" : " ▼") : "";
-    return `<th class="sortable" data-sort="${sk}" title="点击排序">${c.label}${arrow}</th>`;
+    const fixedClass = c.key === "score" ? " quant-score-col" : "";
+    return `<th class="sortable${fixedClass}" data-sort="${sk}" title="点击排序">${c.label}${arrow}</th>`;
   }).join("");
   const body = sorted.map((r) => "<tr>" + cols.map((c) => {
-    if (c.key === "__ticker") return `<td class="cell-ticker"><b>${r.name || "-"}</b><span>${r.code || ""}</span></td>`;
-    let v = r[c.key], cls = "";
+    if (c.key === "__ticker") return `<td class="cell-ticker quant-ticker-col"><b>${r.name || "-"}</b><span>${r.code || ""}</span></td>`;
+    let v = r[c.key], cls = c.key === "score" ? "quant-score-col" : "";
     if (typeof v === "number") {
-      if (c.pct || c.key === "score") cls = v >= 0 ? "pos" : "neg";
-      v = c.pct ? (v >= 0 ? "+" : "") + v.toFixed(2) + "%" : (Number.isInteger(v) ? v : v.toFixed(3));
+      if (c.pct || c.key === "score") cls += ` ${v >= 0 ? "pos" : "neg"}`;
+      if (c.key === "last") v = v.toFixed(2);
+      else v = c.pct ? (v >= 0 ? "+" : "") + v.toFixed(2) + "%" : (Number.isInteger(v) ? v : v.toFixed(3));
     }
-    return `<td class="${cls}">${v == null ? "-" : v}</td>`;
+    return `<td class="${cls.trim()}">${v == null ? "-" : v}</td>`;
   }).join("") + "</tr>").join("");
-  box.innerHTML = `<table class="sortable-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  box.innerHTML = `<table class="sortable-table quant-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 $("q-result").addEventListener("click", (e) => {
@@ -477,29 +583,436 @@ $("q-result").addEventListener("click", (e) => {
 });
 
 /* ---------- 行业量化分析 ---------- */
+const INDUSTRY_FACTORS = [
+  { key: "sec_mom_12_1", label: "12-1动量" },
+  { key: "sec_mom_20d", label: "20日动量" },
+  { key: "sec_mom_5d", label: "5日动量" },
+  { key: "sec_vol_confirm", label: "量能确认" },
+  { key: "sec_low_vol", label: "低波动" },
+];
+const INDUSTRY_OVERLAY_LABELS = {
+  change_pct: "盘中平均涨跌", chg_pct: "盘中涨跌", pct_chg: "盘中涨跌",
+  breadth: "成分宽度", adv_ratio: "上涨占比", up_ratio: "上涨占比",
+  decline_ratio: "下跌占比", flat_ratio: "平盘占比",
+  sample_count: "有效样本", member_count: "行业成分", coverage_ratio: "成分覆盖率",
+  as_of: "快照时间", fetched_at: "快照时间",
+};
+const INDUSTRY_OVERLAY_PERCENT_KEYS = new Set([
+  "change_pct", "chg_pct", "pct_chg", "adv_ratio", "up_ratio", "decline_ratio", "flat_ratio",
+]);
 let _industryLoaded = false;
+let _industryRequestSeq = 0;
+let _industryRows = [];
+let _industryData = {};
+let _industrySelectedCode = "";
+let _industryAvailableDates = [];
+let _industrySort = { key: "percentile", dir: "desc" };
+
+function compactDate(value) {
+  const text = String(value || "").replaceAll("-", "");
+  return /^\d{8}$/.test(text) ? text : "";
+}
+
+function localTodayCompact() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 10).replaceAll("-", "");
+}
+
+function industryNumber(row, key) {
+  const value = row?.[key];
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function industryBaseRow(row) {
+  const baseline = row?.baseline || row?.complete_day || row?.complete || {};
+  return { ...(row || {}), ...(baseline || {}), intraday_overlay: row?.intraday_overlay ?? row?.overlay ?? row?.intraday };
+}
+
+function industryStrength(row) {
+  const value = industryNumber(row, "percentile");
+  return value == null ? null : (value <= 1 ? value : value / 100);
+}
+
+function industryValueText(value, digits = 4) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return number.toFixed(digits).replace(/\.?0+$/, "");
+}
+
+function industryPercentText(value, digits = 1) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return `${number >= 0 ? "+" : ""}${number.toFixed(digits)}%`;
+}
+
+function industrySortRows(rows) {
+  const { key, dir } = _industrySort;
+  return [...rows].sort((left, right) => {
+    if (key === "name") {
+      const order = String(left.name || left.code || "").localeCompare(String(right.name || right.code || ""), "zh-CN");
+      return dir === "asc" ? order : -order;
+    }
+    const a = industryNumber(left, key), b = industryNumber(right, key);
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return dir === "asc" ? a - b : b - a;
+  });
+}
+
+function updateIndustryDateButtons() {
+  const current = compactDate($("i-date").value);
+  const today = localTodayCompact();
+  const available = _industryAvailableDates.filter((date) => date <= today);
+  $("i-date-prev").disabled = !current || !available.some((date) => date < current);
+  $("i-date-next").disabled = !current || !available.some((date) => date > current);
+}
+
+function renderIndustryStatus(data) {
+  const requested = compactDate(data.requested_trade_date) || compactDate($("i-date").value);
+  const effective = compactDate(data.effective_date || data.trade_date);
+  const baseline = compactDate(data.baseline_trade_date);
+  const intradayView = $("i-mode").value === "intraday";
+  const isComplete = data.is_complete !== false;
+  const mode = intradayView ? "盘中视图 · 最终完整基线" : (isComplete ? "完整收盘" : "非完整数据");
+  const staleDays = Number(data.stale_trade_days || 0);
+  const stale = data.is_stale ? `数据陈旧 ${staleDays} 个交易日` : "数据时效正常";
+  const phaseLabels = {
+    preopen: "盘前", call_auction: "集合竞价", morning: "上午交易", afternoon: "下午交易",
+    lunch: "午间休市", closed_pending: "收盘待确认", final: "日终数据就绪", non_trading_day: "非交易日",
+    pre_open: "盘前", trading: "交易中", lunch_break: "午间休市", closed: "已收盘", post_close: "盘后",
+  };
+  const phase = phaseLabels[data.market_session] || "阶段未知";
+  const fallback = data.fallback_reason ? `<span class="industry-status-reason">回退原因：${esc(data.fallback_reason)}</span>` : "";
+  $("i-status").innerHTML = `
+    <span><b>请求日</b>${esc(formatFullDate(requested) || "最近交易日")}</span>
+    <span><b>生效日</b>${esc(formatFullDate(effective) || "—")}</span>
+    ${baseline ? `<span><b>基准日</b>${esc(formatFullDate(baseline))}</span>` : ""}
+    <span class="${intradayView || !isComplete ? "intraday" : "complete"}">${mode} · ${esc(phase)}</span>
+    <span class="${data.is_stale ? "stale" : "fresh"}">${stale}</span>${fallback}`;
+}
+
+function renderIndustryKpis() {
+  const strengths = _industryRows.map(industryStrength).filter((value) => value != null);
+  const momentums = _industryRows.map((row) => industryNumber(row, "sec_mom_5d")).filter((value) => value != null).sort((a, b) => a - b);
+  const middle = Math.floor(momentums.length / 2);
+  const median = !momentums.length ? null : (momentums.length % 2 ? momentums[middle] : (momentums[middle - 1] + momentums[middle]) / 2);
+  const top = [..._industryRows].sort((a, b) => (industryStrength(b) ?? -Infinity) - (industryStrength(a) ?? -Infinity))[0];
+  const medianDisplay = median == null ? null : (Math.abs(median) <= 1 ? median * 100 : median);
+  $("i-kpi-strong").textContent = String(strengths.filter((value) => value >= 0.7).length);
+  $("i-kpi-weak").textContent = String(strengths.filter((value) => value <= 0.3).length);
+  $("i-kpi-median").textContent = medianDisplay == null ? "—" : industryPercentText(medianDisplay, 2);
+  $("i-kpi-median").className = medianDisplay == null ? "" : (medianDisplay >= 0 ? "pos" : "neg");
+  $("i-kpi-top").textContent = top?.name || top?.code || "—";
+  const topStrength = top ? industryStrength(top) : null;
+  $("i-kpi-top-sub").textContent = topStrength == null ? "强度数据缺失" : `强度 ${(topStrength * 100).toFixed(1)}`;
+}
+
+function renderIndustryBars() {
+  if (!_industryRows.length) { $("i-bars").innerHTML = '<div class="empty">暂无行业评分</div>'; return; }
+  const sorted = [..._industryRows].sort((a, b) => (industryStrength(b) ?? -Infinity) - (industryStrength(a) ?? -Infinity));
+  const top = sorted.slice(0, 5).map((row) => ({ row, side: "top" }));
+  const used = new Set(top.map((item) => item.row.code));
+  const bottom = sorted.slice(-5).reverse().filter((row) => !used.has(row.code)).map((row) => ({ row, side: "bottom" }));
+  const group = (title, items) => `<div class="industry-bar-group"><b>${title}</b>${items.map(({ row, side }) => {
+    const strength = Math.max(0, Math.min(1, industryStrength(row) ?? 0));
+    const selected = row.code === _industrySelectedCode;
+    return `<button type="button" class="industry-bar ${side} ${selected ? "selected" : ""}" data-industry-code="${esc(row.code)}" title="点击查看 ${esc(row.name || row.code)} 历史">
+      <span class="industry-bar-name">${esc(row.name || row.code)}</span><span class="industry-bar-track"><i style="width:${(strength * 100).toFixed(1)}%"></i></span><strong>${(strength * 100).toFixed(1)}</strong>
+    </button>`;
+  }).join("")}</div>`;
+  $("i-bars").innerHTML = group("强势前 5", top) + group("弱势后 5", bottom);
+}
+
+function renderIndustryHeat() {
+  if (!_industryRows.length) { $("i-heat").innerHTML = '<div class="empty">暂无可用因子</div>'; return; }
+  const rows = [..._industryRows].sort((a, b) => (industryStrength(b) ?? -Infinity) - (industryStrength(a) ?? -Infinity));
+  const ranges = Object.fromEntries(INDUSTRY_FACTORS.map(({ key }) => {
+    const values = rows.map((row) => industryNumber(row, key)).filter((value) => value != null);
+    return [key, { min: Math.min(...values), max: Math.max(...values), has: values.length > 0 }];
+  }));
+  const head = INDUSTRY_FACTORS.map((factor) => `<th>${factor.label}</th>`).join("");
+  const body = rows.map((row) => `<tr class="${row.code === _industrySelectedCode ? "selected" : ""}" data-industry-code="${esc(row.code)}"><th>${esc(row.name || row.code)}</th>${INDUSTRY_FACTORS.map(({ key }) => {
+    const value = industryNumber(row, key), range = ranges[key];
+    const ratio = value == null || !range.has ? null : (range.max === range.min ? 0.5 : (value - range.min) / (range.max - range.min));
+    const style = ratio == null ? "" : ` style="--heat:${ratio.toFixed(3)}"`;
+    return `<td class="industry-heat-cell ${ratio == null ? "missing" : ""}"${style}>${industryValueText(value)}</td>`;
+  }).join("")}</tr>`).join("");
+  $("i-heat").innerHTML = `<table class="industry-heat-table"><thead><tr><th>行业</th>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function industryHistorySeries(code) {
+  const name = _industryRows.find((row) => row.code === code)?.name;
+  const history = _industryData.history;
+  let points = [];
+  if (Array.isArray(history)) {
+    const direct = history.find((item) => (item.code === code || item.name === name) && Array.isArray(item.points || item.history || item.rows));
+    if (direct) points = direct.points || direct.history || direct.rows;
+    else history.forEach((snapshot) => {
+      const sectors = snapshot.sectors || snapshot.rows;
+      const row = Array.isArray(sectors) ? sectors.find((item) => item.code === code || item.name === name) : null;
+      if (row) points.push({ ...row, date: snapshot.date || snapshot.trade_date || snapshot.effective_date });
+      else if (snapshot.code === code || snapshot.name === name) points.push(snapshot);
+    });
+  } else if (history && typeof history === "object") {
+    points = history[code] || history[name] || history.sectors?.[code] || [];
+  }
+  const current = _industryRows.find((row) => row.code === code);
+  if (!points.length && Array.isArray(current?.history)) points = current.history;
+  return (Array.isArray(points) ? points : []).map((point) => {
+    const percentile = industryNumber(point, "percentile");
+    return { label: formatFullDate(point.date || point.trade_date || point.effective_date), value: percentile == null ? null : (percentile <= 1 ? percentile * 100 : percentile) };
+  }).filter((point) => point.label && point.value != null).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function industryTrendLine(points) {
+  const host = $("i-trend");
+  const H = 220, axisWidth = 48, padX = 22, padT = 16, padB = 38, pointGap = 72;
+  const viewportWidth = Math.max(280, (host?.clientWidth || 640) - axisWidth);
+  const plotWidth = Math.max(viewportWidth, padX * 2 + Math.max(0, points.length - 1) * pointGap);
+  const xAt = (index) => points.length === 1 ? plotWidth / 2 : padX + index * pointGap;
+  const yAt = (value) => padT + (H - padT - padB) * (1 - Number(value) / 100);
+  let grid = "", axis = "";
+  for (let value = 0; value <= 100; value += 20) {
+    const y = yAt(value);
+    grid += `<line x1="0" y1="${y.toFixed(1)}" x2="${plotWidth}" y2="${y.toFixed(1)}" stroke="#eef1f7"/>`;
+    axis += `<span style="top:${y.toFixed(1)}px">${value}</span>`;
+  }
+  const path = points.map((point, index) => `${index ? "L" : "M"}${xAt(index).toFixed(1)} ${yAt(point.value).toFixed(1)}`).join(" ");
+  const area = `${path} L${xAt(points.length - 1).toFixed(1)} ${yAt(0).toFixed(1)} L${xAt(0).toFixed(1)} ${yAt(0).toFixed(1)} Z`;
+  const dots = points.map((point, index) => `<g><circle cx="${xAt(index).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="3.5" fill="#3b6cf6"><title>${esc(point.label)}：${Number(point.value).toFixed(1)}</title></circle><text x="${xAt(index).toFixed(1)}" y="${H - 13}" text-anchor="middle" class="ax">${esc(point.label.slice(5))}</text></g>`).join("");
+  return `<div class="industry-trend-layout"><div class="industry-trend-axis">${axis}</div><div class="industry-trend-scroll"><svg width="${plotWidth}" height="${H}" viewBox="0 0 ${plotWidth} ${H}" class="industry-trend-svg">${grid}<path d="${area}" fill="#3b6cf6" fill-opacity="0.08"/><path d="${path}" fill="none" stroke="#3b6cf6" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>${dots}</svg></div></div>`;
+}
+
+function renderIndustryTrend() {
+  const row = _industryRows.find((item) => item.code === _industrySelectedCode);
+  if (!row) {
+    $("i-trend-meta").textContent = "";
+    $("i-trend").innerHTML = '<div class="empty">暂无可选行业</div>';
+    return;
+  }
+  const points = industryHistorySeries(row.code);
+  $("i-trend-meta").textContent = `${row.name || row.code} · ${points.length} 个交易日`;
+  $("i-trend").innerHTML = points.length
+    ? industryTrendLine(points)
+    : '<div class="empty">当前响应没有该行业的历史序列</div>';
+}
+
+function isReliableIndustryOverlay(overlay) {
+  if (!overlay || typeof overlay !== "object" || Array.isArray(overlay)) return false;
+  if (overlay.available === false || overlay.is_reliable === false || overlay.reliable === false) return false;
+  if (["unavailable", "missing", "unreliable"].includes(String(overlay.status || "").toLowerCase())) return false;
+  return Object.entries(overlay).some(([key, value]) => value != null
+    && !["available", "is_reliable", "reliable", "status", "reason", "note"].includes(key));
+}
+
+function renderIndustryIntraday() {
+  const box = $("i-intraday");
+  if ($("i-mode").value !== "intraday") { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  box.classList.remove("hidden");
+  const baseline = compactDate(_industryData.baseline_trade_date || _industryData.effective_date);
+  const topOverlay = _industryData.intraday_overlay;
+  const overlays = _industryRows.map((row) => ({ row, overlay: row.intraday_overlay }))
+    .filter(({ overlay }) => isReliableIndustryOverlay(overlay));
+  const selected = overlays.find(({ row }) => row.code === _industrySelectedCode) || overlays[0];
+  const unavailableReason = topOverlay && typeof topOverlay === "object" && !Array.isArray(topOverlay)
+    ? topOverlay.reason || topOverlay.note : "";
+  let overlayHtml = `<div class="industry-overlay-empty">盘中覆盖不可用：${esc(unavailableReason || "当前没有后端确认可靠的行业盘中覆盖数据")}。页面仅展示最终完整基线，绝不冒充盘中评分。</div>`;
+  if (selected) {
+    const entries = Object.entries(selected.overlay).filter(([key, value]) => value != null && ![
+      "code", "name", "date", "trade_date", "quote_date", "available", "is_reliable", "reliable",
+      "status", "reason", "note", "data_mode", "is_final", "source",
+    ].includes(key));
+    overlayHtml = `<div class="industry-overlay-title">${esc(selected.row.name || selected.row.code)} · 盘中叠加</div><div class="industry-overlay-grid">${entries.map(([key, value]) => {
+      const label = INDUSTRY_OVERLAY_LABELS[key] || "盘中指标";
+      let text;
+      if (INDUSTRY_OVERLAY_PERCENT_KEYS.has(key) && typeof value === "number") text = industryPercentText(value, 2);
+      else if (key === "coverage_ratio" && typeof value === "number") text = `${(value * 100).toFixed(1)}%`;
+      else text = typeof value === "number" ? industryValueText(value, 3) : esc(value);
+      return `<div><small>${esc(label)}</small><b>${text}</b></div>`;
+    }).join("")}</div>`;
+  }
+  box.innerHTML = `<div class="industry-intraday-head"><div><span class="sentiment-eyebrow">最终完整基线</span><b>最终完整基线：${esc(formatFullDate(baseline) || "不可用")}</b><p>行业强度、综合分和因子矩阵只来自完整交易日。</p></div><span>＋</span><div><span class="sentiment-eyebrow intraday">盘中叠加</span><b>盘中叠加独立展示</b><p>仅展示后端确认可靠的临时变化，不改写最终完整评分。</p></div></div>${overlayHtml}`;
+}
+
+function renderIndustryTable() {
+  const query = $("i-search").value.trim().toLowerCase();
+  const filtered = _industryRows.filter((row) => !query || `${row.name || ""} ${row.code || ""}`.toLowerCase().includes(query));
+  const rows = industrySortRows(filtered);
+  $("i-detail-meta").textContent = `显示 ${rows.length} / 共 ${_industryRows.length} 个行业`;
+  if (!rows.length) { $("i-result").innerHTML = '<div class="empty">没有匹配行业，搜索不会触发新请求</div>'; return; }
+  const columns = [
+    { key: "name", label: "行业" }, { key: "percentile", label: "行业强度" }, { key: "score", label: "综合分" },
+    ...INDUSTRY_FACTORS,
+  ];
+  const head = columns.map((column) => {
+    const active = _industrySort.key === column.key;
+    return `<th class="sortable" data-industry-sort="${column.key}">${column.label}${active ? (_industrySort.dir === "asc" ? " ▲" : " ▼") : ""}</th>`;
+  }).join("");
+  const body = rows.map((row) => `<tr class="industry-detail-row ${row.code === _industrySelectedCode ? "selected" : ""}" data-industry-code="${esc(row.code)}">
+    <td class="cell-ticker"><b>${esc(row.name || "—")}</b><span>${esc(row.code || "")}</span></td>
+    <td>${industryStrength(row) == null ? "—" : (industryStrength(row) * 100).toFixed(1)}</td>
+    <td>${industryValueText(row.score)}</td>${INDUSTRY_FACTORS.map(({ key }) => `<td>${industryValueText(row[key])}</td>`).join("")}
+  </tr>`).join("");
+  $("i-result").innerHTML = `<table class="sortable-table industry-detail-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function selectIndustry(code) {
+  if (!_industryRows.some((row) => row.code === code)) return;
+  _industrySelectedCode = code;
+  renderIndustryBars();
+  renderIndustryHeat();
+  renderIndustryTrend();
+  renderIndustryIntraday();
+  renderIndustryTable();
+}
+
+function renderIndustry(data) {
+  _industryData = data || {};
+  const topOverlay = data.intraday_overlay;
+  const topOverlayRows = Array.isArray(topOverlay?.rows)
+    ? topOverlay.rows
+    : (Array.isArray(topOverlay) ? topOverlay : []);
+  _industryRows = (data.sectors || []).map((raw) => {
+    const row = industryBaseRow(raw);
+    if (!row.intraday_overlay && topOverlay && typeof topOverlay === "object") {
+      row.intraday_overlay = topOverlayRows.find((item) => item.code === row.code || item.name === row.name)
+        || topOverlay[row.code] || topOverlay[row.name];
+    }
+    return row;
+  });
+  const today = localTodayCompact();
+  const responseDates = (data.available_dates || []).map(compactDate).filter((date) => date && date <= today);
+  // 历史响应只包含截至生效日的快照；保留本会话已确认日期，确保后退后仍可向前返回。
+  _industryAvailableDates = [...new Set([..._industryAvailableDates, ...responseDates])].sort();
+  const effective = compactDate(data.effective_date || data.trade_date);
+  const requested = compactDate(data.requested_trade_date);
+  if (!$("i-date").value && (requested || effective)) $("i-date").value = formatFullDate(requested || effective);
+  $("i-date").max = formatFullDate(today);
+  if (!_industryRows.some((row) => row.code === _industrySelectedCode)) _industrySelectedCode = _industryRows[0]?.code || "";
+  const intradayView = $("i-mode").value === "intraday";
+  $("i-meta").textContent = `${_industryRows.length} 个行业 · ${intradayView ? "最终完整基线" : (data.is_complete === false ? "非完整数据" : "完整日")}`;
+  renderIndustryStatus(data);
+  renderIndustryKpis();
+  renderIndustryBars();
+  renderIndustryHeat();
+  renderIndustryTrend();
+  renderIndustryIntraday();
+  renderIndustryTable();
+  updateIndustryDateButtons();
+}
+
 async function loadIndustry(force = false) {
-  if (_industryLoaded && !force) return;
+  if ((_industryLoaded && !force) || !cfg.key) return;
+  const requestSeq = ++_industryRequestSeq;
+  const button = $("i-run");
+  const date = compactDate($("i-date").value);
+  const today = localTodayCompact();
+  if (date && date > today) {
+    $("i-date").value = formatFullDate(today);
+    toast("行业查看日期不能超过当天", "bad");
+    return loadIndustry(true);
+  }
   _industryLoaded = true;
-  const box = $("i-result");
-  box.innerHTML = '<div class="empty">加载行业评分中…</div>';
+  button.disabled = true;
+  $("i-result").innerHTML = '<div class="empty">加载行业评分中…</div>';
+  $("i-bars").innerHTML = '<div class="empty">加载强弱行业中…</div>';
+  $("i-heat").innerHTML = '<div class="empty">加载因子矩阵中…</div>';
+  $("i-trend").innerHTML = '<div class="empty">加载历史趋势中…</div>';
+  const params = {
+    mode: $("i-mode").value,
+    history_days: Math.max(3, Math.min(120, Number($("i-history-days").value) || 20)),
+    top_n: Math.max(5, Math.min(100, Number($("i-topn").value) || 31)),
+  };
+  // 最新完整模式始终由服务端解析当前安全就绪日，避免刷新时被输入框旧值锁住。
+  if (date && params.mode !== "latest_complete") params.date = date;
   try {
-    const d = await call("screen_sector", { top_n: Number($("i-topn").value) || 31 });
-    const sectors = d.sectors || [];
-    $("i-meta").textContent = `${d.trade_date || ""} · ${d.data_source === "persisted" ? "盘后持久化" : "实时计算"} · ${sectors.length} 个行业`;
-    const rows = sectors.map((r, index) => ({
-      排名: index + 1, 行业: r.name, 代码: r.code,
-      行业强度: r.percentile == null ? null : r.percentile * 100,
-      综合分: r.score, "12-1动量": r.sec_mom_12_1,
-      "20日动量": r.sec_mom_20d, "5日动量": r.sec_mom_5d,
-      量能确认: r.sec_vol_confirm, 低波动: r.sec_low_vol,
-    }));
-    box.innerHTML = rows.length ? renderTable(rows) : '<div class="empty">暂无行业评分，请先在盘后运行因子预计算</div>';
-  } catch (e) {
-    box.innerHTML = '<div class="empty">行业评分加载失败：' + esc(e.message) + "</div>";
+    const data = await call("screen_sector", params);
+    if (requestSeq !== _industryRequestSeq) return;
+    renderIndustry(data);
+  } catch (error) {
+    if (requestSeq !== _industryRequestSeq) return;
+    _industryLoaded = false;
+    $("i-status").innerHTML = `<span class="industry-status-reason">行业数据加载失败：${esc(error.message)}</span>`;
+    $("i-result").innerHTML = `<div class="empty">行业评分加载失败：${esc(error.message)}</div>`;
+    $("i-bars").innerHTML = '<div class="empty">暂无强弱行业数据</div>';
+    $("i-heat").innerHTML = '<div class="empty">暂无因子矩阵</div>';
+    $("i-trend").innerHTML = '<div class="empty">暂无历史趋势</div>';
+  } finally {
+    if (requestSeq === _industryRequestSeq) button.disabled = false;
   }
 }
+
+async function resolveIndustryTradeDate(current, direction) {
+  const today = localTodayCompact();
+  const available = _industryAvailableDates.filter((date) => date <= today);
+  return direction < 0
+    ? [...available].reverse().find((date) => date < current) || ""
+    : available.find((date) => date > current) || "";
+}
+
+async function shiftIndustryDate(direction) {
+  const current = compactDate($("i-date").value);
+  if (!current) return;
+  $("i-date-prev").disabled = true;
+  $("i-date-next").disabled = true;
+  try {
+    const target = await resolveIndustryTradeDate(current, direction);
+    if (!target) { toast(direction < 0 ? "没有更早的可用行业快照" : "已经是最新可用行业快照", "bad"); return; }
+    $("i-date").value = formatFullDate(target);
+    $("i-mode").value = "historical";
+    await loadIndustry(true);
+  } catch (error) {
+    toast("行业交易日切换失败：" + error.message, "bad");
+  } finally { updateIndustryDateButtons(); }
+}
+
 $("i-run").onclick = () => loadIndustry(true);
+$("i-mode").onchange = () => {
+  if ($("i-mode").value === "intraday") $("i-date").value = formatFullDate(localTodayCompact());
+  loadIndustry(true);
+};
+$("i-date").onchange = () => {
+  const date = compactDate($("i-date").value);
+  const today = localTodayCompact();
+  if (date > today) $("i-date").value = formatFullDate(today);
+  if ($("i-mode").value === "latest_complete" || ($("i-mode").value === "intraday" && date !== today)) {
+    $("i-mode").value = "historical";
+  }
+  loadIndustry(true);
+};
+$("i-history-days").onchange = () => loadIndustry(true);
+$("i-topn").onchange = () => loadIndustry(true);
+$("i-search").addEventListener("input", renderIndustryTable);
+$("i-sort").onchange = () => {
+  const [key, dir] = $("i-sort").value.split("-");
+  _industrySort = { key: key === "mom5" ? "sec_mom_5d" : key, dir };
+  renderIndustryTable();
+};
+$("i-date-prev").onclick = () => shiftIndustryDate(-1);
+$("i-date-next").onclick = () => shiftIndustryDate(1);
+$("i-bars").addEventListener("click", (event) => {
+  const target = event.target.closest("[data-industry-code]");
+  if (target) selectIndustry(target.dataset.industryCode);
+});
+$("i-heat").addEventListener("click", (event) => {
+  const target = event.target.closest("[data-industry-code]");
+  if (target) selectIndustry(target.dataset.industryCode);
+});
+$("i-result").addEventListener("click", (event) => {
+  const header = event.target.closest("[data-industry-sort]");
+  if (header) {
+    const key = header.dataset.industrySort;
+    _industrySort = _industrySort.key === key ? { key, dir: _industrySort.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "name" ? "asc" : "desc" };
+    renderIndustryTable();
+    return;
+  }
+  const row = event.target.closest("[data-industry-code]");
+  if (row) selectIndustry(row.dataset.industryCode);
+});
 
 /* ---------- 量化选股看板 ---------- */
 const CATEGORY_LABEL = { auto: "每日自动", manual: "用户触发", watch: "关注", holding: "持仓" };
@@ -1070,6 +1583,78 @@ function svgLine(points, opts = {}) {
   </svg>`;
 }
 
+function formatFullDate(value) {
+  const text = String(value || "").replaceAll("-", "");
+  return /^\d{8}$/.test(text) ? `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}` : String(value || "");
+}
+
+function temperatureColor(value) {
+  const ratio = Math.max(0, Math.min(1, Number(value) / 100));
+  const start = [59, 130, 246];
+  const end = [239, 68, 68];
+  const rgb = start.map((channel, index) => Math.round(channel + (end[index] - channel) * ratio));
+  return `rgb(${rgb.join(",")})`;
+}
+
+function sentimentTemperatureLine(points) {
+  if (!points?.length) return '<div class="empty">无数据</div>';
+  const W = Math.max(720, points.length * 96), H = 260;
+  const padL = 48, padR = 36, padT = 34, padB = 42;
+  const xAt = (index) => padL + (W - padL - padR) * (points.length === 1 ? 0.5 : index / (points.length - 1));
+  const yAt = (value) => padT + (H - padT - padB) * (1 - Number(value) / 100);
+  let grid = "", yAxis = "";
+  for (let value = 0; value <= 100; value += 20) {
+    const y = yAt(value);
+    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#eef1f7"/>`;
+    yAxis += `<span style="top:${y.toFixed(1)}px">${value}</span>`;
+  }
+  const path = points.map((point, index) => `${index ? "L" : "M"}${xAt(index).toFixed(1)} ${yAt(point.value).toFixed(1)}`).join(" ");
+  const nodes = points.map((point, index) => {
+    const x = xAt(index), y = yAt(point.value), color = temperatureColor(point.value);
+    return `<g class="sentiment-point ${point.selected ? "selected" : ""}" data-sentiment-date="${esc(point.date)}" tabindex="0" role="button" aria-label="切换到 ${esc(point.label)}，温度 ${esc(point.value)}">
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="${color}" stroke="#fff" stroke-width="2"><title>${esc(point.label)}：${esc(point.value)}${point.isFinal === false ? "（盘中）" : ""}</title></circle>
+      <text x="${x.toFixed(1)}" y="${(y - 11).toFixed(1)}" text-anchor="middle" class="sentiment-value" fill="${color}">${esc(point.value)}</text>
+      <text x="${x.toFixed(1)}" y="${(y + 19).toFixed(1)}" text-anchor="middle" class="sentiment-date">${esc(point.label)}</text>
+    </g>`;
+  }).join("");
+  const firstDate = points[0].label;
+  const lastDate = points[points.length - 1].label;
+  return `<div class="sentiment-line-layout">
+    <div class="sentiment-y-axis" aria-hidden="true">${yAxis}</div>
+    <div class="sentiment-line-scroll" data-sentiment-scroll>
+      <svg viewBox="0 0 ${W} ${H}" class="chart-svg sentiment-line-svg" style="min-width:${W}px" preserveAspectRatio="xMidYMid meet">
+        ${grid}<path d="${path}" fill="none" stroke="#9aa8bd" stroke-width="2" stroke-linejoin="round"/>${nodes}
+      </svg>
+    </div>
+  </div>
+  <div class="sentiment-date-axis">
+    <span title="起始日期">${esc(firstDate)}</span>
+    <input type="range" min="0" max="1000" value="1000" step="1" data-sentiment-range aria-label="拖动日期轴查看历史温度" />
+    <span title="截止日期">${esc(lastDate)}</span>
+  </div>`;
+}
+
+function initSentimentTrendScroll() {
+  const root = $("s-trend");
+  const viewport = root.querySelector("[data-sentiment-scroll]");
+  const range = root.querySelector("[data-sentiment-range]");
+  if (!viewport || !range) return;
+  const maxScroll = () => Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+  const syncRange = () => {
+    const max = maxScroll();
+    range.value = max > 0 ? String(Math.round(viewport.scrollLeft / max * 1000)) : "1000";
+    range.disabled = max <= 0;
+  };
+  range.addEventListener("input", () => {
+    viewport.scrollLeft = maxScroll() * Number(range.value) / 1000;
+  });
+  viewport.addEventListener("scroll", syncRange, { passive: true });
+  requestAnimationFrame(() => {
+    viewport.scrollLeft = maxScroll();
+    syncRange();
+  });
+}
+
 // 柱状图：items = [{label, value}]；支持正负（以 0 为基线）
 function svgBars(items, opts = {}) {
   if (!items || !items.length) return '<div class="empty">无数据</div>';
@@ -1110,10 +1695,19 @@ function svgBars(items, opts = {}) {
 
 /* ---------- 情绪温度 ---------- */
 let _sentLoaded = false;
-function loadSentiment() {
-  if (_sentLoaded || !cfg.key) return;
+let _sentRequestSeq = 0;
+let _sentimentTrendEnd = "";
+let _sentimentMaxDate = "";
+let _sentimentKnownDates = [];
+async function loadSentiment(force = false, forceIntradayRefresh = false) {
+  if ((_sentLoaded && !force) || !cfg.key) return;
   _sentLoaded = true;
-  setSentimentDefaultDate().then(() => Promise.all([syncSentimentWindow(), runSentiment()]));
+  await setSentimentDefaultDate();
+  if (!_sentimentTrendEnd) _sentimentTrendEnd = $("s-date").value.trim().replaceAll("-", "");
+  const [, loaded] = await Promise.all([
+    syncSentimentWindow(), runSentiment({ forceIntradayRefresh }),
+  ]);
+  if (loaded === false) _sentLoaded = false;
 }
 
 async function setSentimentDefaultDate() {
@@ -1122,8 +1716,11 @@ async function setSentimentDefaultDate() {
   try {
     const h = await health();
     const serverDate = String(h.date || "").trim();
-    if (/^\d{8}$/.test(serverDate) && h.trade_open !== false) {
-      input.value = `${serverDate.slice(0, 4)}-${serverDate.slice(4, 6)}-${serverDate.slice(6, 8)}`;
+    if (/^\d{8}$/.test(serverDate)) {
+      _sentimentMaxDate = serverDate;
+      input.max = formatFullDate(serverDate);
+      if (h.trade_open !== false) input.value = formatFullDate(serverDate);
+      updateSentimentDateStepButtons();
     }
   } catch (e) { /* 健康检查失败时保留空值，由服务端选择最近交易日 */ }
 }
@@ -1152,8 +1749,74 @@ $("sentiment-settings").addEventListener("click", (e) => {
 });
 $("s-refresh").onclick = () => {
   $("sentiment-settings").classList.add("hidden");
-  runSentiment();
+  runSentiment({ forceIntradayRefresh: true });
 };
+$("s-date").addEventListener("change", () => {
+  _sentimentTrendEnd = $("s-date").value.trim().replaceAll("-", "");
+  updateSentimentDateStepButtons();
+  runSentiment();
+});
+
+function offsetCompactDate(value, deltaDays) {
+  if (!/^\d{8}$/.test(String(value || ""))) return "";
+  const date = new Date(Date.UTC(
+    Number(value.slice(0, 4)), Number(value.slice(4, 6)) - 1, Number(value.slice(6, 8))));
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+  return date.toISOString().slice(0, 10).replaceAll("-", "");
+}
+
+function updateSentimentDateStepButtons() {
+  const current = $("s-date").value.trim().replaceAll("-", "");
+  $("s-date-prev").disabled = !/^\d{8}$/.test(current);
+  $("s-date-next").disabled = !/^\d{8}$/.test(current)
+    || Boolean(_sentimentMaxDate && current >= _sentimentMaxDate);
+}
+
+async function resolveAdjacentTradeDate(current, direction) {
+  const known = [...new Set(_sentimentKnownDates)].sort();
+  const cached = direction < 0
+    ? [...known].reverse().find((date) => date < current)
+    : known.find((date) => date > current && (!_sentimentMaxDate || date <= _sentimentMaxDate));
+  if (cached) return cached;
+
+  const start = direction < 0 ? offsetCompactDate(current, -45) : offsetCompactDate(current, 1);
+  let end = direction < 0 ? offsetCompactDate(current, -1) : offsetCompactDate(current, 45);
+  if (direction > 0 && _sentimentMaxDate && end > _sentimentMaxDate) end = _sentimentMaxDate;
+  if (!start || !end || start > end) return "";
+  const calendar = await call("meta_trade_cal", { start, end });
+  const openDates = (calendar.rows || [])
+    .filter((row) => Number(row.is_open) === 1)
+    .map((row) => String(row.cal_date || ""))
+    .filter((date) => /^\d{8}$/.test(date)
+      && (!_sentimentMaxDate || date <= _sentimentMaxDate))
+    .sort();
+  _sentimentKnownDates = [...new Set([..._sentimentKnownDates, ...openDates])].sort();
+  return direction < 0 ? (openDates.at(-1) || "") : (openDates[0] || "");
+}
+
+async function shiftSentimentDate(direction) {
+  const current = $("s-date").value.trim().replaceAll("-", "");
+  if (!/^\d{8}$/.test(current)) return;
+  $("s-date-prev").disabled = true;
+  $("s-date-next").disabled = true;
+  try {
+    const target = await resolveAdjacentTradeDate(current, direction);
+    if (!target) {
+      toast(direction < 0 ? "没有找到更早的交易日" : "已经是最新交易日", "bad");
+      return;
+    }
+    $("s-date").value = formatFullDate(target);
+    _sentimentTrendEnd = target;
+    await runSentiment();
+  } catch (error) {
+    toast("交易日切换失败：" + error.message, "bad");
+  } finally {
+    updateSentimentDateStepButtons();
+  }
+}
+
+$("s-date-prev").onclick = () => shiftSentimentDate(-1);
+$("s-date-next").onclick = () => shiftSentimentDate(1);
 
 $("s-window-save").onclick = async () => {
   if (!isAdmin()) { toast("访客不可修改归一化窗口", "bad"); return; }
@@ -1172,10 +1835,13 @@ $("s-window-save").onclick = async () => {
   } catch (e) { st.textContent = "保存失败：" + e.message; }
 };
 
-async function runSentiment() {
+async function runSentiment({ forceIntradayRefresh = false } = {}) {
+  const requestSeq = ++_sentRequestSeq;
+  let primarySucceeded = false;
   const refreshBtn = $("s-refresh");
   refreshBtn.disabled = true;
   const date = $("s-date").value.trim().replaceAll("-", "");
+  const trendEnd = _sentimentTrendEnd || date;
   const days = Number($("s-days").value) || 15;
   $("s-result").innerHTML = '<div class="empty">读取中…</div>';
   $("s-trend").innerHTML = '<div class="empty">读取中…</div>';
@@ -1184,72 +1850,218 @@ async function runSentiment() {
   $("s-extreme-fill").style.height = "0%";
   $("s-extreme-value").textContent = "--";
   $("s-extreme-level").textContent = "极端指数";
-  // 单日温度 + 指标分解
+  $("s-fallback").textContent = "";
+  $("s-fallback").classList.add("hidden");
+  // 单日温度 + 指标分解；强刷只交给首个请求，后续走势与极端指数复用同一快照。
   try {
-    const d = await call("sentiment_temperature", date ? { date } : {});
+    const temperatureParams = date ? { date } : {};
+    if (forceIntradayRefresh) temperatureParams.force_refresh = true;
+    const d = await call("sentiment_temperature", temperatureParams);
+    if (requestSeq !== _sentRequestSeq) return false;
     if (d.error) throw new Error(d.error);
     setGauge(d.temperature, d.level);
-    $("s-current-date").textContent = `日期：${d.date || "最近交易日"}`;
+    const intraday = d.data_mode === "intraday";
+    const fallback = d.data_mode === "fallback";
+    const staleIntraday = intraday && d.intraday_stale;
+    primarySucceeded = !(fallback && date === _sentimentMaxDate && d.date !== date);
+    $("s-current-date").textContent = `日期：${d.date || "最近交易日"}${intraday ? "（盘中）" : ""}`;
+    $("s-data-mode").textContent = staleIntraday
+      ? `盘中快照${d.intraday_as_of ? `（截至 ${String(d.intraday_as_of).slice(-8)}）` : ""}`
+      : intraday ? "盘中临时温度" : fallback ? "已回退完整收盘" : "完整收盘";
+    $("s-data-mode").className = `meta-chip sentiment-mode ${intraday ? "intraday" : fallback ? "fallback" : "final"}`;
     $("s-current-window").textContent = `归一窗口：${d.window_size || $("s-window").value || "--"} 日`;
-    $("s-meta").textContent = `${d.date} · 窗口 ${d.window_dates?.length || 0} 日`;
-    $("s-breadth").textContent = d.breadth ? `上涨 ${d.breadth.adv} 家 · 下跌 ${d.breadth.dec} 家` : "";
+    const coverage = d.weight_coverage == null ? "" : ` · 权重覆盖 ${(Number(d.weight_coverage) * 100).toFixed(0)}%`;
+    $("s-meta").textContent = `${d.date} · 窗口 ${d.window_dates?.length || 0} 日${coverage}`;
+    const uniqueMessages = (values) => [...new Set(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean))];
+    const sourceEvents = uniqueMessages(d.intraday_source_events || []);
+    const componentWarnings = uniqueMessages(d.intraday_component_warnings || []);
+    const fallbackMessages = uniqueMessages([
+      d.fallback_reason, d.intraday_stale_reason, ...sourceEvents, ...componentWarnings,
+    ]);
+    if (componentWarnings.length && d.weight_coverage != null) {
+      fallbackMessages.push(`本次按剩余 ${(Number(d.weight_coverage) * 100).toFixed(0)}% 配置权重重新归一`);
+    }
+    const quality = d.intraday_quality || {};
+    const qualityDetails = [["全市场", quality.stock], ["OHLC", quality.ohlc], ["板块", quality.sector]]
+      .filter(([, item]) => item && Object.keys(item).length)
+      .map(([label, item]) => `${label}覆盖：${item.valid_rows ?? item.unique_rows ?? 0}/${item.total ?? 0}（${((Number(item.ratio) || 0) * 100).toFixed(1)}%）`);
+    $("s-meta").title = uniqueMessages([
+      d.fallback_reason, d.intraday_stale_reason, d.turnover_note,
+      ...sourceEvents, ...componentWarnings, ...qualityDetails, ...(d.intraday_errors || []),
+    ]).join("\n");
+    if (fallbackMessages.length) {
+      $("s-fallback").textContent = `数据说明：${uniqueMessages(fallbackMessages).join("；")}`;
+      $("s-fallback").classList.remove("hidden");
+    }
+    $("s-breadth").textContent = d.breadth?.adv != null
+      ? `上涨 ${d.breadth.adv} 家 · 下跌 ${d.breadth.dec} 家${intraday ? " · 实时" : ""}` : "市场宽度暂不可用";
     const inds = d.indicators || {};
-    $("s-ranges").innerHTML = renderRanges(inds, d.weights || {});
-    const rows = Object.keys(inds).map((k) => ({
-      指标: factorLabel(k), 权重: d.weights?.[k], 今值: inds[k].raw_today,
-      窗口低: inds[k].window_min, 窗口均值: inds[k].window_mean, 窗口高: inds[k].window_max,
-      较均值: inds[k].vs_mean, 子分: inds[k].sub_score,
+    const displayWeights = d.applied_weights || d.weights || {};
+    $("s-ranges").innerHTML = renderRanges(inds, displayWeights);
+    const rows = Object.keys(inds).map((key) => ({
+      指标: factorLabel(key), 权重: displayWeights[key], 今值: inds[key].raw_today,
+      窗口低: inds[key].window_min, 窗口均值: inds[key].window_mean, 窗口高: inds[key].window_max,
+      较均值: inds[key].vs_mean, 子分: inds[key].sub_score,
     }));
     $("s-result").innerHTML = rows.length ? renderTable(rows) : '<div class="empty">无数据</div>';
-  } catch (e) { $("s-result").innerHTML = ""; toast("情绪读取失败：" + e.message, "bad"); }
+  } catch (e) {
+    if (requestSeq === _sentRequestSeq) {
+      _sentLoaded = false;
+      $("s-result").innerHTML = "";
+      toast("情绪读取失败：" + e.message, "bad");
+    }
+  }
   // 多日温度走势（market_timing 返回温度序列）
   try {
     const params = { days };
-    if (date) params.date = date;
+    if (trendEnd) params.date = trendEnd;
     const t = await call("market_timing", params);
+    if (requestSeq !== _sentRequestSeq) return false;
     if (t.error) throw new Error(t.error);
-    const series = (t.recent || []).map((x) => ({ label: fmtDate(x.date), value: x.temperature }));
-    $("s-trend").innerHTML = svgLine(series, { min: 0, max: 100, color: "#f59e0b" });
-    $("s-trend-meta").textContent = `${series.length} 个交易日`;
+    const series = (t.recent || []).map((item) => ({
+      date: item.date, label: formatFullDate(item.date), value: item.temperature,
+      isFinal: item.is_final, selected: item.date === date,
+    }));
+    _sentimentKnownDates = [...new Set([
+      ..._sentimentKnownDates, ...series.map((item) => item.date),
+    ])].sort();
+    updateSentimentDateStepButtons();
+    $("s-trend").innerHTML = sentimentTemperatureLine(series);
+    initSentimentTrendScroll();
+    $("s-trend-meta").textContent = `${series.length} 个交易日 · 截止 ${formatFullDate(t.date || trendEnd)}${t.data_mode === "intraday" ? " · 含盘中临时点" : ""}`;
     renderTiming(t);
   } catch (e) {
-    $("s-trend").innerHTML = '<div class="empty">走势读取失败：' + e.message + "</div>";
-    $("s-timing").innerHTML = '<div class="empty">择时读取失败</div>';
+    if (requestSeq === _sentRequestSeq) {
+      $("s-trend").innerHTML = '<div class="empty">走势读取失败：' + esc(e.message) + "</div>";
+      $("s-timing").innerHTML = '<div class="empty">择时读取失败</div>';
+    }
   }
-  // 固定 7 日归一的情绪极端指数（不读取情绪窗口配置）
+  // 情绪极端指数：详情跟随所选日期，走势窗口独立保持 trendEnd。
   try {
-    const params = { days };
-    if (date) params.date = date;
-    const e = await call("sentiment_extreme_index", params);
+    const detailParams = { days };
+    const detailDate = date || trendEnd;
+    if (detailDate) detailParams.date = detailDate;
+    const trendParams = { days };
+    if (trendEnd) trendParams.date = trendEnd;
+    const sameWindow = !detailDate || !trendEnd || detailDate === trendEnd;
+    const detailPromise = call("sentiment_extreme_index", detailParams);
+    const [e, trendData] = sameWindow
+      ? await detailPromise.then((result) => [result, result])
+      : await Promise.all([detailPromise, call("sentiment_extreme_index", trendParams)]);
+    if (requestSeq !== _sentRequestSeq) return false;
     if (e.error) throw new Error(e.error);
-    const series = (e.recent || []).map((x) => ({ label: fmtDate(x.date), value: x.extreme_index }));
+    if (trendData.error) throw new Error(trendData.error);
+    const series = (trendData.recent || []).map((item) => ({
+      label: fmtDate(item.date), value: item.extreme_index,
+    }));
+    const temporary = e.is_final === false || e.model_mode === "provisional"
+      || trendData.is_final === false
+      || (trendData.recent || []).some((item) => item.is_final === false);
     $("s-extreme-trend").innerHTML = svgLine(series, { min: 0, max: 100, color: "#ef4444" });
-    $("s-extreme-meta").textContent = `${series.length} 个交易日 · 固定 ${e.window_size || 7} 日归一`;
-    renderExtreme(e);
+    $("s-extreme-meta").textContent = `20日稳健基线 · ${series.length} 个交易日 · 走势截止 ${formatFullDate(trendData.date || trendEnd) || "—"}${temporary ? " · 含盘中临时值" : ""}`;
+    $("s-extreme-meta").className = `meta-chip ${temporary ? "extreme-temporary" : ""}`;
+    renderExtreme(e, date, trendEnd);
   } catch (e) {
-    $("s-extreme-summary").innerHTML = '<div class="empty">极端指数读取失败：' + e.message + "</div>";
-    $("s-extreme-trend").innerHTML = '<div class="empty">极端指数走势读取失败</div>';
+    if (requestSeq === _sentRequestSeq) {
+      $("s-extreme-summary").innerHTML = '<div class="empty">极端指数读取失败：' + esc(e.message) + "</div>";
+      $("s-extreme-trend").innerHTML = '<div class="empty">极端指数走势读取失败</div>';
+    }
   }
-  refreshBtn.disabled = false;
-};
+  if (requestSeq === _sentRequestSeq) refreshBtn.disabled = false;
+  return primarySucceeded;
+}
 
-function renderExtreme(e) {
-  const amplitude = e.components?.amplitude || {};
-  const volume = e.components?.volume_shrink || {};
+function selectSentimentDate(date) {
+  if (!/^\d{8}$/.test(String(date || ""))) return;
+  $("s-date").value = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+  updateSentimentDateStepButtons();
+  runSentiment();
+}
+
+$("s-trend").addEventListener("click", (event) => {
+  const point = event.target.closest("[data-sentiment-date]");
+  if (point) selectSentimentDate(point.dataset.sentimentDate);
+});
+$("s-trend").addEventListener("keydown", (event) => {
+  if (!["Enter", " "].includes(event.key)) return;
+  const point = event.target.closest("[data-sentiment-date]");
+  if (point) {
+    event.preventDefault();
+    selectSentimentDate(point.dataset.sentimentDate);
+  }
+});
+
+const EXTREME_COMPONENTS = [
+  { key: "volatility", label: "波动强度" },
+  { key: "volume_shock", label: "量能冲击" },
+  { key: "kline_shock", label: "K线冲击" },
+  { key: "breadth_extreme", label: "市场宽度极端" },
+  { key: "limit_shock", label: "涨跌停冲击" },
+];
+
+function extremeComponentValue(component) {
+  if (typeof component === "number") return component;
+  if (!component || typeof component !== "object") return null;
+  for (const key of ["robust_strength", "normalized_20d", "normalized", "score", "sub_score", "value"]) {
+    const number = Number(component[key]);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function extremeWeightText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return `${(number <= 1 ? number * 100 : number).toFixed(0)}%`;
+}
+
+function renderExtreme(e, selectedDate = "", trendEnd = "") {
   const value = Math.max(0, Math.min(100, Number(e.extreme_index) || 0));
   const color = value >= 80 ? "#ef4444" : (value >= 60 ? "#f97316" : (value >= 40 ? "#f59e0b" : "#3b82f6"));
+  const temporary = e.is_complete === false || e.is_final === false || e.data_mode === "intraday";
+  const configured = e.configured_weights || e.weights || {};
+  const applied = e.applied_weights || configured;
+  const missing = new Set(e.missing_components || []);
+  const componentLabels = Object.fromEntries(EXTREME_COMPONENTS.map((item) => [item.key, item.label]));
+  const coverageNumber = Number(e.component_coverage);
+  const coverage = Number.isFinite(coverageNumber)
+    ? `${(coverageNumber <= 1 ? coverageNumber * 100 : coverageNumber).toFixed(0)}%` : "—";
+  const modeLabels = {
+    final: "完整模型", provisional: "盘中临时模型", full: "完整模型", complete: "完整模型",
+    partial: "部分组件模型", degraded: "降级模型", fallback: "回退模型", intraday: "盘中临时模型",
+  };
+  const modelMode = modeLabels[e.model_mode] || (temporary ? "盘中临时模型" : "模型模式未标注");
+  const componentCards = EXTREME_COMPONENTS.map(({ key, label }) => {
+    const component = e.components?.[key];
+    const score = extremeComponentValue(component);
+    const raw = component && typeof component === "object"
+      ? component.raw_today ?? component.raw ?? component.current : null;
+    const unavailable = missing.has(key) || score == null;
+    return `<div class="extreme-component ${unavailable ? "missing" : ""}"><small>${label}</small><b>${unavailable ? "缺失" : industryValueText(score, 1)}</b><span>${raw == null ? "20日稳健基线" : `原值 ${esc(industryValueText(raw, 3))}`}</span></div>`;
+  }).join("");
+  const weightRows = EXTREME_COMPONENTS.map(({ key, label }) => `
+    <div><span>${label}</span><b>${extremeWeightText(configured[key])}</b><i>→</i><strong>${extremeWeightText(applied[key])}</strong></div>`).join("");
+  const missingText = [...missing].map((key) => componentLabels[key] || "未识别组件").join("、") || "无";
+  const selectedText = formatFullDate(selectedDate) || "最近交易日";
+  const trendText = formatFullDate(e.date || trendEnd) || "最近交易日";
+  const fallbackHtml = e.fallback_reason
+    ? `<div class="extreme-fallback">回退原因：${esc(e.fallback_reason)}</div>` : "";
   $("s-extreme-fill").style.height = `${value}%`;
   $("s-extreme-fill").style.background = color;
   $("s-extreme-bulb").style.background = color;
   $("s-extreme-value").textContent = e.extreme_index ?? "--";
-  $("s-extreme-level").textContent = e.level || "极端指数";
+  $("s-extreme-level").textContent = `${e.level || "极端指数"}${temporary ? "（盘中临时值）" : ""}`;
   $("s-extreme-summary").innerHTML = `
-    <div class="timing-badges">
-      <div class="badge"><small>市场振幅</small><b>${amplitude.raw_today ?? "--"}%</b></div>
-      <div class="badge"><small>振幅 7 日归一</small><b>${amplitude.normalized_7d ?? "--"}</b></div>
-      <div class="badge"><small>缩量 7 日归一</small><b>${volume.normalized_7d ?? "--"}</b></div>
+    <div class="extreme-context ${temporary ? "temporary" : ""}">
+      <span>当前选择日：<b>${esc(selectedText)}</b></span><span>走势截止日：<b>${esc(trendText)}</b></span>${temporary ? "<strong>盘中临时值</strong>" : ""}
     </div>
-    <div class="timing-stance">${e.selection_bias || ""}</div>`;
+    ${fallbackHtml}
+    <div class="extreme-components">${componentCards}</div>
+    <div class="extreme-model-grid">
+      <div class="extreme-model-state"><small>模型状态</small><b>${esc(modelMode)}</b><span>组件覆盖 ${coverage}</span><span>缺失组件：${esc(missingText)}</span></div>
+      <div class="extreme-weights"><div class="extreme-weight-head"><span>组件</span><b>配置</b><strong>实际</strong></div>${weightRows}</div>
+    </div>
+    <div class="timing-stance">${esc(e.selection_bias || e.note || "指数越高表示市场状态越极端，但不表示上涨或下跌方向。")}</div>`;
 }
 
 function renderTiming(t) {
@@ -1451,7 +2263,9 @@ function updateLogScopeUI() {
 }
 
 $("log-scope").onchange = updateLogScopeUI;
-const todayText = new Date().toISOString().slice(0, 10);
+const nowForDateInput = new Date();
+const todayText = new Date(nowForDateInput.getTime() - nowForDateInput.getTimezoneOffset() * 60000)
+  .toISOString().slice(0, 10);
 $("log-date").value = todayText;
 $("log-from").value = todayText;
 $("log-to").value = todayText;
@@ -1636,7 +2450,13 @@ function modelBlock(model, info) {
     inputs().forEach((i) => (weights[i.dataset.f] = parseFloat(i.value) || 0));
     try {
       const r = await call("set_factor_weights", { model, weights, actor: "user", reason: "管理员在权重配置页手工调整" });
-      if (r.applied) { toast(`已保存 ${model} 权重`, "ok"); loadWeights(); }
+      if (r.applied) {
+        const message = model === "sector"
+          ? "已保存行业权重；旧合同快照立即停用，服务端将在 16:00 日终收口后自动重算"
+          : `已保存 ${MODEL_LABEL[model] || model} 权重，新请求立即生效`;
+        toast(message, "ok");
+        loadWeights();
+      }
       else {
         let msg = r.error || "保存失败";
         if (r.missing?.length) msg += "；缺失:" + r.missing.join(",");

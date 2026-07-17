@@ -74,3 +74,8 @@ disable-model-invocation: false
 - 直接依赖：`data-service`、`priority-framework`、`output-format`。
 - 可按本次请求读取 `pre-market`、`bidding-analysis`、`post-market`、`stock-screening`、`stock-research` 作为上下文。
 - 本 Skill 只由主 Agent 在当前用户明确请求下单轮执行，不启用团队，也不转交调度器。
+## v2.2.0 当前调度与日终边界
+
+- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；盘中盯盘不在定时任务中，只能由用户当前明确请求后单轮执行，结束后不得续跑。
+- 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
+- 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得由盯盘失败、自动补跑、Hook、cron 或 Agent 循环触发。

@@ -17,7 +17,7 @@ SKILLS_DIR = APP_ROOT / "agent" / "skills"
 SERVICE_DIR = APP_ROOT / "service"
 
 # 不作为功能模块导入的纯库（仍会因在 sys.path 上而可被 import）
-LIB_ONLY = {"factors"}
+LIB_ONLY = {"factors", "eod_fallback"}
 
 
 def _scripts_dirs() -> list[Path]:
@@ -42,7 +42,7 @@ def discover() -> list[str]:
     for d in dirs:
         for py in sorted(d.glob("*.py")):
             mod = py.stem
-            if mod.startswith("_") or mod in {"app", "registry", "loader", "common", "cli", "db", "version"}:
+            if mod.startswith("_") or mod in {"app", "registry", "loader", "common", "cli", "db", "version", "daily_scheduler"}:
                 continue
             if mod in LIB_ONLY:
                 continue

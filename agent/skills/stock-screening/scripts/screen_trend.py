@@ -125,9 +125,11 @@ def _ths_concept_codes(pro, term: str) -> list[str]:
 def _dc_concept_codes(pro, term: str) -> list[str]:
     """东财板块中名称含 term 的板块 → 成分股代码（补充热点概念）。"""
     codes: list[str] = []
-    td = common.last_trade_date()
+    td = common.last_data_ready_date()
     try:
-        idx = common.cached_call("dc_index_day", {"td": td}, lambda: pro.dc_index(trade_date=td))
+        idx = common.cached_call(
+            "dc_index_day", {"td": td}, lambda: pro.dc_index(trade_date=td),
+            historical=True, data_status="final", trade_date=td, expected_end=td)
         idf = pd.DataFrame(idx.get("rows", []))
     except Exception:
         return codes

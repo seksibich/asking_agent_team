@@ -57,13 +57,14 @@ def _table_from_db(end: str, code_filter: Optional[set],
 
 
 def _attach_quotes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """为候选补最新行情：最新价 last / 当日涨幅 chg / 近5日涨幅 ret5。
+    """为候选补安全就绪日行情：最新价 last / 当日涨幅 chg / 近5日涨幅 ret5。
 
-    用日线（永久缓存，end=最近交易日不可变、跨次复用），不逐次打实时接口。
+    只读取 `last_data_ready_date`，并由缓存 v2 校验最大日期覆盖目标日；盘中和
+    收盘待就绪阶段都不会把当天不完整行情永久固化。
     """
     if not rows:
         return rows
-    end = common.last_trade_date()
+    end = str(common.market_clock()["last_data_ready_date"])
     start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=15)).strftime("%Y%m%d")
     pro = common.get_pro()
     for r in rows:
@@ -72,11 +73,13 @@ def _attach_quotes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             payload = common.cached_call(
                 "daily", {"c": code, "s": start, "e": end},
                 lambda c=code: pro.daily(ts_code=c, start_date=start, end_date=end),
-                historical=True)
+                historical=True, data_status="final", expected_end=end)
             df = pd.DataFrame(payload.get("rows", []))
             if df.empty:
                 continue
-            df = df.sort_values("trade_date")
+            df = df[df["trade_date"].astype(str) <= end].sort_values("trade_date")
+            if df.empty or str(df.iloc[-1]["trade_date"]) != end:
+                continue
             cl = df["close"].astype(float).tolist()
             r["last"] = round(cl[-1], 2)
             if "pct_chg" in df.columns:

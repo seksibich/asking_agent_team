@@ -78,6 +78,10 @@
 | 宏观·期货·时事·全球市场分析师 | `data-service`、`priority-framework`、`industry-analysis`、`pre-market`、`post-market`；用户单股调研时协同 `stock-research` |
 | 回测分析师 | `data-service`、`quant-screening`、`review-learning`、`post-market`、`output-format`；仅用户明确将调研结果持久化为 watch 后介入观察性回测 |
 
-`stock-research` 是用户主动单股调研入口，**不加入定时 T1/T6/T7 的必执行绑定**；但全员启动时仍必须完整加载。回测分析师不得将 watch 样本用于 auto 胜率、`tuning_hints` 或调参。
+`stock-research` 是用户主动单股调研入口，**不加入定时 T1/T2/T3 的必执行绑定**；但全员启动时仍必须完整加载。回测分析师不得将 watch 样本用于 auto 胜率、`tuning_hints` 或调参。
 
 分发任务时必须在任务描述中点名对应 `skills/<name>/SKILL.md`；涉及取数统一执行 `skills/data-service/SKILL.md` 的 fallback、缺失标注与定时延迟重试规则。
+## v2.2.0 当前团队边界
+
+- 团队仅执行现行 T1/T2/T3/W1/M1/P1：T2 为 17:30 主 Agent 当日总结，T3 为 22:00 团队综合复盘；旧 T6/T7/D1 必须在初始化时删除。
+- 服务端交易日 16:00 自动收口，团队只读 `health.daily_finalize` / `precompute_status`。任何角色都不得定时、自动补跑或因失败触发 `precompute_daily_factors`；仅用户明确要求管理员诊断/补数时允许主 Agent 单次手动调用。

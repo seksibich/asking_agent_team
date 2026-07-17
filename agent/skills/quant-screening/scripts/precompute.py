@@ -14,9 +14,8 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -33,7 +32,6 @@ STOCK_CONTRACT = factor_contract.base_contract("stock")
 SECTOR_CONTRACT = factor_contract.base_contract("sector")
 LOOKBACK_DEFAULT = 260
 MIN_COVERAGE_RATIO = 0.80
-MARKET_CLOSE_TIME = time(15, 0)
 
 
 def _trade_dates(pro, end: str, n: int) -> list[str]:
@@ -46,47 +44,35 @@ def _trade_dates(pro, end: str, n: int) -> list[str]:
     return sorted(open_days)[-n:]
 
 
-def _shanghai_now() -> datetime:
-    """返回上海时区当前时间，避免容器系统时区影响目标日期。"""
-    return datetime.now(ZoneInfo(common.TZ))
-
-
 def _default_target_date(pro, now: Optional[datetime] = None) -> str:
-    """确定增量预计算目标日：交易日收盘后取当天，否则取上一交易日。"""
-    current = now or _shanghai_now()
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=ZoneInfo(common.TZ))
-    else:
-        current = current.astimezone(ZoneInfo(common.TZ))
-    cutoff = current.date()
-    if current.time().replace(tzinfo=None) < MARKET_CLOSE_TIME:
-        cutoff -= timedelta(days=1)
-    dates = _trade_dates(pro, cutoff.strftime("%Y%m%d"), 1)
-    if not dates:
-        raise RuntimeError("无法确定待补算的最近交易日")
-    return dates[-1]
+    """确定增量预计算目标日，只使用越过安全就绪线的交易日。"""
+    del pro
+    return str(common.market_clock(now)["last_data_ready_date"])
 
 
 def _is_historical_date(date: str) -> bool:
-    """仅已结束的历史日期可永久缓存；当天数据需允许稍后重试。"""
-    return date < _shanghai_now().strftime("%Y%m%d")
+    """目标日不晚于安全数据就绪日时，才具备永久缓存资格。"""
+    return date <= str(common.market_clock()["last_data_ready_date"])
 
 
 def _daily_slice(pro, date: str) -> pd.DataFrame:
-    """全市场某日 daily 切片；历史日永久缓存，当天不缓存空结果。"""
-    historical = _is_historical_date(date)
-    payload = common.cached_call("daily_slice", {"trade_date": date},
-                                 lambda: pro.daily(trade_date=date),
-                                 use_cache=historical, historical=historical)
+    """读取全市场某日 daily 切片，优先 Tushare，当日收盘后允许 AkShare 严格兜底。"""
+    import eod_fallback
+
+    payload = common.cached_call(
+        "daily_slice", {"trade_date": date},
+        lambda: eod_fallback.fetch_daily_slice(pro, date),
+        historical=True, data_status="final", trade_date=date, expected_end=date,
+    )
     return pd.DataFrame(payload.get("rows", []))
 
 
 def _turnover_map(pro, date: str) -> dict[str, float]:
-    historical = _is_historical_date(date)
-    payload = common.cached_call("daily_basic_slice", {"trade_date": date},
-                                 lambda: pro.daily_basic(trade_date=date,
-                                                         fields="ts_code,turnover_rate"),
-                                 use_cache=historical, historical=historical)
+    payload = common.cached_call(
+        "daily_basic_slice", {"trade_date": date},
+        lambda: pro.daily_basic(trade_date=date, fields="ts_code,trade_date,turnover_rate"),
+        historical=True, data_status="final", trade_date=date, expected_end=date,
+    )
     return {
         str(row.get("ts_code", "")).strip().upper(): row.get("turnover_rate")
         for row in payload.get("rows", [])
@@ -95,13 +81,13 @@ def _turnover_map(pro, date: str) -> dict[str, float]:
 
 
 def _basic_map(pro, date: str) -> dict[str, dict[str, Any]]:
-    """全市场某日估值/市值切片（历史日永久缓存，当天允许重试）。"""
-    historical = _is_historical_date(date)
+    """读取全市场某日估值/市值切片，目标日覆盖合格后才永久缓存。"""
     payload = common.cached_call(
         "daily_basic_val_slice", {"trade_date": date},
-        lambda: pro.daily_basic(trade_date=date,
-                                fields="ts_code,pe_ttm,pe,pb,circ_mv,total_mv"),
-        use_cache=historical, historical=historical)
+        lambda: pro.daily_basic(
+            trade_date=date, fields="ts_code,trade_date,pe_ttm,pe,pb,circ_mv,total_mv"),
+        historical=True, data_status="final", trade_date=date, expected_end=date,
+    )
     return {
         str(row.get("ts_code", "")).strip().upper(): row
         for row in payload.get("rows", [])
@@ -160,17 +146,19 @@ def _sector_strength_map(pro, target: str,
             "sec_vol_confirm", "sec_low_vol", "last_close") if key in row},
     } for row in scores]
 
+    target_final = _is_historical_date(target)
     stock_map: dict[str, dict[str, Any]] = {}
     for sector in scores:
         payload = common.cached_call(
             "sw_l1_members", {"code": sector["code"], "date": target},
             lambda code=sector["code"]: pro.index_member(index_code=code),
-            historical=_is_historical_date(target))
+            historical=True, data_status="final", trade_date=target,
+            expected_end=target)
         members = pd.DataFrame(payload.get("rows", []))
         code_col = next((c for c in ("con_code", "ts_code", "code") if c in members.columns), None)
         if not code_col:
             continue
-        if _is_historical_date(target) and not {"in_date", "out_date"}.issubset(members.columns):
+        if target_final and not {"in_date", "out_date"}.issubset(members.columns):
             raise RuntimeError(
                 f"{sector.get('name') or sector['code']} 历史成分缺少 in_date/out_date，拒绝用当前成分冒充 {target}")
         if "in_date" in members.columns:
@@ -251,6 +239,13 @@ def _compute_for_date(pro, target: str, lookback: int, job_id: str,
         }
 
     try:
+        last_ready = str(common.market_clock()["last_data_ready_date"])
+    except Exception as exc:
+        return finish("failed", reason=f"安全数据日期获取失败：{_error_text(exc)}")
+    if target > last_ready:
+        return finish("skipped", reason=f"{target} 尚未达到日终安全就绪线，未发布因子")
+
+    try:
         dates = _trade_dates(pro, target, lookback)
     except Exception as exc:
         return finish("failed", reason=f"交易日历获取失败：{_error_text(exc)}")
@@ -287,6 +282,21 @@ def _compute_for_date(pro, target: str, lookback: int, job_id: str,
                                   reason=f"{target} 收盘行情字段不完整，未写入因子：{','.join(missing)}")
                 errors.append(f"{day} 日线缺少字段：{','.join(missing)}")
                 continue
+            sl = sl[sl["trade_date"].astype(str) == day].copy()
+            if sl.empty:
+                if day == target:
+                    return finish("failed", len(universe),
+                                  reason=f"目标日切片未实际包含 {target}，未写入因子")
+                errors.append(f"{day} 切片没有对应交易日期记录")
+                continue
+            if day == target:
+                target_codes = set(sl["ts_code"].astype(str).str.upper()) & universe
+                target_coverage = len(target_codes) / len(universe) if universe else 0.0
+                if target_coverage < MIN_COVERAGE_RATIO:
+                    return finish(
+                        "failed", len(universe), len(target_codes), target_coverage,
+                        f"{target} 目标日行情覆盖不足：{target_coverage:.2%}",
+                    )
             keep = [c for c in ("ts_code", "trade_date", "close", "vol", "amount") if c in sl.columns]
             frames.append(sl[keep])
         except Exception as exc:
@@ -544,7 +554,7 @@ def _run_precompute_job(job_id: str, params: dict[str, Any]) -> None:
 @register("precompute_daily_factors", "screening",
           "启动全市场因子后台预计算；全服务唯一，重复调用返回当前任务及实时进度",
           params=[{"name": "date", "type": "string", "required": False,
-                   "desc": "YYYYMMDD；默认交易日收盘后取当天，否则取上一交易日"},
+                   "desc": "YYYYMMDD；默认最近数据就绪交易日，安全线前不发布当天结果"},
                   {"name": "lookback", "type": "int", "required": False, "default": LOOKBACK_DEFAULT,
                    "desc": "因子计算回看交易日数（最少252，保证12-1动量）"},
                   {"name": "full", "type": "bool", "required": False, "default": False,
@@ -625,11 +635,7 @@ def _summarize_run(run: dict[str, Any]) -> dict[str, Any]:
           returns="latest_date / latest_usable_date / runs[{status,coverage_ratio,error_count,errors_preview,errors_truncated}]")
 def precompute_status(p: dict) -> dict:
     limit = int(p.get("limit", 30))
-    current = _shanghai_now()
-    completed_cutoff = current.date()
-    if current.time().replace(tzinfo=None) < MARKET_CLOSE_TIME:
-        completed_cutoff -= timedelta(days=1)
-    cutoff_text = completed_cutoff.strftime("%Y%m%d")
+    cutoff_text = str(common.market_clock()["last_data_ready_date"])
     current_dependencies = factor_contract.stock_data_dependencies(
         factor_config.model_contract("sector"))
     current_dependency_hash = factor_contract.fingerprint(current_dependencies)

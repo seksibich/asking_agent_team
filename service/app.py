@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -34,6 +35,21 @@ import registry
 import loader
 import selection_tags
 import version
+
+
+def _health_cache_ttl() -> float:
+    """解析健康快照缓存秒数；非法配置回退两秒。"""
+    try:
+        value = float(os.getenv("HEALTH_SNAPSHOT_TTL_SECONDS", "2"))
+    except (TypeError, ValueError):
+        value = 2.0
+    return max(0.2, min(10.0, value))
+
+
+_HEALTH_CACHE_TTL = _health_cache_ttl()
+_HEALTH_CACHE_LOCK = threading.Lock()
+_HEALTH_CACHE: dict[str, Any] = {"at": 0.0, "value": None}
+
 
 def _normalize_key(value: Optional[str]) -> str:
     """规范化环境变量或请求中的 Key，避免部署工具带入首尾空白/外层引号。"""
@@ -90,10 +106,25 @@ def _startup() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"[startup] db init skipped: {e}")
     imported = loader.discover()
+    try:
+        import daily_scheduler
+        daily_scheduler.start()
+        print("[startup] daily finalize scheduler enabled: 16:00 Asia/Shanghai")
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] daily finalize scheduler skipped: {e}")
     print(f"[startup] auth configured: admin_keys={len(ADMIN_API_KEYS)}, "
           f"user_key={bool(USER_API_KEY)}")
     print(f"[startup] loaded {len(imported)} function modules, "
           f"{len(registry.names())} functions, data_version={registry.data_version()}")
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    try:
+        import daily_scheduler
+        daily_scheduler.stop()
+    except Exception:
+        pass
 
 
 def _dynamic_user_keys() -> list[dict[str, Any]]:
@@ -239,29 +270,40 @@ def _safe_health_value(getter, fallback: Any) -> Any:
         return fallback
 
 
-def _health_snapshot() -> dict[str, Any]:
+def _build_health_snapshot() -> dict[str, Any]:
     """生成与 /health 顶层字段一致的健康快照，并对每个探测项独立容错。"""
     _safe_health_value(common.clean_expired_cache, None)
-    day = _safe_health_value(common.today_str, datetime.now().strftime("%Y%m%d"))
+    day = _safe_health_value(common.today_str, common.shanghai_now().strftime("%Y%m%d"))
     tushare_ready = bool(_safe_health_value(lambda: common.TUSHARE_TOKEN, ""))
-    trade_open = _safe_health_value(
-        lambda: common.is_trade_open(day) if tushare_ready else None,
-        None,
-    )
+    clock = (_safe_health_value(common.market_clock, None) if tushare_ready else None)
+    clock = clock if isinstance(clock, dict) else {}
+    is_trading_day = clock.get("is_trading_day")
 
     db_ready = False
     portfolio_version = "unavailable"
+    daily_finalize: dict[str, Any] = {"status": "unavailable"}
     try:
         db.get_engine().connect().close()
         db_ready = True
         portfolio_version = _safe_health_value(db.get_portfolio_version, "unavailable")
+        import daily_scheduler
+        daily_finalize = _safe_health_value(daily_scheduler.status, {"status": "unavailable"})
     except Exception:
         pass
 
     return {
         "status": "ok",
         "date": day,
-        "trade_open": trade_open,
+        "trade_open": is_trading_day,
+        "is_trading_day": is_trading_day,
+        "market_phase": clock.get("phase"),
+        "is_continuous_trading": clock.get("is_continuous_trading"),
+        "last_calendar_trade_date": clock.get("last_calendar_trade_date"),
+        "last_closed_trade_date": clock.get("last_closed_trade_date"),
+        "last_data_ready_date": clock.get("last_data_ready_date"),
+        "final_ready_time": clock.get("final_ready_time"),
+        "daily_finalize": daily_finalize,
+        "market_time": clock.get("market_time") or common.now_str(),
         "tushare_ready": tushare_ready,
         "db_ready": db_ready,
         "portfolio_version": portfolio_version,
@@ -273,6 +315,18 @@ def _health_snapshot() -> dict[str, Any]:
         "git_revision": _safe_health_value(version.git_revision, "unknown"),
         "data_version": _safe_health_value(registry.data_version, "unknown"),
     }
+
+
+def _health_snapshot() -> dict[str, Any]:
+    """短时复用健康快照，避免同一页面并发请求重复访问交易日历与数据库。"""
+    now_mono = time.monotonic()
+    with _HEALTH_CACHE_LOCK:
+        cached = _HEALTH_CACHE.get("value")
+        if isinstance(cached, dict) and now_mono - float(_HEALTH_CACHE.get("at") or 0) < _HEALTH_CACHE_TTL:
+            return dict(cached)
+        value = _build_health_snapshot()
+        _HEALTH_CACHE.update({"at": now_mono, "value": value})
+        return dict(value)
 
 
 def _versioned(

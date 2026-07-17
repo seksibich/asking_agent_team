@@ -139,18 +139,18 @@
 
 ## 7. 定时任务表（详见 schedule.md）
 
-初始化时先删除历史 T2/T3/T4/T5 及任何自动竞价、盘中扫描、午间总结任务，再仅注册 `schedule.md` 保留的 T1/T6/T7/W1/M1/D1/P1。禁止通过调度器、Hook、cron 或 Agent 循环调用 `bidding_analysis`、`watch_intraday`。每条保留任务首步 `GET /health` + 强制读取当日观察对象记忆。
+初始化时删除历史 T2/T3/T4/T5、旧 T6/T7、旧 D1 及任何自动竞价、盘中扫描、午间总结、Agent 预计算任务，再仅注册 `schedule.md` 保留的 T1/T2/T3/W1/M1/P1。禁止通过调度器、Hook、cron 或 Agent 循环调用 `bidding_analysis`、`watch_intraday`、`precompute_daily_factors`；日终预计算只由服务端交易日 16:00 任务执行。T2/T3 只读 `health.daily_finalize` / `precompute_status`，失败或缺数时仅披露并重试读取，不自动补跑。只有用户当前明确要求管理员诊断或补数时，才可单次手动调用 `precompute_daily_factors`。每条保留任务首步 `GET /health` + 强制读取当日观察对象记忆。
 
 ## 8. Agent→Skill 强制绑定（v1.2.0）
 
-固定 Skill 清单仅有且完整为 12 个：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`。首次及每次任务/角色启动均须完整读取对应 `skills/<name>/SKILL.md`，禁止只凭本索引或角色摘要。角色主绑定见 `agents/TEAM.md`；`stock-research` 为用户主动单股调研入口，不加入定时 T1/T6/T7 必执行绑定。
+固定 Skill 清单仅有且完整为 12 个：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`。首次及每次任务/角色启动均须完整读取对应 `skills/<name>/SKILL.md`，禁止只凭本索引或角色摘要。角色主绑定见 `agents/TEAM.md`；`stock-research` 为用户主动单股调研入口，不加入定时 T1/T2/T3 必执行绑定。
 
 情绪角色 v1.1.0 能力包括：`sentiment_temperature`、`sentiment_extreme_index`、连板生态/连板个股、断板后 1-3 日反包候选；极端指数只消费服务返回，不在 Agent 侧复算，最终风格候选仍按 `skills/priority-framework/SKILL.md` 裁决。
 
 ## 9. v1.2.0 报告、候选与业绩池运行期硬约束
 
-1. **详尽报告、精简推送**：T1/T6/T7 报告固定按“一眼结论（核心摘要）→目录导读→详细正文”；标题后首屏先给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。动态题材综合消息面、热榜、涨停连板、量能资金识别，不限传统板块。数据缺失时章节不删除，须写失败接口、fallback、实际日期与缺失字段。
+1. **详尽报告、精简推送**：T1/T2/T3 报告固定按“一眼结论（核心摘要）→目录导读→详细正文”；标题后首屏先给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。动态题材综合消息面、热榜、涨停连板、量能资金识别，不限传统板块。数据缺失时章节不删除，须写失败接口、fallback、实际日期与缺失字段。
 2. **面向用户必须说人话**：报告首屏、结论、正文、推送和表头统一使用通俗中文，直接说明“发生了什么、影响谁、为何关注、何时失效”；不得堆砌英文接口名、参数名、JSON 字段、内部类别或因子代码。技术名称只允许出现在数据来源附录、故障诊断或用户明确要求的参数说明中，并紧邻中文解释。
 3. **正式候选不能只报分数**：量化/趋势候选逐只执行 `skills/output-format/SKILL.md` 的「正式候选综合理由表」，固定理由链为“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”；没有证据的环节写“无可核验证据”。
-4. **T7 业绩增长参考池**：实际公告日期/接口返回优先判断窗口，基本面分析师调用 `fundamental_forecast`、`fundamental_express`（公司公告改由外部财经平台多源核验），必要时 `fundamental_income`、`fundamental_fina_indicator` 复核；正向公告按 `code+report_period+announcement_date` 去重并全量展示真实字段，无数据写“当晚无可核验的增长/预增公告”。
+4. **T3 业绩增长参考池**：实际公告日期/接口返回优先判断窗口，基本面分析师调用 `fundamental_forecast`、`fundamental_express`（公司公告改由外部财经平台多源核验），必要时 `fundamental_income`、`fundamental_fina_indicator` 复核；正向公告按 `code+report_period+announcement_date` 去重并全量展示真实字段，无数据写“当晚无可核验的增长/预增公告”。
 5. **参考池隔离**：不调用 `log_selection`，不写 `predictions.jsonl` 或创建短期事项，不纳入选股类别、回测与调参。

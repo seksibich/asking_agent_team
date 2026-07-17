@@ -57,7 +57,7 @@ def _price_signals() -> list[dict[str, Any]]:
     """
     pro = common.get_pro()
     signals: list[dict[str, Any]] = []
-    end = common.last_trade_date()
+    end = common.last_data_ready_date()
     start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=15)).strftime("%Y%m%d")
     for code in COMMODITY_FUTURES:
         code = code.strip()

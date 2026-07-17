@@ -7,7 +7,7 @@ disable-model-invocation: false
 
 # 盘后：当日总结 + 综合复盘
 
-> **输出目录取决于触发来源**（见 output-format）：定时任务(T6/T7)→ `yyyy年MM月dd日/04-当日总结.md`、`05-综合复盘.md`，并写自动记忆（`daily` 快照、`log_selection(category=auto)`、predictions/学习日志）；**用户手动触发复盘 → `投研/yyyyMMdd-手动复盘/`，不覆盖当日定时日报、不改写自动记忆、不以 category=auto 登记选股**（避免污染回测调参）。
+> **输出目录取决于触发来源**（见 output-format）：定时任务（T2/T3）→ `yyyy年MM月dd日/04-当日总结.md`、`05-综合复盘.md`，并写自动记忆（`daily` 快照、`log_selection(category=auto)`、predictions/学习日志）；**用户手动触发复盘 → `投研/yyyyMMdd-手动复盘/`，不覆盖当日定时日报、不改写自动记忆、不以 category=auto 登记选股**（避免污染回测调参）。
 
 ## 前置步骤
 1. 交易日守卫（`GET /health`）。
@@ -23,7 +23,7 @@ disable-model-invocation: false
 3. 指数与成交：大盘收盘、成交额、量价变化（`market_index`）。
 4. 动态题材与板块趋势：综合消息面、热榜、涨停连板、量能和资金识别当日最强题材/具体事件，不限传统板块；输出首次发酵/加速/分歧/退潮/证伪、证据及次日延续条件。
 5. 情绪/连板/极端指数：`sentiment_temperature`、`sentiment_extreme_index`、`market_limit`、`market_lianban`、`market_timing`。
-6. 资金、涨价链、持仓/关注、明日环境初判、风险与来源按 T6 模板完整展开。
+6. 资金、涨价链、持仓/关注、明日环境初判、风险与来源按 T2 模板完整展开。
 
 生成 `04-当日总结.md` 时固定顺序为**一眼结论（核心摘要） → 目录导读 → 详细正文**；数据缺失不得删节。推送另按独立模板生成，建议不超过 500 字。
 
@@ -77,9 +77,9 @@ disable-model-invocation: false
 - 主 Agent 复核后：`get_factor_config` 取最新因子列表 → `set_factor_weights` 提交全部因子权重（模型 stock/sector/trend），失败按 `expected_factors` 修正后重试。
 - 调参依据与结果写入学习日志。
 
-### T7 详尽报告结构
+### T3 详尽报告结构
 
-严格使用 `skills/output-format/SKILL.md` 的 T7 完整模板，顺序为**🎯 一眼结论（核心摘要） → 🧭 目录导读 → 📄 详细正文**，首屏关键信息与主要章节标题按 output-format 的 emoji 约定加统一图标。首屏必须先给 📊 次日仓位倾向、🔥 今日题材复盘、📰 晚间新增具体事件、🎯 按“题材/事件 → 个股”分组的次日正式候选、⚠️ 最大风险/证伪和首屏结论表。正文至少覆盖数据状态、全天行情、动态题材阶段、板块趋势、情绪连板、资金龙虎榜、涨价景气、晚间公告、正式候选、业绩增长参考池、明日策略、回测调参、风险和来源。
+严格使用 `skills/output-format/SKILL.md` 的 T3 完整模板，顺序为**🎯 一眼结论（核心摘要） → 🧭 目录导读 → 📄 详细正文**，首屏关键信息与主要章节标题按 output-format 的 emoji 约定加统一图标。首屏必须先给 📊 次日仓位倾向、🔥 今日题材复盘、📰 晚间新增具体事件、🎯 按“题材/事件 → 个股”分组的次日正式候选、⚠️ 最大风险/证伪和首屏结论表。正文至少覆盖数据状态、全天行情、动态题材阶段、板块趋势、情绪连板、资金龙虎榜、涨价景气、晚间公告、正式候选、业绩增长参考池、明日策略、回测调参、风险和来源。
 
 ### 回测逻辑
 1. 读当日 `predictions.jsonl` 中 direction≠neutral 的正式记录。
@@ -92,11 +92,15 @@ disable-model-invocation: false
 
 ## Skill 加载约束 / 依赖 Skills
 
-- T6/T7 或手动盘后任务启动前完整读取本文件并确认固定 12 Skills（含 `stock-research`）已完整加载，禁止只读 schedule/角色摘要。
+- T2/T3 或手动盘后任务启动前完整读取本文件并确认固定 12 Skills（含 `stock-research`）已完整加载，禁止只读 schedule/角色摘要。
 - **直接依赖**：`data-service`、`priority-framework`、`output-format`。
-- **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`；并读取 `pre-market`/`bidding-analysis`/`intraday-watch` 的当日预判与事实作为复盘输入。`stock-research` 仅共享用户单股研究证据，不作为 T6/T7 必执行绑定。
-- T6 必须点名 `skills/post-market/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`；T7 还必须点名 `skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`。
+- **协同 Skills**：`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`；并读取 `pre-market`/`bidding-analysis`/`intraday-watch` 的当日预判与事实作为复盘输入。`stock-research` 仅共享用户单股研究证据，不作为 T2/T3 必执行绑定。
+- T2 必须点名 `skills/post-market/SKILL.md`、`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`；T3 还必须点名 `skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`。
 
 ## 盘后 fallback
 
-T6/T7 关键数据接口 4xx/5xx/空数据先记录，延后 5 分钟、15 分钟各重试一次；401/配置错误不盲目重试。`market_index` 失败/空/部分缺失时按 code 逐个 `market_daily(code,start,end)` 取最近记录，标 `degraded` 和实际日期（数据接口间等价回退）。**数据类接口失败则失败、如实披露，禁止编造**。资讯类（新闻/公告/外盘）不在数据服务，从各财经平台多源检索（≥2 来源交叉，标来源与时间）；全失败标“资讯面不可用 + 已尝试来源”，不得当作无风险。关键数据源最终失败后继续可完成部分，非关键接口不阻塞报告。
+T2/T3 关键数据接口 4xx/5xx/空数据先记录，延后 5 分钟、15 分钟各重试一次；401/配置错误不盲目重试。`market_index` 失败/空/部分缺失时按 code 逐个 `market_daily(code,start,end)` 取最近记录，标 `degraded` 和实际日期（数据接口间等价回退）。**数据类接口失败则失败、如实披露，禁止编造**。资讯类（新闻/公告/外盘）不在数据服务，从各财经平台多源检索（≥2 来源交叉，标来源与时间）；全失败标“资讯面不可用 + 已尝试来源”，不得当作无风险。关键数据源最终失败后继续可完成部分，非关键接口不阻塞报告。
+## v2.2.0 当前调度与日终边界
+
+- 本 Skill 的定时入口仅为 T2（17:30）与 T3（22:00），不使用旧 T6/T7/D1。
+- T2/T3 只读 `health.daily_finalize` / `precompute_status`；服务端交易日 16:00 自动收口。状态失败或缺数时披露并重试读取，禁止自动调用 `precompute_daily_factors`；管理员单次补数仅限用户明确要求。

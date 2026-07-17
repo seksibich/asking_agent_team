@@ -31,6 +31,25 @@
 
 ## 版本记录（最新在上）
 
+### v2.2.0 — 2026-07-17（现行任务连续编号 + 服务端 16:00 日终收口）
+
+- **摘要**：以 `agent/schedule.md` 为现行基准，将 17:30 当日总结由旧 T6 统一为 T2、22:00 综合复盘由旧 T7 统一为 T3；Agent 仅注册 T1/T2/T3/W1/M1/P1，初始化清理旧 T6/T7/D1、历史 T2/T3/T4/T5 及旧自动盯盘任务。全市场行业与个股因子改由服务端在交易日 16:00 自动补齐，Agent 只读 `health.daily_finalize` / `precompute_status`，不得定时、自动补跑或失败触发 `precompute_daily_factors`；管理员手动调用仅限用户当前明确要求的单次诊断或补数。
+- **对应 git commit**：待提交。
+- **变更文件清单（Agent 相关）**：
+  - `agent/init.md`、`agent/index.md`、`agent/schedule.md`
+  - `agent/agents/TEAM.md`、`agent/agents/ORCHESTRATION.md`、`agent/agents/main-orchestrator.md`
+  - `agent/agents/technical-trend-analyst.md`、`agent/agents/sentiment-analyst.md`、`agent/agents/fundamental-research-analyst.md`、`agent/agents/macro-news-analyst.md`、`agent/agents/backtest-analyst.md`
+  - `agent/skills/priority-framework/SKILL.md`、`agent/skills/data-service/SKILL.md`、`agent/skills/output-format/SKILL.md`、`agent/skills/pre-market/SKILL.md`
+  - `agent/skills/bidding-analysis/SKILL.md`、`agent/skills/intraday-watch/SKILL.md`、`agent/skills/post-market/SKILL.md`、`agent/skills/industry-analysis/SKILL.md`
+  - `agent/skills/stock-screening/SKILL.md`、`agent/skills/quant-screening/SKILL.md`、`agent/skills/review-learning/SKILL.md`、`agent/skills/stock-research/SKILL.md`
+  - `profile/CHANGELOG-AGENT.md`
+- **Agent 动作**：
+  1. 重读本条全部变更文件及 `agent/schedule.md`，将所有现行执行、模板和角色绑定统一为 T1/T2/T3/W1/M1/P1；T2 对应 17:30 当日总结，T3 对应 22:00 综合复盘。
+  2. 初始化时删除旧 T6/T7/D1、历史 T2/T3/T4/T5，以及所有自动竞价、盘中盯盘、午间总结和 Agent 预计算任务；仅注册 T1/T2/T3/W1/M1/P1。
+  3. T2/T3 只读服务端 `health.daily_finalize` / `precompute_status`。状态失败、覆盖不足或因子缺失时披露缺口并按报告规则重试读取，禁止调用 `precompute_daily_factors` 自动补跑。
+  4. 仅在用户当前明确要求管理员诊断或补数时，才可说明目标日期与用途后单次手动调用 `precompute_daily_factors`；不得由定时任务、失败回退、Hook、cron 或 Agent 循环触发。
+  5. 历史 CHANGELOG 中 v2.1.0 及更早版本的旧编号继续作为历史事实保留，不作为当前调度依据。
+
 ### v2.1.0 — 2026-07-16（统一业务响应 health + 五轨版本协调 + 闭环补强）
 
 - **摘要**：所有已连通的服务业务 JSON 响应在保留原状态码与顶层 `data_version` 的同时统一携带 `/health` 同口径快照，覆盖成功、权限/业务错误、404/405、422 与未捕获 500；健康探测逐项容错，不得覆盖原业务结果。Agent 改为先协调五轨版本再处理业务结果，增加旧服务单次 `/health` 回退、目标版本元组一次性锁和权限阻塞待办。同步补齐 T1 正式候选必须来自真实筛选运行，以及 T7 新预判登记与成熟历史回测的顺序隔离。

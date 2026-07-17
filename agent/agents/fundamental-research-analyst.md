@@ -16,7 +16,7 @@
 - `research_build`（投研数据包）；新闻/公司公告走外部财经平台多源（不在数据服务，见 data-service「资讯类外部获取」）
 - 外部：生意社/SMM/百川盈孚/卓创/钢联、期货主力、交易所公告、投资者互动平台、研报公开摘要
 
-## 业绩窗口职责（T7 22:00）
+## 业绩窗口职责（T3 22:00）
 
 1. **判断是否执行**：当前处于法定/惯例业绩预告或定期报告披露季，或 `fundamental_forecast`、`fundamental_express`（及外部公告核验）返回最近 3 个交易日的新预告/快报/公告，即启动业绩增长参考池。以实际公告日期和接口返回优先，禁止仅凭日历臆断。
 2. **固定调用**：窗口内每晚调用 `fundamental_forecast`、`fundamental_express`（公司公告从外部财经平台多源核验）；对 3~5 个重点代表标的或存在口径疑问者，必要时调用 `fundamental_income`、`fundamental_fina_indicator` 复核。
@@ -32,7 +32,7 @@
 ## 输出（结构化意见）
 - 涨价/景气主线及受益标的（受益排序 + 弹性 + 预期兑现概率）。
 - 每条四维打分中的「涨价」「逻辑」「预期」分值与依据。
-- T7 业绩窗口输出两层内容：
+- T3 业绩窗口输出两层内容：
   1. **全量业绩增长参考池表**：代码、名称、公告类型、报告期、公告日期、净利润区间、增速区间、所属板块/主线、来源、风险；按规定去重，不能只列重点。
   2. **3~5 个代表标的重点说明**：公告事实、增速/利润区间、所属板块、板块短中期趋势/量能/阶段、是否当前主线、业绩与行业逻辑是否共振、兑现/基数/一次性损益等风险。
 - 风险：预期证伪、公告兑现、基数与一次性损益、估值透支（PE/PB 背景）、未交叉验证项。
@@ -45,3 +45,7 @@
 - **完整加载**：每次角色启动先完整读取固定 12 Skills：`skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/stock-research/SKILL.md`，不得仅依赖摘要。
 - **主绑定**：`skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/stock-research/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`。
 - **职责/流程显式调用**：行业与涨价链研究按 `skills/industry-analysis/SKILL.md`，候选筛选按 `skills/stock-screening/SKILL.md`，评分按 `skills/priority-framework/SKILL.md`，盘前/盘后分别按 `skills/pre-market/SKILL.md`、`skills/post-market/SKILL.md`，所有服务调用及降级按 `skills/data-service/SKILL.md`。
+## v2.2.0 当前调度边界
+
+- 本角色使用现行 T1/T3/W1/M1/P1 或用户任务，不使用旧 T6/T7/D1。
+- 服务端交易日 16:00 自动收口，本角色只读 `health.daily_finalize` / `precompute_status`，不得因行业或财务数据缺失自动调用 `precompute_daily_factors`；管理员手动补数仅限用户明确要求。

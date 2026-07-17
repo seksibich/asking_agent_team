@@ -20,6 +20,8 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+
 import audit_log
 import common
 import db
@@ -132,11 +134,12 @@ def _market_snapshot(codes: list[str]) -> dict[str, Any]:
     daily_map: dict[str, dict[str, Any]] = {}
     basic_map: dict[str, dict[str, Any]] = {}
     try:
-        completed_date = normalize_trade_date(common.last_completed_trade_date())
+        completed_date = normalize_trade_date(common.market_clock()["last_data_ready_date"])
         if pro is not None and completed_date:
             daily = common.cached_call(
                 "selection_dashboard_daily", {"trade_date": completed_date},
-                lambda: pro.daily(trade_date=completed_date), historical=True)
+                lambda: pro.daily(trade_date=completed_date), historical=True,
+                trade_date=completed_date, expected_end=completed_date)
             daily_map = {str(row.get("ts_code") or "").upper(): row
                          for row in daily.get("rows", []) if row.get("ts_code")}
     except Exception as exc:
@@ -147,8 +150,8 @@ def _market_snapshot(codes: list[str]) -> dict[str, Any]:
                 "selection_dashboard_basic", {"trade_date": completed_date},
                 lambda: pro.daily_basic(
                     trade_date=completed_date,
-                    fields="ts_code,turnover_rate,turnover_rate_f,volume_ratio"),
-                historical=True)
+                    fields="ts_code,trade_date,turnover_rate,turnover_rate_f,volume_ratio"),
+                historical=True, trade_date=completed_date, expected_end=completed_date)
             basic_map = {str(row.get("ts_code") or "").upper(): row
                          for row in basics.get("rows", []) if row.get("ts_code")}
     except Exception as exc:
@@ -174,7 +177,7 @@ def _market_snapshot(codes: list[str]) -> dict[str, Any]:
                 limits = common.cached_call(
                     "selection_dashboard_limits", {"trade_date": trade_date},
                     lambda trade_date=trade_date: pro.stk_limit(trade_date=trade_date),
-                    historical=trade_date < today)
+                    historical=True, trade_date=trade_date, expected_end=trade_date)
                 limit_by_date[trade_date] = {
                     str(row.get("ts_code") or "").upper(): row
                     for row in limits.get("rows", []) if row.get("ts_code")}
@@ -253,10 +256,10 @@ def _record_tags(extra: dict[str, Any], driver: str = "") -> list[str]:
 def _default_selection_range() -> tuple[Any, Any]:
     """默认展示目标交易日及其之前三个交易日，共四个交易日。
 
-    注意口径差异（有意为之，勿改成同一函数）：此处末日用 last_trade_date（含当日，
-    盘中登记的候选当天即可见），而 _market_snapshot 的行情兜底用 last_completed_trade_date
-    （收盘线，避免拿到当天不完整的收盘数据）。二者服务于「选股展示日期」与「行情数据日期」
-    两个不同维度，实际行情日已由 latest_trade_date / quote_source / mixed_quote_dates 暴露。
+    注意口径差异（有意为之）：此处末日用 last_trade_date（含当日，盘中登记的候选
+    当天即可见），而 _market_snapshot 的行情兜底使用 last_data_ready_date（默认 18:00
+    安全线，避免拿到当天未完整发布的日终数据）。两者分别服务于展示日期与行情日期，
+    实际行情日由 latest_trade_date / quote_source / mixed_quote_dates 暴露。
     """
     end_text = common.last_trade_date()
     start_window = (datetime.strptime(end_text, "%Y%m%d") - timedelta(days=30)).strftime("%Y%m%d")
@@ -285,7 +288,7 @@ def _capture_selection_price(code: str, selected_date: str) -> dict[str, Any]:
         payload = common.cached_call(
             "selection_entry_quote", {"code": code, "trade_date": selected_date},
             lambda: pro.daily(ts_code=code, trade_date=selected_date),
-            historical=selected_date < common.today_str())
+            historical=True, trade_date=selected_date, expected_end=selected_date)
         rows = payload.get("rows", [])
         exact = next((row for row in rows if str(row.get("trade_date")) == selected_date), None)
         if exact and exact.get("close") is not None:
@@ -622,7 +625,7 @@ def _forward_returns(pro, code: str, sel_day: str) -> dict[str, dict[str, Any]]:
             target = (selected_date + timedelta(days=int(spec["days"]))).strftime("%Y%m%d")
             exit_dates[spec["key"]] = next((day for day in dates if day >= target), None)
 
-    last_available = common.last_completed_trade_date()
+    last_available = str(common.market_clock()["last_data_ready_date"])
     results = {
         spec["key"]: {
             "status": "not_matured", "entry_trade_date": sel_day,
@@ -637,21 +640,32 @@ def _forward_returns(pro, code: str, sel_day: str) -> dict[str, dict[str, Any]]:
 
     end = max(mature.values())
     try:
-        import tushare as ts
-        stock_df = ts.pro_bar(ts_code=code, adj="qfq", start_date=sel_day, end_date=end)
+        stock_payload = common.cached_call(
+            "selection_forward_qfq",
+            {"code": code, "start_date": sel_day, "end_date": end},
+            lambda: ts.pro_bar(ts_code=code, adj="qfq", start_date=sel_day, end_date=end),
+            historical=True, data_status="final", expected_end=end,
+        )
+        stock_df = pd.DataFrame(stock_payload.get("rows", []))
     except Exception as exc:
         for key in mature:
             results[key].update(status="failed",
                                 error=f"前复权行情失败：{type(exc).__name__}: {exc}"[:300])
         return results
-    if stock_df is None or stock_df.empty:
+    if stock_df.empty:
         for key in mature:
             results[key].update(status="failed", error="前复权行情为空")
         return results
     stock_prices = {str(row["trade_date"]): float(row["close"])
                     for row in stock_df.to_dict(orient="records") if row.get("close") is not None}
     try:
-        bench_df = pro.index_daily(ts_code=BENCHMARK, start_date=sel_day, end_date=end)
+        bench_payload = common.cached_call(
+            "selection_forward_benchmark",
+            {"code": BENCHMARK, "start_date": sel_day, "end_date": end},
+            lambda: pro.index_daily(ts_code=BENCHMARK, start_date=sel_day, end_date=end),
+            historical=True, data_status="final", expected_end=end,
+        )
+        bench_df = pd.DataFrame(bench_payload.get("rows", []))
         bench_prices = {str(row["trade_date"]): float(row["close"])
                         for row in bench_df.to_dict(orient="records") if row.get("close") is not None}
     except Exception:

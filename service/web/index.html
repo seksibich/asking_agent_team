@@ -15,6 +15,10 @@
     </div>
     <div class="topbar-right">
       <span id="role-badge" class="role-badge user" title="当前 API Key 角色">访客</span>
+      <button id="tab-reset" class="icon-btn tab-reset-btn" type="button" title="恢复当前页签初始状态" aria-label="恢复当前页签初始状态">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.4-2.5L20 9M4 15l2.5 2.5A7 7 0 0 0 17.9 15"/></svg>
+        <span>重置当前页</span>
+      </button>
       <button id="settingsBtn" class="icon-btn" title="设置">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3"/>
@@ -120,18 +124,54 @@
     </section>
 
     <!-- 行业量化分析 -->
-    <section id="tab-industry" class="panel">
+    <section id="tab-industry" class="panel industry-panel">
       <div class="card industry-hero">
-        <div class="card-title">行业强度排名 <span id="i-meta" class="meta"></span></div>
-        <p class="hint">按申万一级行业的中期趋势、20 日与 5 日动量、量能确认和低波动综合评分。优先读取每日盘后持久化结果，并作为个股量化选股的“行业强度”因子。</p>
-        <div class="form-row inline compact-controls">
-          <label for="i-topn">展示数量</label>
-          <input id="i-topn" type="number" value="31" min="5" max="100" />
-          <button id="i-run" class="btn-primary">刷新行业排名</button>
+        <div class="card-title-row industry-head">
+          <div>
+            <span class="sentiment-eyebrow">行业强度</span>
+            <div class="card-title industry-title">行业强度看板 <span id="i-meta" class="meta"></span></div>
+            <p class="hint">完整日评分与盘中叠加严格分层；搜索和排序只作用于当前明细，不会重新请求。</p>
+          </div>
+          <button id="i-run" class="btn-primary" type="button">刷新行业数据</button>
+        </div>
+        <div class="industry-controls">
+          <div class="form-row"><label for="i-mode">查看模式</label><select id="i-mode"><option value="latest_complete">最新完整交易日</option><option value="historical">指定历史交易日</option><option value="intraday">当日盘中</option></select></div>
+          <div class="form-row industry-date-control"><label for="i-date">查看日期</label><div class="industry-date-picker"><button id="i-date-prev" type="button" title="上一交易日" aria-label="上一交易日">‹</button><input id="i-date" type="date" aria-label="行业查看日期" /><button id="i-date-next" type="button" title="下一交易日" aria-label="下一交易日">›</button></div></div>
+          <div class="form-row"><label for="i-history-days">历史天数</label><input id="i-history-days" type="number" value="20" min="3" max="120" /></div>
+          <div class="form-row"><label for="i-topn">行业数量</label><input id="i-topn" type="number" value="31" min="5" max="100" /></div>
+          <div class="form-row"><label for="i-search">行业搜索</label><input id="i-search" type="search" placeholder="输入行业名称或代码" autocomplete="off" /></div>
+          <div class="form-row"><label for="i-sort">明细排序</label><select id="i-sort"><option value="percentile-desc">强度从高到低</option><option value="score-desc">综合分从高到低</option><option value="mom5-desc">5日动量从高到低</option><option value="name-asc">行业名称</option></select></div>
+        </div>
+        <div id="i-status" class="industry-status"><span>进入页面后自动加载行业状态</span></div>
+      </div>
+
+      <div class="industry-kpis">
+        <div class="card industry-kpi strong"><small>强势行业数</small><b id="i-kpi-strong">—</b><span>强度分位 ≥ 0.7</span></div>
+        <div class="card industry-kpi weak"><small>弱势行业数</small><b id="i-kpi-weak">—</b><span>强度分位 ≤ 0.3</span></div>
+        <div class="card industry-kpi"><small>5日动量中位数</small><b id="i-kpi-median">—</b><span>全部有效行业</span></div>
+        <div class="card industry-kpi best"><small>最高行业</small><b id="i-kpi-top">—</b><span id="i-kpi-top-sub">等待加载</span></div>
+      </div>
+
+      <div id="i-intraday" class="card industry-intraday hidden"></div>
+
+      <div class="industry-chart-grid">
+        <div class="card industry-ranking-card">
+          <div class="card-title">强弱行业对照 <span class="meta">点击条形切换行业</span></div>
+          <div id="i-bars" class="industry-bars"><div class="empty">等待行业数据</div></div>
+        </div>
+        <div class="card industry-trend-card">
+          <div class="card-title">选中行业历史趋势 <span id="i-trend-meta" class="meta"></span></div>
+          <div id="i-trend" class="chart-wrap"><div class="empty">点击行业后显示历史趋势</div></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-title">行业评分明细</div>
+
+      <div class="card industry-heat-card">
+        <div class="card-title">因子热力矩阵 <span class="meta">同列颜色表示行业间相对强弱</span></div>
+        <div id="i-heat" class="industry-heat-wrap"><div class="empty">等待行业数据</div></div>
+      </div>
+
+      <div class="card industry-detail-card">
+        <div class="card-title">行业评分明细 <span id="i-detail-meta" class="meta"></span></div>
         <div id="i-result" class="table-wrap"><div class="empty">进入页面后自动加载</div></div>
       </div>
     </section>
@@ -236,13 +276,20 @@
       <div class="card sentiment-hero">
         <div class="sentiment-card-header">
           <div class="sentiment-heading">
-            <span class="sentiment-eyebrow">MARKET SENTIMENT</span>
+            <span class="sentiment-eyebrow">市场情绪</span>
             <div class="card-title sentiment-title">情绪温度</div>
             <p>结合市场宽度、价格行为与量能，判断当前交易情绪和出手节奏。</p>
           </div>
           <div class="sentiment-toolbar">
+            <div class="sentiment-date-picker" role="group" aria-label="情绪温度日期切换">
+              <span>查看日期</span>
+              <button id="s-date-prev" class="sentiment-date-step" type="button" title="上一交易日" aria-label="上一交易日">‹</button>
+              <input id="s-date" type="date" aria-label="情绪温度查看日期" />
+              <button id="s-date-next" class="sentiment-date-step" type="button" title="下一交易日" aria-label="下一交易日">›</button>
+            </div>
             <div class="sentiment-meta-group">
               <span id="s-current-date" class="meta-chip">日期：最近交易日</span>
+              <span id="s-data-mode" class="meta-chip sentiment-mode final">完整收盘</span>
               <span id="s-current-window" class="meta-chip">归一窗口：-- 日</span>
             </div>
             <button id="s-settings-btn" class="icon-btn sentiment-settings-btn" title="情绪温度设置" aria-label="情绪温度设置">
@@ -253,6 +300,7 @@
             </button>
           </div>
         </div>
+        <div id="s-fallback" class="sentiment-fallback hidden" role="status"></div>
 
         <div class="sentiment-overview-grid">
           <div class="sentiment-gauge-panel">
@@ -270,7 +318,7 @@
             </div>
           </div>
           <div class="sentiment-timing-panel">
-            <div class="section-title-row"><span>择时判断</span><span class="meta">market_timing</span></div>
+            <div class="section-title-row"><span>择时判断</span><span class="meta">择时数据</span></div>
             <div id="s-timing" class="timing"><div class="empty">读取后显示连续冰点、高热与出手权重</div></div>
           </div>
         </div>
@@ -285,10 +333,10 @@
         <div class="card extreme-card">
           <div class="sentiment-section-header">
             <div>
-              <span class="sentiment-eyebrow extreme">RISK PRESSURE</span>
+              <span class="sentiment-eyebrow extreme">极端风险</span>
               <div class="card-title">情绪极端指数</div>
             </div>
-            <span id="s-extreme-meta" class="meta-chip">固定 7 日归一</span>
+            <span id="s-extreme-meta" class="meta-chip">20日稳健基线</span>
           </div>
           <div class="extreme-layout">
             <div class="thermometer" aria-label="情绪极端指数温度计">
@@ -302,7 +350,7 @@
             <div id="s-extreme-summary" class="timing extreme-summary"><div class="empty">读取后显示极端程度及风格倾向</div></div>
           </div>
           <div class="extreme-trend-panel">
-            <div class="section-title-row"><span>极端指数走势</span><span class="meta">振幅 × 缩量</span></div>
+            <div class="section-title-row"><span>极端指数走势</span><span class="meta">20日稳健基线 · 波动强度，不代表涨跌方向</span></div>
             <div id="s-extreme-trend" class="chart-wrap sentiment-chart compact"><div class="empty">读取后显示极端指数折线</div></div>
           </div>
         </div>
@@ -310,7 +358,7 @@
         <div class="card ranges-card">
           <div class="sentiment-section-header">
             <div>
-              <span class="sentiment-eyebrow indicators">INDICATOR RANGE</span>
+              <span class="sentiment-eyebrow indicators">指标区间</span>
               <div class="card-title">指标对比</div>
             </div>
             <span class="meta-chip">今值 vs 窗口</span>
@@ -323,7 +371,7 @@
       <div class="card breakdown-card">
         <div class="sentiment-section-header">
           <div>
-            <span class="sentiment-eyebrow detail">DATA DETAIL</span>
+            <span class="sentiment-eyebrow detail">数据明细</span>
             <div class="card-title">指标分解</div>
           </div>
           <span id="s-meta" class="meta"></span>
@@ -521,10 +569,6 @@
   <div id="sentiment-settings" class="modal hidden">
     <div class="modal-card">
       <div class="card-title">情绪温度设置</div>
-      <div class="form-row">
-        <label for="s-date">展示日期</label>
-        <input id="s-date" type="date" />
-      </div>
       <div class="form-row">
         <label for="s-days">走势回看交易日数</label>
         <input id="s-days" type="number" value="15" min="3" max="30" />

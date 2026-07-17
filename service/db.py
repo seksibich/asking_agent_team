@@ -1002,7 +1002,7 @@ def get_precompute_job() -> Optional[dict[str, Any]]:
 
 
 def claim_precompute_job(job_id: str, params: dict[str, Any],
-                         stale_after_minutes: int = 180) -> tuple[bool, dict[str, Any]]:
+                         stale_after_minutes: int = 10) -> tuple[bool, dict[str, Any]]:
     """原子认领全局唯一预计算任务；活跃时返回同一任务而不重复启动。
 
     心跳超过阈值的任务视为进程异常退出，先标记失败再允许新任务认领。
@@ -1037,7 +1037,7 @@ def claim_precompute_job(job_id: str, params: dict[str, Any],
                 status="failed",
                 stage="任务中断",
                 message="任务心跳超时，服务进程可能已退出",
-                error="预计算任务超过 180 分钟没有心跳，已自动释放",
+                error=f"预计算任务超过 {stale_after_minutes} 分钟没有心跳，已自动释放",
                 heartbeat_at=now,
                 finished_at=now,
             ))
@@ -1398,38 +1398,127 @@ def fetch_daily_sector_scores(trade_date: str) -> list[dict[str, Any]]:
     return out
 
 
-def fetch_usable_daily_sector_scores(trade_date: str, factor_version: str,
-                                     schema_hash: str, dependency_hash: str,
-                                     min_coverage: float = 0.8) -> list[dict[str, Any]]:
-    """只读取与成功个股预计算同一 run、同一依赖契约的行业评分。"""
-    run = get_daily_factor_run(trade_date)
-    if (not run or run.get("status") != "success" or not run.get("run_id")
-            or run.get("dependency_hash") != dependency_hash
-            or float(run.get("coverage_ratio") or 0) < min_coverage):
-        return []
-    if run.get("dependencies") is not None:
-        if _json_fingerprint(run["dependencies"]) != dependency_hash:
-            return []
-    eng = get_engine()
-    with eng.connect() as conn:
-        rows = conn.execute(select(daily_sector_scores).where(
-            daily_sector_scores.c.trade_date == trade_date,
-            daily_sector_scores.c.run_id == run["run_id"],
-            daily_sector_scores.c.factor_version == factor_version,
-            daily_sector_scores.c.schema_hash == schema_hash,
-            daily_sector_scores.c.dependency_hash == dependency_hash,
-        ).order_by(daily_sector_scores.c.score.desc())).mappings().all()
-    output: list[dict[str, Any]] = []
+_SECTOR_REQUIRED_FACTORS = frozenset({
+    "sec_mom_12_1", "sec_mom_20d", "sec_mom_5d", "sec_vol_confirm", "sec_low_vol",
+})
+_MIN_COMPLETE_SECTOR_COUNT = 28
+
+
+def _sector_dependencies_match(dependencies: Any, factor_version: str,
+                               schema_hash: str, dependency_hash: str) -> bool:
+    """独立校验行业公式与完整上游依赖，不借用个股计算覆盖率。"""
+    if not isinstance(dependencies, dict) or _json_fingerprint(dependencies) != dependency_hash:
+        return False
+    sector_contract = dependencies.get("sector_scoring")
+    return bool(isinstance(sector_contract, dict)
+                and sector_contract.get("factor_version") == factor_version
+                and sector_contract.get("schema_hash") == schema_hash)
+
+
+def _sector_date_group_is_usable(rows: list[dict[str, Any]], factor_version: str,
+                                 schema_hash: str, dependency_hash: str) -> bool:
+    """按行业自身批次、数量和字段判断整日快照是否完整。"""
+    if len(rows) < _MIN_COMPLETE_SECTOR_COUNT:
+        return False
+    codes = {str(row.get("code") or "").strip() for row in rows}
+    run_ids = {str(row.get("run_id") or "").strip() for row in rows}
+    if len(codes) != len(rows) or "" in codes or len(run_ids) != 1 or "" in run_ids:
+        return False
     for row in rows:
-        item = dict(row)
-        if item.get("dependencies") != run.get("dependencies"):
+        if (row.get("factor_version") != factor_version
+                or row.get("schema_hash") != schema_hash
+                or row.get("dependency_hash") != dependency_hash
+                or not _sector_dependencies_match(
+                    row.get("dependencies"), factor_version, schema_hash, dependency_hash)):
+            return False
+        factors_value = row.get("factors")
+        if not isinstance(factors_value, dict) or not _SECTOR_REQUIRED_FACTORS.issubset(factors_value):
+            return False
+        numeric_values = [row.get("score"), row.get("percentile"),
+                          *(factors_value.get(name) for name in _SECTOR_REQUIRED_FACTORS)]
+        try:
+            if any(not math.isfinite(float(value)) for value in numeric_values):
+                return False
+            if not 0 <= float(row.get("percentile")) <= 1:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def fetch_usable_sector_score_history(date_from: str, date_to: str,
+                                        factor_version: str, schema_hash: str,
+                                        dependency_hash: str,
+                                        codes: Optional[list[str]] = None,
+                                        min_coverage: float = 0.8) -> list[dict[str, Any]]:
+    """读取当前契约下的完整行业历史；行业质量不再与个股覆盖率耦合。"""
+    del min_coverage  # 保留兼容参数；行业采用自身行业数与字段完整性门禁。
+    stmt = select(daily_sector_scores).where(
+        daily_sector_scores.c.trade_date >= str(date_from),
+        daily_sector_scores.c.trade_date <= str(date_to),
+        daily_sector_scores.c.factor_version == factor_version,
+        daily_sector_scores.c.schema_hash == schema_hash,
+        daily_sector_scores.c.dependency_hash == dependency_hash,
+    ).order_by(daily_sector_scores.c.trade_date.desc(), daily_sector_scores.c.score.desc())
+    with get_engine().connect() as conn:
+        raw_rows = [dict(row) for row in conn.execute(stmt).mappings().all()]
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in raw_rows:
+        grouped.setdefault(str(row.get("trade_date") or ""), []).append(row)
+    usable_dates = {
+        trade_date for trade_date, date_rows in grouped.items()
+        if _sector_date_group_is_usable(
+            date_rows, factor_version, schema_hash, dependency_hash)
+    }
+    normalized_codes = None
+    if codes is not None:
+        normalized_codes = {str(code).strip() for code in codes if str(code).strip()}
+        if not normalized_codes:
             return []
+
+    output: list[dict[str, Any]] = []
+    for item in raw_rows:
+        if str(item.get("trade_date") or "") not in usable_dates:
+            continue
+        if normalized_codes is not None and str(item.get("code") or "") not in normalized_codes:
+            continue
         item["score"] = float(item.get("score") or 0)
         item["percentile"] = float(item.get("percentile") or 0)
         if item.get("computed_at"):
             item["computed_at"] = item["computed_at"].strftime("%Y-%m-%d %H:%M:%S")
         output.append(item)
     return output
+
+
+def usable_sector_score_dates(as_of: str, factor_version: str, schema_hash: str,
+                               dependency_hash: str, limit: int = 60,
+                               min_coverage: float = 0.8) -> list[str]:
+    """返回截至 as_of 的当前契约合格行业评分日期，按交易日降序。"""
+    rows = fetch_usable_sector_score_history(
+        "00000000", str(as_of), factor_version, schema_hash, dependency_hash,
+        min_coverage=min_coverage)
+    dates = sorted({str(row["trade_date"]) for row in rows}, reverse=True)
+    return dates[:max(0, int(limit))]
+
+
+def latest_usable_sector_score_date(as_of: str, factor_version: str,
+                                     schema_hash: str, dependency_hash: str,
+                                     min_coverage: float = 0.8) -> Optional[str]:
+    """返回不晚于 as_of 的当前契约最近合格行业评分日期。"""
+    dates = usable_sector_score_dates(
+        as_of, factor_version, schema_hash, dependency_hash, limit=1,
+        min_coverage=min_coverage)
+    return dates[0] if dates else None
+
+
+def fetch_usable_daily_sector_scores(trade_date: str, factor_version: str,
+                                     schema_hash: str, dependency_hash: str,
+                                     min_coverage: float = 0.8) -> list[dict[str, Any]]:
+    """兼容旧调用：精确读取某日当前契约下的合格行业评分。"""
+    return fetch_usable_sector_score_history(
+        trade_date, trade_date, factor_version, schema_hash, dependency_hash,
+        min_coverage=min_coverage)
 
 
 def latest_sector_score_date() -> Optional[str]:
@@ -1589,6 +1678,10 @@ def get_config_version(version_id: str) -> Optional[dict[str, Any]]:
 def upsert_daily_sentiment(trade_date: str, indicators: dict[str, Any],
                            factor_version: Optional[str] = None,
                            schema_hash: Optional[str] = None) -> None:
+    """写入完整收盘情绪原始指标；盘中快照禁止进入持久层。"""
+    metadata_value = indicators.get("_meta") if isinstance(indicators, dict) else None
+    if not isinstance(metadata_value, dict) or metadata_value.get("is_final") is not True:
+        raise ValueError("daily_sentiment 只允许写入 is_final=true 的完整收盘数据")
     eng = get_engine()
     values = {"indicators": indicators, "factor_version": factor_version,
               "schema_hash": schema_hash, "computed_at": datetime.now()}

@@ -81,3 +81,8 @@ disable-model-invocation: false
 - 直接依赖：`data-service`（竞价、情绪和错误处理）、`priority-framework`（逻辑与风险约束）、`output-format`（手动触发目录与报告结构）。
 - 可按本次请求读取 `pre-market`、`post-market`、`review-learning`、`stock-research` 作为上下文。
 - `intraday-watch` 只能在用户另行明确请求时独立执行，不得由本 Skill 自动衔接。
+## v2.2.0 当前调度与日终边界
+
+- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；竞价分析不在定时任务中，只能由用户当前明确请求后单轮执行。
+- 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
+- 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得与竞价失败、自动续跑、Hook、cron 或 Agent 循环联动。

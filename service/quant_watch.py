@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -42,6 +43,24 @@ _FILTER_CACHE: dict[str, Any] = {}
 _FACTOR_CACHE: dict[str, Any] = {}
 _SECTOR_CACHE: dict[str, Any] = {}
 _LAST_CLEAN_DATE = ""
+_STATUS_CACHE_TTL = 0.5
+_STATUS_CACHE_LOCK = threading.Lock()
+_STATUS_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+
+
+def _invalidate_status_cache() -> None:
+    """清空短时状态缓存；调用方须先完成对应数据库提交。"""
+    with _STATUS_CACHE_LOCK:
+        _STATUS_CACHE.clear()
+
+
+def _signal_status_change() -> None:
+    """使状态缓存失效并唤醒唯一 WebSocket 广播任务。"""
+    global _SEQUENCE
+    _invalidate_status_cache()
+    with _CONDITION:
+        _SEQUENCE += 1
+        _CONDITION.notify_all()
 _CONFIG_ERROR: Optional[str] = None
 
 
@@ -166,6 +185,7 @@ def set_config(value: dict[str, Any], actor: str = "web-admin", reason: str = ""
         version = db.record_config_version(
             _CONFIG_HISTORY_KEY, config, actor, reason or "更新量化盯盘设置")
         _FILTER_CACHE.clear()
+        _signal_status_change()
         _WAKE.set()
     return {"config": config, "changed": changed, "config_version": version,
             "notification_channels": notifications.available_channels()}
@@ -1101,6 +1121,7 @@ def scan_once(config: Optional[dict[str, Any]] = None, manual: bool = False) -> 
 
 def _publish(payload: dict[str, Any]) -> None:
     global _LATEST, _SEQUENCE
+    _invalidate_status_cache()
     with _CONDITION:
         _LATEST = {"payload": payload}
         _SEQUENCE += 1
@@ -1117,6 +1138,7 @@ def _clean_for_trade_day(clock: dict[str, Any]) -> None:
         db.clear_quant_watch_before(today)
         _SNAPSHOTS.clear()
         _INDEX_SNAPSHOTS.clear()
+        _invalidate_status_cache()
         with _CONDITION:
             _LATEST = {}
             _SEQUENCE += 1
@@ -1169,18 +1191,27 @@ def _state_with_scheduler(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def status(limit: int = 60) -> dict[str, Any]:
-    config = get_config()
-    today = common.today_str()
-    messages = db.fetch_quant_watch_messages(today, max(1, min(int(limit), 300)))
-    latest = messages[0]["payload"] if messages else None
-    state = _state_with_scheduler(config)
-    return {
-        "source": "quant_watch", "fetched_at": common.now_str(),
-        "trade_date": today, "config": config, "state": state,
-        "latest": latest, "messages": messages,
-        "notification_channels": notifications.available_channels(),
-        "retention": "接口仅返回当天聚合消息；下一交易日 09:00 清理旧消息",
-    }
+    """返回量化盯盘状态；同一条数的并发读取在半秒内复用不可变快照。"""
+    effective_limit = max(1, min(int(limit), 300))
+    now_mono = time.monotonic()
+    with _STATUS_CACHE_LOCK:
+        cached = _STATUS_CACHE.get(effective_limit)
+        if cached and now_mono - cached[0] < _STATUS_CACHE_TTL:
+            return copy.deepcopy(cached[1])
+        config = get_config()
+        today = common.today_str()
+        messages = db.fetch_quant_watch_messages(today, effective_limit)
+        latest = messages[0]["payload"] if messages else None
+        snapshot = {
+            "source": "quant_watch", "fetched_at": common.now_str(),
+            "trade_date": today, "config": config,
+            "state": _state_with_scheduler(config),
+            "latest": latest, "messages": messages,
+            "notification_channels": notifications.available_channels(),
+            "retention": "接口仅返回当天聚合消息；下一交易日 09:00 清理旧消息",
+        }
+        _STATUS_CACHE[effective_limit] = (time.monotonic(), snapshot)
+        return copy.deepcopy(snapshot)
 
 
 def wait_for_update(last_sequence: int, timeout: float = 20.0) -> tuple[int, dict[str, Any]]:
@@ -1189,6 +1220,12 @@ def wait_for_update(last_sequence: int, timeout: float = 20.0) -> tuple[int, dic
             _CONDITION.wait(timeout=max(1.0, min(float(timeout), 30.0)))
         sequence = _SEQUENCE
     return sequence, status()
+
+
+def wake_update_waiters() -> None:
+    """唤醒广播等待线程，用于最后连接断开和服务优雅停止。"""
+    with _CONDITION:
+        _CONDITION.notify_all()
 
 
 def _loop() -> None:
@@ -1223,6 +1260,7 @@ def stop() -> None:
     """请求线程停止；正在执行的扫描由自身 finally 按 fencing token 释放租约。"""
     _STOP.set()
     _WAKE.set()
+    wake_update_waiters()
     thread = _THREAD
     if thread and thread.is_alive():
         thread.join(timeout=5)

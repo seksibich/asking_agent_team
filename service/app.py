@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -100,6 +102,38 @@ USER_KEYS_CONFIG_KEY = "user_api_keys"
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
+_WS_TICKET_LOG_PATTERN = re.compile(r"([?&]ticket=)[^&\s\"']+")
+
+
+def _redact_ws_ticket(value: Any) -> Any:
+    """仅脱敏日志文本中的 WebSocket 一次性票据，不改变请求本身。"""
+    if not isinstance(value, str) or "ticket=" not in value:
+        return value
+    return _WS_TICKET_LOG_PATTERN.sub(r"\1[REDACTED]", value)
+
+
+class _WebSocketTicketLogFilter(logging.Filter):
+    """兼容 uvicorn HTTP 与 WebSocket logger 的参数化日志结构。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact_ws_ticket(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact_ws_ticket(item) for item in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {key: _redact_ws_ticket(item)
+                           for key, item in record.args.items()}
+        return True
+
+
+def _install_ws_ticket_log_filter() -> None:
+    """幂等安装票据脱敏，覆盖 uvicorn 的 HTTP 与 WebSocket 日志。"""
+    for logger_name in ("uvicorn.access", "uvicorn.error"):
+        logger = logging.getLogger(logger_name)
+        if not any(isinstance(item, _WebSocketTicketLogFilter) for item in logger.filters):
+            logger.addFilter(_WebSocketTicketLogFilter())
+
+
+_install_ws_ticket_log_filter()
 app = FastAPI(title="Stock Data Service", version="1.0.0")
 
 # 数据库初始化结果为进程级事实；初始化失败时量化盯盘不得再次探测数据库。
@@ -107,6 +141,89 @@ _DB_READY = False
 _DB_INIT_ERROR: Optional[str] = None
 _QUANT_WATCH_STARTED = False
 _WS_TICKET_TTL_SECONDS = 60
+_QUANT_WATCH_WS_SUBSCRIBERS: set[asyncio.Queue[dict[str, Any]]] = set()
+_QUANT_WATCH_WS_TASK: Optional[asyncio.Task[Any]] = None
+_QUANT_WATCH_WS_LATEST: Optional[dict[str, Any]] = None
+
+
+def _offer_quant_watch_frame(queue: asyncio.Queue[dict[str, Any]],
+                             frame: dict[str, Any]) -> None:
+    """慢客户端仅保留最新状态，绝不阻塞其他连接或无限积压。"""
+    if queue.full():
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+    queue.put_nowait(frame)
+
+
+async def _quant_watch_broadcast_loop() -> None:
+    """全进程唯一等待数据库状态，并将同一帧分发给全部连接。"""
+    global _QUANT_WATCH_WS_TASK, _QUANT_WATCH_WS_LATEST
+    current_task = asyncio.current_task()
+    sequence = -1
+    try:
+        import quant_watch
+        while _QUANT_WATCH_WS_SUBSCRIBERS:
+            try:
+                sequence, data = await asyncio.to_thread(
+                    quant_watch.wait_for_update, sequence, 20.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await asyncio.sleep(1.0)
+                continue
+            frame = jsonable_encoder({
+                "type": "quant_watch", "sequence": sequence, "data": data,
+            })
+            _QUANT_WATCH_WS_LATEST = frame
+            for queue in tuple(_QUANT_WATCH_WS_SUBSCRIBERS):
+                _offer_quant_watch_frame(queue, frame)
+    finally:
+        if _QUANT_WATCH_WS_TASK is current_task:
+            _QUANT_WATCH_WS_TASK = None
+        if not _QUANT_WATCH_WS_SUBSCRIBERS:
+            _QUANT_WATCH_WS_LATEST = None
+
+
+def _register_quant_watch_subscriber() -> asyncio.Queue[dict[str, Any]]:
+    """注册连接并确保唯一广播任务已启动。"""
+    global _QUANT_WATCH_WS_TASK
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
+    _QUANT_WATCH_WS_SUBSCRIBERS.add(queue)
+    if _QUANT_WATCH_WS_LATEST is not None:
+        _offer_quant_watch_frame(queue, _QUANT_WATCH_WS_LATEST)
+    if _QUANT_WATCH_WS_TASK is None or _QUANT_WATCH_WS_TASK.done():
+        _QUANT_WATCH_WS_TASK = asyncio.create_task(
+            _quant_watch_broadcast_loop(), name="quant-watch-websocket-broadcast")
+    return queue
+
+
+async def _stop_quant_watch_broadcaster() -> None:
+    """取消唯一广播任务，并唤醒仍在 Condition 中等待的后台线程。"""
+    global _QUANT_WATCH_WS_TASK, _QUANT_WATCH_WS_LATEST
+    task = _QUANT_WATCH_WS_TASK
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            import quant_watch
+            quant_watch.wake_update_waiters()
+        except Exception:
+            pass
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    if _QUANT_WATCH_WS_TASK is task:
+        _QUANT_WATCH_WS_TASK = None
+    _QUANT_WATCH_WS_LATEST = None
+
+
+async def _unregister_quant_watch_subscriber(
+        queue: asyncio.Queue[dict[str, Any]]) -> None:
+    _QUANT_WATCH_WS_SUBSCRIBERS.discard(queue)
+    if not _QUANT_WATCH_WS_SUBSCRIBERS:
+        await _stop_quant_watch_broadcaster()
 
 
 def _issue_ws_ticket(role: str) -> str:
@@ -153,6 +270,7 @@ def _websocket_origin_allowed(websocket: WebSocket) -> bool:
 @app.on_event("startup")
 def _startup() -> None:
     global _DB_READY, _DB_INIT_ERROR, _QUANT_WATCH_STARTED
+    _install_ws_ticket_log_filter()
     _DB_READY = False
     _DB_INIT_ERROR = None
     _QUANT_WATCH_STARTED = False
@@ -187,16 +305,18 @@ def _startup() -> None:
 
 
 @app.on_event("shutdown")
-def _shutdown() -> None:
+async def _shutdown() -> None:
+    _QUANT_WATCH_WS_SUBSCRIBERS.clear()
+    await _stop_quant_watch_broadcaster()
     if _QUANT_WATCH_STARTED:
         try:
             import quant_watch
-            quant_watch.stop()
+            await asyncio.to_thread(quant_watch.stop)
         except Exception:
             pass
     try:
         import daily_scheduler
-        daily_scheduler.stop()
+        await asyncio.to_thread(daily_scheduler.stop)
     except Exception:
         pass
 
@@ -635,7 +755,7 @@ def quant_watch_ticket(request: Request, x_api_key: Optional[str] = Header(None)
 
 @app.websocket("/ws/quant-watch")
 async def quant_watch_socket(websocket: WebSocket, ticket: str = ""):
-    """校验直连 Host/Origin 后原子消费票据并建立量化盯盘长连接。"""
+    """消费一次性票据后订阅进程级唯一广播，不为每个连接占用等待线程。"""
     if not _websocket_origin_allowed(websocket):
         await websocket.close(code=4403, reason="Origin 与 Host 不一致")
         return
@@ -650,22 +770,24 @@ async def quant_watch_socket(websocket: WebSocket, ticket: str = ""):
         await websocket.close(code=4401, reason="票据无效或已过期")
         return
     await websocket.accept()
-    sequence = -1
+    queue: Optional[asyncio.Queue[dict[str, Any]]] = None
     try:
-        import quant_watch
+        queue = _register_quant_watch_subscriber()
         while True:
-            sequence, data = await asyncio.to_thread(
-                quant_watch.wait_for_update, sequence, 20.0)
-            await websocket.send_json(jsonable_encoder({
-                "type": "quant_watch", "sequence": sequence, "data": data,
-            }))
+            frame = await queue.get()
+            await websocket.send_json(frame)
     except WebSocketDisconnect:
         return
+    except asyncio.CancelledError:
+        raise
     except Exception:
         try:
             await websocket.close(code=1011, reason="盯盘连接异常")
         except Exception:
             pass
+    finally:
+        if queue is not None:
+            await _unregister_quant_watch_subscriber(queue)
 
 
 @app.post("/call")

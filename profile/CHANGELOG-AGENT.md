@@ -31,6 +31,45 @@
 
 ## 版本记录（最新在上）
 
+### v2.4.1 — 2026-07-19（监控降噪、日志生命周期与部署配置收口）
+
+- **摘要**：将普通 4xx 业务拒绝与 408/429/5xx 服务故障分开统计，避免监控误报；为审计与监控日志增加默认 90 日保留、7 日后 gzip 压缩、调查冻结开关和磁盘双阈值告警；部署完成地址改由 `PUBLIC_BASE_URL` 配置；服务指南中的日期、功能数和版本改为动态占位示例。
+- **对应 git commit**：`64c8bcf`。
+- **变更文件清单（Agent 相关）**：
+  - `agent/init.md`
+  - `doc/01-系统全景与审查结论.md`
+  - `doc/05-测试探针监控与运维.md`
+  - `doc/AGENT_SERVICE_GUIDE.md`
+  - `profile/CHANGELOG-AGENT.md`
+- **服务与工程配套（非 Agent 文档）**：`service/observability.py`、`tests/test_observability.py`、`profile/.env.example`、`deploy/remote_deploy.sh`、`DEPLOY.md`。
+- **Agent 动作**：
+  1. 重读上述文档，监控分析时分别报告业务拒绝和服务故障；普通 4xx 不得直接表述为服务异常。
+  2. 容量告警、日志维护异常和压缩/删除结果只用于运维判断；行情、选股和交易结论仍必须来自业务事实源。
+  3. 读取 `/health`、`/functions` 等运行时值建立版本基线，不得使用服务指南中的占位示例。
+
+### v2.4.0 — 2026-07-19（服务就绪、全时段前端、原子性与运行监控审查）
+
+- **摘要**：完成工程全景审查并建立统一文档中心；区分进程存活、生产就绪和 Agent 兼容诊断，补齐前端上海时钟全阶段规则、局部刷新和自动化测试；强化动态访客 Key 摘要存储、选股登记与筛选证据链原子性；新增接口/量化盯盘性能事件、每日中文汇总及阿里云 systemd 探针定时器。
+- **对应 git commit**：`64c8bcf`。
+- **变更文件清单（Agent 相关）**：
+  - `agent/init.md`
+  - `doc/README.md`
+  - `doc/01-系统全景与审查结论.md`
+  - `doc/02-Agent编排与业务模块.md`
+  - `doc/03-前端业务与全时段规则.md`
+  - `doc/04-数据存储缓存与一致性.md`
+  - `doc/05-测试探针监控与运维.md`
+  - `doc/AGENT_SERVICE_GUIDE.md`
+  - `doc/SERVICE_INDEX.md`
+  - `profile/CHANGELOG-AGENT.md`
+- **服务与工程配套（非 Agent 文档）**：`service/app.py`、`service/common.py`、`service/db.py`、`service/loader.py`、`service/observability.py`、`service/quant_watch.py`、`service/web/**`、筛选脚本、`tests/**`、`deploy/**`、`docker-compose.yml`、`README.md`、`DEPLOY.md`、`.kiro/steering/**`。
+- **Agent 动作**：
+  1. 重读本条文档清单，从 `doc/README.md` 建立系统、业务、前端时段、数据一致性和运维文档索引。
+  2. 继续使用 `/health` 做五轨版本与市场状态协调；服务故障诊断时用 `/live` 区分进程存活、用 `/ready` 判断能否接收生产流量。
+  3. 盘中行业只在连续竞价读取临时叠加；其他阶段使用最近完整日。情绪盘中值不得写成日终事实。
+  4. 每日监控汇总只用于分析稳定性与性能，不得作为行情、正式选股、预测或交易结论。
+  5. 任何访问 Key 都只存在安全配置；动态 Key 完整值不可从数据库或列表恢复，不得写入记忆与报告。
+
 ### v2.3.0 — 2026-07-17（服务端量化盯盘与 Agent 职责分层）
 
 - **摘要**：新增服务端确定性量化盯盘基础设施，允许数据服务在交易日连续竞价时按配置频率扫描并通过当日接口、WebSocket 与显式启用的通知渠道发布聚合结论；同时继续禁止 Agent 调度、循环或主动触发盯盘。盘中评分与完整日因子、正式选股、预测及记忆严格隔离；分钟样本、申万层级或逐笔大单源缺失时必须披露并停止对应指标参与评分。

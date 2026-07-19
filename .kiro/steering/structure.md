@@ -21,9 +21,15 @@ stock_agent_kit/
 │   ├── web/                                # 前端（同源 /ui/）
 │   └── db/                                 # schema.sql + 说明
 │
-├── doc/                                    # ★ agent↔服务交叉文档 + 业务索引
+├── doc/                                    # ★ 统一文档中心 + agent↔服务交叉文档
+│   ├── README.md                           # 文档总索引
+│   ├── 01-系统全景与审查结论.md
+│   ├── 02-Agent编排与业务模块.md
+│   ├── 03-前端业务与全时段规则.md
+│   ├── 04-数据存储缓存与一致性.md
+│   ├── 05-测试探针监控与运维.md
 │   ├── AGENT_SERVICE_GUIDE.md              # 服务调用协议/版本机制
-│   └── SERVICE_INDEX.md                    # 服务功能业务索引 + 定时任务交叉表
+│   └── SERVICE_INDEX.md                    # 服务功能、Skill 与任务交叉索引
 │
 ├── profile/                                # ★ 配置 + 变更日志
 │   ├── CHANGELOG-AGENT.md  .env.example  requirements.txt

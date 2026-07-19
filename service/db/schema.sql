@@ -269,7 +269,20 @@ CREATE TABLE IF NOT EXISTS config_kv (
   PRIMARY KEY (k)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可变配置键值（落库以便上云/多实例一致）';
 
--- ---------- 6之二. 配置变更留痕（类 commit 版本历史） ----------
+-- ---------- 7之二. 动态访客 Key（只保存摘要） ----------
+CREATE TABLE IF NOT EXISTS user_api_keys (
+  id          VARCHAR(24) NOT NULL COMMENT '管理主键',
+  label       VARCHAR(64) NOT NULL DEFAULT '访客' COMMENT '便于管理员识别的名称',
+  key_hash    CHAR(64)    NOT NULL COMMENT '高熵原始 Key 的 SHA-256 摘要',
+  key_prefix  VARCHAR(32) NOT NULL COMMENT '列表展示前缀，不可用于鉴权',
+  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  disabled    TINYINT     NOT NULL DEFAULT 0 COMMENT '1=停用，0=启用',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_api_key_hash (key_hash),
+  KEY idx_user_api_key_disabled (disabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='动态访客 Key；完整值仅创建时返回一次，数据库不可恢复';
+
+-- ---------- 8. 配置变更留痕（类 commit 版本历史） ----------
 CREATE TABLE IF NOT EXISTS config_versions (
   id             BIGINT       NOT NULL AUTO_INCREMENT,
   version_id     VARCHAR(16)  NOT NULL COMMENT '类 commit id（短哈希），全局唯一',

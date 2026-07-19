@@ -22,6 +22,7 @@ import pandas as pd
 import common
 import db
 import notifications
+import observability
 from registry import ParamError, register
 
 _CONFIG_KEY = "quant_watch_config"
@@ -1229,18 +1230,33 @@ def wake_update_waiters() -> None:
 
 
 def _loop() -> None:
+    last_error = ""
+    last_error_at = 0.0
     while not _STOP.is_set():
         config = get_config()
         wait_seconds = 5.0
+        started = time.perf_counter()
         try:
             clock = common.market_clock()
             _clean_for_trade_day(clock)
             if config["enabled"] and clock.get("phase") in _ACTIVE_PHASES:
-                scan_once(config, manual=False)
-        except Exception:
-            # 已认领扫描的真实错误由 scan_once 在对应 fencing 租约下记录；
-            # 市场时钟等认领前异常不得冒充某一轮扫描终态。
-            pass
+                result = scan_once(config, manual=False)
+                if result.get("claimed") is not False:
+                    observability.record_quant_watch(
+                        str(result.get("status") or "success"),
+                        (time.perf_counter() - started) * 1000,
+                        manual=False, payload=result)
+            last_error = ""
+        except Exception as exc:
+            # 时钟或依赖持续异常时最多每五分钟记录一次；错误变化立即记录。
+            error = f"{type(exc).__name__}: {exc}"[:500]
+            now_mono = time.monotonic()
+            if error != last_error or now_mono - last_error_at >= 300:
+                observability.record_quant_watch(
+                    "error", (time.perf_counter() - started) * 1000,
+                    manual=False, error=error)
+                last_error = error
+                last_error_at = now_mono
         _WAKE.wait(wait_seconds)
         _WAKE.clear()
 
@@ -1302,7 +1318,19 @@ def quant_watch_set_config(p: dict[str, Any]) -> dict[str, Any]:
 @register("quant_watch_scan_once", "watch", "管理员在连续竞价时手动执行一轮量化盯盘诊断",
           params=[], returns="单轮扫描聚合结果")
 def quant_watch_scan_once(p: dict[str, Any]) -> dict[str, Any]:
-    return scan_once(get_config(), manual=True)
+    started = time.perf_counter()
+    try:
+        result = scan_once(get_config(), manual=True)
+        observability.record_quant_watch(
+            str(result.get("status") or "success"),
+            (time.perf_counter() - started) * 1000,
+            manual=True, payload=result)
+        return result
+    except Exception as exc:
+        observability.record_quant_watch(
+            "error", (time.perf_counter() - started) * 1000,
+            manual=True, error=f"{type(exc).__name__}: {exc}")
+        raise
 
 
 def health_summary() -> dict[str, Any]:

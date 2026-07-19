@@ -27,7 +27,9 @@ docker compose -f docker-compose.yml up -d --build --force-recreate
 docker compose -f docker-compose.yml ps
 docker compose -f docker-compose.yml logs --tail=100
 
-# 健康 / 鉴权自检（不回显密钥）
+# 健康 / 就绪 / 鉴权自检（不回显密钥）
+curl http://localhost:18901/live
+curl http://localhost:18901/ready
 curl http://localhost:18901/health
 curl -sS -H "X-API-Key: $API_KEY" http://localhost:18901/whoami
 
@@ -36,7 +38,12 @@ python cli.py functions
 python cli.py call screen_sector '{"top_n":10}'
 
 # 前端语法检查（静态资源，无需 npm）
+node --check service/web/market-state.js
 node --check service/web/app.js
+
+# 自动化测试
+python3 -m unittest discover -s tests -p 'test_*.py'
+node --test tests/test_frontend_state.mjs
 ```
 
 ## 开发扩展功能（新增数据接口）

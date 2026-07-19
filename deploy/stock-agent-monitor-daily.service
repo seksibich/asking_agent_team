@@ -1,0 +1,12 @@
+[Unit]
+Description=生成 Stock Agent 每日中文运行汇总
+After=__SERVICE_NAME__.service
+Wants=__SERVICE_NAME__.service
+
+[Service]
+Type=oneshot
+User=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__APP_DIR__/.env
+Environment=PORT=__PORT__
+ExecStart=__VENV__/bin/python __APP_DIR__/deploy/monitor_service.py daily

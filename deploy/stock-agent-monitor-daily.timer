@@ -1,0 +1,11 @@
+[Unit]
+Description=每日晚间生成 Stock Agent 运行与量化盯盘汇总
+
+[Timer]
+OnCalendar=*-*-* 22:50:00 Asia/Shanghai
+AccuracySec=1min
+Persistent=true
+Unit=__SERVICE_NAME__-monitor-daily.service
+
+[Install]
+WantedBy=timers.target

@@ -17,6 +17,11 @@ svg{width:20px;height:20px}
 .icon-btn:hover{background:#dde7ff}
 .topbar-right{display:flex;align-items:center;gap:10px}
 .userkeys{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.uk-created{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;
+  margin:8px 0 12px;padding:10px;border:1px solid #f2c45c;border-radius:10px;background:#fff8df}
+.uk-created.hidden{display:none}.uk-created b{grid-column:1/3;font-size:12px;color:#a16207}
+.uk-created code{min-width:0;overflow-wrap:anywhere;font:12px ui-monospace,Menlo,monospace;color:var(--ink)}
+.uk-created .btn-ghost{padding:6px 10px;font-size:12px;white-space:nowrap}
 .uk-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto}
 .uk-item{display:flex;justify-content:space-between;align-items:center;gap:12px;
   padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
@@ -358,7 +363,7 @@ details.selection-item.leader{border-left:4px solid #ef4444;background:linear-gr
 .portfolio-search-message{padding:14px;text-align:center;color:var(--sub);font-size:12px}.portfolio-search-message.bad{color:var(--bad)}
 .portfolio-selected{min-height:42px;display:flex;align-items:center;gap:10px;border:1px solid #cbd9fc;border-radius:12px;background:var(--brand-soft);padding:9px 12px;margin-bottom:8px}
 .portfolio-selected b{font-size:14px}.portfolio-selected code{font-size:12px;color:var(--brand)}.portfolio-selected.empty-compact{color:var(--sub);background:#fafbfe;border-color:var(--line);font-size:12px}
-.portfolio-form-grid{display:grid;grid-template-columns:150px 150px 150px minmax(220px,1fr);gap:10px;margin-top:8px}.portfolio-form-grid .form-row{margin-bottom:0}.portfolio-note{min-width:0}
+.portfolio-form-grid{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:10px;margin-top:8px}.portfolio-form-grid .form-row{margin-bottom:0}
 .portfolio-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px}.portfolio-actions .status{margin-right:auto}
 .portfolio-overview{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.portfolio-stat{padding:13px 16px;display:flex;align-items:baseline;gap:5px}.portfolio-stat small{color:var(--sub);margin-right:auto}.portfolio-stat b{font-size:24px;color:var(--brand)}.portfolio-stat span{font-size:12px;color:var(--sub)}
 .portfolio-list-card{padding:15px 16px}.portfolio-list{display:flex;flex-direction:column;gap:8px}
@@ -367,10 +372,10 @@ details.selection-item.leader{border-left:4px solid #ef4444;background:linear-gr
 .portfolio-ticker{min-width:0}.portfolio-ticker b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.portfolio-ticker code{display:block;color:var(--sub);font-size:11px;margin-top:2px}
 .portfolio-type{display:inline-flex;justify-content:center;padding:4px 7px;border-radius:999px;font-size:11px;font-weight:700}.portfolio-type.holding{color:#a16207;background:#fef0b8}.portfolio-type.watch{color:var(--brand);background:var(--brand-soft)}
 .portfolio-item-metrics{display:flex;gap:18px}.portfolio-item-metrics span{min-width:66px}.portfolio-item-metrics small,.portfolio-item-time small{display:block;color:var(--sub);font-size:10px}.portfolio-item-metrics b,.portfolio-item-time span{display:block;font-size:12px;margin-top:2px;white-space:nowrap}
-.portfolio-item-time{text-align:right}.portfolio-item-note{margin-top:8px;color:var(--sub);font-size:12px;line-height:1.5;padding-top:7px;border-top:1px dashed var(--line);padding-right:110px}
+.portfolio-item-time{text-align:right}
 .portfolio-item-actions{position:absolute;right:11px;top:50%;transform:translateY(-50%);display:flex;gap:6px}.portfolio-item-actions .btn-ghost{padding:6px 9px;font-size:11px}.portfolio-remove{border:1px solid #fecaca;background:#fff5f5;color:#dc2626;border-radius:9px;padding:6px 9px;font-size:11px;font-weight:700;cursor:pointer}.portfolio-remove:hover{background:#fee2e2}
-@media(max-width:850px){.portfolio-form-grid{grid-template-columns:repeat(3,1fr)}.portfolio-note{grid-column:1/4}.portfolio-item-main{grid-template-columns:minmax(110px,1fr) 50px minmax(220px,1.5fr);padding-right:0}.portfolio-item-time{display:none}.portfolio-item-note{padding-right:0}.portfolio-item-actions{position:static;transform:none;justify-content:flex-end;margin-top:8px}}
-@media(max-width:650px){.portfolio-search-row{grid-template-columns:1fr}.portfolio-form-grid{grid-template-columns:1fr 1fr}.portfolio-note{grid-column:1/3}.portfolio-overview{grid-template-columns:repeat(3,1fr)}.portfolio-item-main{grid-template-columns:minmax(100px,1fr) 50px}.portfolio-item-metrics{grid-column:1/3;gap:12px}.portfolio-actions{flex-wrap:wrap}.portfolio-actions .status{width:100%}.portfolio-search-input{align-items:stretch}}
+@media(max-width:850px){.portfolio-form-grid{grid-template-columns:repeat(3,1fr)}.portfolio-item-main{grid-template-columns:minmax(110px,1fr) 50px minmax(220px,1.5fr);padding-right:0}.portfolio-item-time{display:none}.portfolio-item-actions{position:static;transform:none;justify-content:flex-end;margin-top:8px}}
+@media(max-width:650px){.portfolio-search-row{grid-template-columns:1fr}.portfolio-form-grid{grid-template-columns:1fr 1fr}.portfolio-overview{grid-template-columns:repeat(3,1fr)}.portfolio-item-main{grid-template-columns:minmax(100px,1fr) 50px}.portfolio-item-metrics{grid-column:1/3;gap:12px}.portfolio-actions{flex-wrap:wrap}.portfolio-actions .status{width:100%}.portfolio-search-input{align-items:stretch}}
 
 /* 量化选股 */
 .quant-table{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0}
@@ -617,3 +622,9 @@ details.selection-item.leader{border-left:4px solid #ef4444;background:linear-gr
 .empty.compact{padding:14px}.qw-table .pos{color:var(--bad)}.qw-table .neg{color:var(--ok)}
 @media(max-width:850px){.qw-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.qw-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.qw-hero .card-title-row,.qw-settings-card .card-title-row{flex-direction:column}.qw-head-actions{width:100%}.qw-head-actions button{flex:1}.qw-settings-grid{grid-template-columns:1fr}.qw-settings-grid .qw-wide{grid-column:auto}.qw-switches .status{width:100%;margin-left:0}.qw-history-item summary{align-items:flex-start;flex-direction:column}}
+
+/* 局部刷新只显示当前业务进度，不遮挡或重建整页。 */
+.refresh-progress{display:inline-flex;align-items:center;gap:6px;color:var(--brand);font-size:12px;font-weight:600}
+.refresh-progress::before{content:"";width:10px;height:10px;border:2px solid #cbd9fc;border-top-color:var(--brand);border-radius:50%;animation:refresh-spin .8s linear infinite}
+@keyframes refresh-spin{to{transform:rotate(360deg)}}
+.portfolio-form-grid{grid-template-columns:150px 150px 150px}

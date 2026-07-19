@@ -18,6 +18,7 @@ SERVICE_DIR = APP_ROOT / "service"
 
 # 不作为功能模块导入的纯库（仍会因在 sys.path 上而可被 import）
 LIB_ONLY = {"factors", "eod_fallback"}
+_LAST_REPORT: dict[str, object] = {"imported": [], "errors": []}
 
 
 def _scripts_dirs() -> list[Path]:
@@ -31,24 +32,39 @@ def _scripts_dirs() -> list[Path]:
 
 
 def discover() -> list[str]:
-    """将所有 scripts 目录加入 sys.path 并导入功能模块。返回已导入模块名。"""
+    """导入功能模块并保存完整装载报告，供就绪探针判断部分失败。"""
+    global _LAST_REPORT
     dirs = _scripts_dirs()
-    for d in dirs:
-        p = str(d)
-        if p not in sys.path:
-            sys.path.insert(0, p)
+    for directory in dirs:
+        path_text = str(directory)
+        if path_text not in sys.path:
+            sys.path.insert(0, path_text)
 
     imported: list[str] = []
-    for d in dirs:
-        for py in sorted(d.glob("*.py")):
+    errors: list[dict[str, str]] = []
+    for directory in dirs:
+        for py in sorted(directory.glob("*.py")):
             mod = py.stem
-            if mod.startswith("_") or mod in {"app", "registry", "loader", "common", "cli", "db", "version", "daily_scheduler"}:
+            if mod.startswith("_") or mod in {
+                    "app", "registry", "loader", "common", "cli", "db", "version",
+                    "daily_scheduler", "observability"}:
                 continue
             if mod in LIB_ONLY:
                 continue
             try:
                 importlib.import_module(mod)
                 imported.append(mod)
-            except Exception as e:  # noqa: BLE001
-                print(f"[loader] skip {mod}: {e}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                message = f"{type(exc).__name__}: {exc}"[:500]
+                errors.append({"module": mod, "path": str(py), "error": message})
+                print(f"[loader] skip {mod}: {message}", file=sys.stderr)
+    _LAST_REPORT = {"imported": imported.copy(), "errors": errors}
     return imported
+
+
+def report() -> dict[str, object]:
+    """返回最近一次发现结果的副本，不暴露可变内部列表。"""
+    return {
+        "imported": list(_LAST_REPORT.get("imported") or []),
+        "errors": [dict(item) for item in (_LAST_REPORT.get("errors") or [])],
+    }

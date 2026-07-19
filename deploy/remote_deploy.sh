@@ -117,28 +117,51 @@ sed -e "s#__APP_DIR__#$APP_DIR#g" \
     -e "s#__RUN_USER__#$RUN_USER#g" \
     "$UNIT_SRC" > "$UNIT_DST"
 log "已写入 $UNIT_DST"
+for template in stock-agent-monitor.service stock-agent-monitor.timer \
+                stock-agent-monitor-daily.service stock-agent-monitor-daily.timer; do
+  source_file="$APP_DIR/deploy/$template"
+  [ -f "$source_file" ] || die "缺少监控单元模板 $source_file"
+  target_name="${template/stock-agent/$SERVICE_NAME}"
+  sed -e "s#__APP_DIR__#$APP_DIR#g" \
+      -e "s#__VENV__#$VENV#g" \
+      -e "s#__PORT__#$PORT#g" \
+      -e "s#__RUN_USER__#$RUN_USER#g" \
+      -e "s#__SERVICE_NAME__#$SERVICE_NAME#g" \
+      "$source_file" > "/etc/systemd/system/$target_name"
+  log "已写入 /etc/systemd/system/$target_name"
+done
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+systemctl enable --now "${SERVICE_NAME}-monitor.timer" >/dev/null
+systemctl enable --now "${SERVICE_NAME}-monitor-daily.timer" >/dev/null
 systemctl restart "$SERVICE_NAME"
-log "systemd 服务已重启"
+log "systemd 服务已重启，探针与每日汇总定时器已启用"
 
 # ---------------------------------------------------------------------------
-step "7/7 健康检查（最长 ${HEALTH_TIMEOUT}s）"
+step "7/7 就绪检查（最长 ${HEALTH_TIMEOUT}s）"
 ok=0
 for ((i=1; i<=HEALTH_TIMEOUT; i++)); do
-  if curl -fsS "http://127.0.0.1:$PORT/health" >/tmp/stock_agent_health.json 2>/dev/null; then
+  if curl -fsS "http://127.0.0.1:$PORT/ready" >/tmp/stock_agent_ready.json 2>/dev/null; then
     ok=1; break
   fi
   sleep 1
 done
 if [ "$ok" = "1" ]; then
-  log "健康检查通过 ✓  /health => $(cat /tmp/stock_agent_health.json)"
+  log "就绪检查通过 ✓"
+  curl -fsS "http://127.0.0.1:$PORT/health" >/tmp/stock_agent_health.json
+  log "兼容健康快照可用 ✓"
 else
-  log "健康检查未通过，最近日志如下："
+  log "就绪检查未通过，最近日志如下："
   journalctl -u "$SERVICE_NAME" -n 40 --no-pager || true
   die "服务未在 ${HEALTH_TIMEOUT}s 内就绪"
 fi
 
 echo
 systemctl --no-pager --lines=0 status "$SERVICE_NAME" || true
-log "部署完成 ✓  外网访问: http://8.153.99.132:${PORT}/ui/"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
+if [ -n "$PUBLIC_BASE_URL" ]; then
+  PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+  log "部署完成 ✓  外网访问: ${PUBLIC_BASE_URL}/ui/"
+else
+  log "部署完成 ✓  未配置 PUBLIC_BASE_URL；本机访问: http://127.0.0.1:${PORT}/ui/"
+fi

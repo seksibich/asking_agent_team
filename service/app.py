@@ -37,6 +37,7 @@ import common
 import db
 import registry
 import loader
+import observability
 import selection_tags
 import version
 
@@ -97,8 +98,7 @@ ADMIN_ONLY_FUNCTIONS = {
 SENSITIVE_SELECTION_CATEGORIES = frozenset({"watch", "holding"})
 SELECTION_CATEGORY_FILTER_FUNCTIONS = frozenset({"selection_dashboard"})
 
-# 动态访客 Key（由管理员在设置页生成/管理）落库 config_kv 的键
-USER_KEYS_CONFIG_KEY = "user_api_keys"
+# 动态访客 Key 使用独立摘要表持久化；完整值只在创建时返回一次。
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -274,6 +274,8 @@ def _startup() -> None:
     _DB_READY = False
     _DB_INIT_ERROR = None
     _QUANT_WATCH_STARTED = False
+    # 缓存清理只在启动执行，探针保持只读且低开销。
+    _safe_health_value(common.clean_expired_cache, None)
     try:
         db.init_db()
         _DB_READY = True
@@ -321,39 +323,25 @@ async def _shutdown() -> None:
         pass
 
 
-def _dynamic_user_keys() -> list[dict[str, Any]]:
-    """读取管理员在设置页生成的动态访客 Key 列表（落库 config_kv）。"""
-    try:
-        import db
-        v = db.get_config(USER_KEYS_CONFIG_KEY)
-        if isinstance(v, dict):
-            keys = v.get("keys")
-            return keys if isinstance(keys, list) else []
-    except Exception:
-        pass
-    return []
-
-
-def _save_user_keys(keys: list[dict[str, Any]]) -> None:
-    import db
-    db.set_config(USER_KEYS_CONFIG_KEY, {"keys": keys})
-
-
 def _role_for(x_api_key: Optional[str]) -> Optional[str]:
     """返回调用方角色：admin / user / None（未授权）。
     未配置任何凭据时，未输入 token 只按只读用户处理；已配置管理员 Key 时空 token 仍未授权。"""
     candidate = _normalize_key(x_api_key)
     if candidate and any(secrets.compare_digest(candidate, key) for key in ADMIN_API_KEYS):
         return "admin"
-    dyn = _dynamic_user_keys()
-    if not ADMIN_API_KEYS and not USER_API_KEY and not dyn:
+    try:
+        dynamic_key_configured = bool(db.list_user_api_keys())
+    except Exception:
+        dynamic_key_configured = False
+    if not ADMIN_API_KEYS and not USER_API_KEY and not dynamic_key_configured:
         return "user"   # 未配置凭据时允许只读访问，但不开放管理员操作
     if USER_API_KEY and candidate and secrets.compare_digest(candidate, USER_API_KEY):
         return "user"
-    for k in dyn:
-        dynamic_key = _normalize_key(k.get("key"))
-        if not k.get("disabled") and candidate and dynamic_key and secrets.compare_digest(candidate, dynamic_key):
+    try:
+        if candidate and db.verify_user_api_key(candidate):
             return "user"
+    except Exception:
+        pass
     return None
 
 
@@ -394,6 +382,9 @@ async def audit_http_requests(request: Request, call_next):
                 "function": getattr(request.state, "function", None),
                 "params": getattr(request.state, "params", None),
             })
+        duration_ms = (time.perf_counter() - started) * 1000
+        observability.record_http(
+            request.url.path, getattr(request.state, "function", None), 500, duration_ms)
         raise
     response.headers["X-Request-ID"] = request_id
     if _should_audit_path(request.url.path):
@@ -413,6 +404,9 @@ async def audit_http_requests(request: Request, call_next):
             "function": getattr(request.state, "function", None),
             "params": getattr(request.state, "params", None),
         })
+    observability.record_http(
+        request.url.path, getattr(request.state, "function", None),
+        response.status_code, (time.perf_counter() - started) * 1000)
     return response
 
 
@@ -465,8 +459,7 @@ def _safe_health_value(getter, fallback: Any) -> Any:
 
 
 def _build_health_snapshot() -> dict[str, Any]:
-    """生成与 /health 顶层字段一致的健康快照，并对每个探测项独立容错。"""
-    _safe_health_value(common.clean_expired_cache, None)
+    """生成与 /health 顶层字段一致的只读健康快照，并对探测项独立容错。"""
     day = _safe_health_value(common.today_str, common.shanghai_now().strftime("%Y%m%d"))
     tushare_ready = bool(_safe_health_value(lambda: common.TUSHARE_TOKEN, ""))
     clock = (_safe_health_value(common.market_clock, None) if tushare_ready else None)
@@ -520,15 +513,21 @@ def _build_health_snapshot() -> dict[str, Any]:
 
 
 def _health_snapshot() -> dict[str, Any]:
-    """短时复用健康快照，避免同一页面并发请求重复访问交易日历与数据库。"""
+    """短时复用快照；慢探测在锁外执行，避免并发请求排队。"""
     now_mono = time.monotonic()
     with _HEALTH_CACHE_LOCK:
         cached = _HEALTH_CACHE.get("value")
-        if isinstance(cached, dict) and now_mono - float(_HEALTH_CACHE.get("at") or 0) < _HEALTH_CACHE_TTL:
+        if (isinstance(cached, dict)
+                and now_mono - float(_HEALTH_CACHE.get("at") or 0) < _HEALTH_CACHE_TTL):
             return dict(cached)
-        value = _build_health_snapshot()
-        _HEALTH_CACHE.update({"at": now_mono, "value": value})
-        return dict(value)
+    value = _build_health_snapshot()
+    with _HEALTH_CACHE_LOCK:
+        cached = _HEALTH_CACHE.get("value")
+        cached_at = float(_HEALTH_CACHE.get("at") or 0)
+        if isinstance(cached, dict) and time.monotonic() - cached_at < _HEALTH_CACHE_TTL:
+            return dict(cached)
+        _HEALTH_CACHE.update({"at": time.monotonic(), "value": value})
+    return dict(value)
 
 
 def _versioned(
@@ -573,10 +572,57 @@ class CallReq(BaseModel):
     params: Optional[dict[str, Any]] = None
 
 
+@app.get("/live")
+def live():
+    """进程存活探针：不访问数据库和外部数据源。"""
+    return JSONResponse({"status": "alive", "time": common.now_str()})
+
+
 @app.get("/health")
 def health():
-    """返回顶层健康快照；避免在 /health 内重复嵌套 health。"""
+    """兼容 Agent 的业务健康快照；依赖未就绪时仍返回可诊断信息。"""
     return _versioned(_health_snapshot(), include_health=False)
+
+
+def _readiness_snapshot() -> tuple[dict[str, Any], int]:
+    health_value = _health_snapshot()
+    load_report = loader.report()
+    load_errors = list(load_report.get("errors") or [])
+    checks = {
+        "database": bool(health_value.get("db_ready")),
+        "data_source": bool(health_value.get("tushare_ready")),
+        "functions": int(health_value.get("functions") or 0) > 0,
+        "module_load": not load_errors,
+    }
+    ready = all(checks.values())
+    body = {
+        "status": "ready" if ready else "not_ready", "checks": checks,
+        "market_phase": health_value.get("market_phase"),
+        "functions": health_value.get("functions"),
+        "load_error_modules": [str(item.get("module") or "") for item in load_errors],
+        "time": common.now_str(),
+    }
+    return body, 200 if ready else 503
+
+
+@app.get("/ready")
+def ready():
+    """流量就绪探针：数据库、数据源、功能装载均通过才返回 200。"""
+    body, status_code = _readiness_snapshot()
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(body),
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/admin/monitor/daily")
+def monitor_daily(date: Optional[str] = None,
+                  x_api_key: Optional[str] = Header(None)):
+    """生成并返回指定日的中文运行汇总，仅管理员可读取。"""
+    _require_admin(x_api_key)
+    try:
+        summary = observability.build_daily_summary(date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _versioned({"ok": True, "summary": summary})
 
 
 @app.get("/functions")
@@ -607,54 +653,50 @@ def _gen_user_key() -> str:
 
 @app.get("/admin/user-keys")
 def list_user_keys(x_api_key: Optional[str] = Header(None)):
-    """列出全部动态访客 Key（仅管理员）。管理员可见完整 Key 以便分发给访客。"""
+    """列出动态访客 Key 元数据；只返回掩码，明文不可恢复。"""
     _require_admin(x_api_key)
-    keys = _dynamic_user_keys()
-    out = [{"id": k.get("id"), "label": k.get("label", ""), "key": k.get("key"),
-            "created_at": k.get("created_at"), "disabled": bool(k.get("disabled"))}
-           for k in keys]
-    return _versioned({"keys": out, "env_user_key_enabled": bool(USER_API_KEY)})
+    return _versioned({"keys": db.list_user_api_keys(),
+                       "env_user_key_enabled": bool(USER_API_KEY)})
 
 
 @app.post("/admin/user-keys")
 def create_user_key(req: UserKeyCreate, x_api_key: Optional[str] = Header(None)):
-    """生成一个新的访客 Key（仅管理员）。"""
+    """生成访客 Key；完整 Key 仅在本次创建响应中返回。"""
     _require_admin(x_api_key)
-    keys = _dynamic_user_keys()
-    item = {"id": secrets.token_hex(6),
-            "label": (req.label or "").strip() or "访客",
-            "key": _gen_user_key(),
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "disabled": False}
-    keys.append(item)
-    _save_user_keys(keys)
-    return _versioned({"created": True, "item": item})
+    raw_key = _gen_user_key()
+    label = (req.label or "").strip() or "访客"
+    if len(label) > 64:
+        raise HTTPException(status_code=400, detail="访客名称最多 64 个字符")
+    item = db.create_user_api_key(secrets.token_hex(6), label, raw_key)
+    audit_log.append("api", {
+        "event": "user_key_created", "key_id": item["id"],
+        "label": item["label"], "role": "admin",
+    })
+    return _versioned({"created": True, "item": {**item, "key": raw_key}})
 
 
 @app.post("/admin/user-keys/toggle")
 def toggle_user_key(req: UserKeyOp, x_api_key: Optional[str] = Header(None)):
-    """启用/停用某个访客 Key（仅管理员）。"""
+    """原子启用或停用一个访客 Key。"""
     _require_admin(x_api_key)
-    keys = _dynamic_user_keys()
-    found = False
-    for k in keys:
-        if k.get("id") == req.id:
-            k["disabled"] = not bool(k.get("disabled"))
-            found = True
-    if found:
-        _save_user_keys(keys)
-    return _versioned({"toggled": found, "id": req.id})
+    disabled = db.toggle_user_api_key(req.id)
+    audit_log.append("api", {
+        "event": "user_key_toggled", "key_id": req.id,
+        "disabled": disabled, "found": disabled is not None, "role": "admin",
+    })
+    return _versioned({"toggled": disabled is not None, "id": req.id,
+                       "disabled": disabled})
 
 
 @app.post("/admin/user-keys/delete")
 def delete_user_key(req: UserKeyOp, x_api_key: Optional[str] = Header(None)):
-    """删除某个访客 Key（仅管理员）。删除后该 Key 立即失效。"""
+    """删除某个访客 Key；删除后立即失效。"""
     _require_admin(x_api_key)
-    keys = _dynamic_user_keys()
-    new_keys = [k for k in keys if k.get("id") != req.id]
-    deleted = len(new_keys) != len(keys)
-    if deleted:
-        _save_user_keys(new_keys)
+    deleted = db.delete_user_api_key(req.id)
+    audit_log.append("api", {
+        "event": "user_key_deleted", "key_id": req.id,
+        "deleted": deleted, "role": "admin",
+    })
     return _versioned({"deleted": deleted, "id": req.id})
 
 

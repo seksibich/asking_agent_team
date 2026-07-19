@@ -47,9 +47,15 @@ stock_agent_kit/
 │   ├── web/                 #   Web 面板（与服务同源，/ui/）：index.html style.css app.js
 │   └── db/                  #   schema.sql / PERSISTENCE.md / PRECOMPUTE_PLAN.md / README.md
 │
-├── doc/                     # ★【agent↔服务交叉文档 + 服务业务索引】
-│   ├── AGENT_SERVICE_GUIDE.md    # 数据服务调用协议/版本机制/功能索引（供 agent 阅读）
-│   └── SERVICE_INDEX.md          # 服务功能业务索引（分组 → 功能 → agent 用途 + 定时任务交叉表）
+├── doc/                     # ★【统一文档中心】
+│   ├── README.md                 # 文档索引与推荐阅读顺序
+│   ├── 01-系统全景与审查结论.md
+│   ├── 02-Agent编排与业务模块.md
+│   ├── 03-前端业务与全时段规则.md
+│   ├── 04-数据存储缓存与一致性.md
+│   ├── 05-测试探针监控与运维.md
+│   ├── AGENT_SERVICE_GUIDE.md    # 数据服务调用协议与版本机制
+│   └── SERVICE_INDEX.md          # 功能、Skill 与定时任务交叉索引
 │
 └── profile/                 # ★【配置文件 + 变更日志】
     ├── CHANGELOG-AGENT.md        # agent 文档变更日志
@@ -90,13 +96,19 @@ cp profile/.env.example .env
 
 # 2) 一键启动（在仓库根目录，含 Web 面板）
 docker compose up -d --build
-curl -H "X-API-Key: <你的API_KEY>" http://localhost:18901/health
+curl -fsS http://localhost:18901/live
+curl -fsS http://localhost:18901/ready
+curl -fsS http://localhost:18901/health
 
 # 3) Web 面板：浏览器打开 http://localhost:18901/ui/ ，右上角设置填入 API_KEY
 ```
-`/health` 返回 `tushare_ready` / `db_ready` / `trade_open` 供自检。直接部署（无 Docker）见 DEPLOY.md。
-3. 把 `agent/init.md` 作为初始化指令交给智能体，它会按索引完成自我初始化。
-4. **Web 面板**（与服务同源部署）：浏览器打开 `http://localhost:18901/ui/`，右上角设置里填入 `X-API-Key`。
+`/live` 只判断进程存活，`/ready` 是 Docker/生产流量就绪标准，`/health` 返回市场、版本和依赖诊断快照。直接部署（无 Docker）见 DEPLOY.md。
+
+## 文档入口
+
+完整文档从 **[doc/README.md](doc/README.md)** 开始；系统审查、业务模块、前端全时段规则、数据一致性和监控运维均有独立专题。
+- **初始化 Agent**：把 `agent/init.md` 作为初始化指令交给智能体，它会按索引完成自我初始化。
+- **Web 面板**（与服务同源部署）：浏览器打开 `http://localhost:18901/ui/`，在设置中填写访问凭据。
    - 量化选股：调 `screen_quant` 看结果
    - 情绪温度：调 `sentiment_temperature` 看 0-100 温度与指标分解
    - 权重配置：查看/微调 stock/sector/trend/sentiment 各模型权重（`get_factor_config`/`set_factor_weights`）

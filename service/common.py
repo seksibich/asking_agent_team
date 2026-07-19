@@ -276,7 +276,8 @@ def market_clock(now: Optional[datetime] = None) -> dict[str, Any]:
     if frame is None or frame.empty or not {"cal_date", "is_open"}.issubset(frame.columns):
         raise RuntimeError("无法获取上海交易所交易日历")
     open_days = sorted(
-        frame[frame["is_open"].astype(int) == 1]["cal_date"].astype(str).tolist()
+        day for day in frame[frame["is_open"].astype(int) == 1]["cal_date"].astype(str).tolist()
+        if day <= today
     )
     if not open_days:
         raise RuntimeError("交易日历中没有可用交易日")

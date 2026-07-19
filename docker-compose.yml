@@ -14,7 +14,8 @@ services:
       - ./cache:/app/cache        # tushare 缓存持久化
       - ./data:/app/data          # DB(SQLite)/回测数据等
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:18901/health'); sys.exit(0)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:18901/ready'); sys.exit(0)"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 30s

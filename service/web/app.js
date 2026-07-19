@@ -1,9 +1,22 @@
 /* 盯盘量化面板 —— 与数据服务同源部署，调用 POST /call */
-const LS = { base: "sa_base", key: "sa_key" };
+const LS = { base: "sa_base" };
+const SS = { key: "sa_session_key" };
 const cfg = {
   base: localStorage.getItem(LS.base) || window.location.origin,
-  key: localStorage.getItem(LS.key) || "",
+  // 访问凭据只保留当前标签页会话，关闭后自动清除。
+  key: sessionStorage.getItem(SS.key) || "",
 };
+let _marketHealth = {};
+
+function rememberConnection() {
+  localStorage.setItem(LS.base, cfg.base);
+  sessionStorage.setItem(SS.key, cfg.key);
+}
+
+function acceptHealth(value) {
+  if (value && typeof value === "object") _marketHealth = value;
+  return value;
+}
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({
@@ -44,8 +57,9 @@ async function call(fn, params = {}) {
     body: JSON.stringify({ function: fn, params }),
   });
   const body = await res.json();
+  acceptHealth(body.health);
   if (!res.ok || body.ok === false) {
-    throw new Error(body.error || `HTTP ${res.status}`);
+    throw new Error(body.error || `请求失败（${res.status}）`);
   }
   return body.data;
 }
@@ -54,7 +68,8 @@ async function health() {
   const res = await fetch(cfg.base.replace(/\/$/, "") + "/health", {
     headers: { "X-API-Key": cfg.key },
   });
-  return res.json();
+  const body = await res.json();
+  return acceptHealth(body);
 }
 
 /* ---------- 角色 / 权限（管理员 vs 用户） ---------- */
@@ -103,13 +118,13 @@ async function login() {
       headers: { "X-API-Key": key },
     });
     const body = await res.json();
+    acceptHealth(body.health);
     if (!res.ok || !["admin", "user"].includes(body.role)) {
-      throw new Error(body.error || "Key 无效或无权访问");
+      throw new Error(body.error || "访问凭据无效或无权访问");
     }
     cfg.base = base;
     cfg.key = key;
-    localStorage.setItem(LS.base, cfg.base);
-    localStorage.setItem(LS.key, cfg.key);
+    rememberConnection();
     _role = body.role;
     _authReady = true;
     $("login-modal").classList.add("hidden");
@@ -133,6 +148,7 @@ async function refreshRole() {
       headers: { "X-API-Key": cfg.key },
     });
     const body = await res.json();
+    acceptHealth(body.health);
     if (res.ok && ["admin", "user"].includes(body.role)) {
       _role = body.role;
       _authReady = true;
@@ -254,6 +270,8 @@ $("settingsBtn").onclick = () => {
   $("cfg-base").value = cfg.base;
   $("cfg-key").value = cfg.key;
   $("cfg-status").textContent = "";
+  if ($("uk-created-key")) $("uk-created-key").textContent = "";
+  $("uk-created")?.classList.add("hidden");
   $("settings").classList.remove("hidden");
   refreshUserKeysPanel();
 };
@@ -288,11 +306,10 @@ async function loadUserKeys() {
       <div class="uk-item ${k.disabled ? "off" : ""}">
         <div class="uk-info">
           <b>${esc(k.label || "访客")}</b>${k.disabled ? '<span class="uk-tag">已停用</span>' : ""}
-          <code class="uk-key">${esc(k.key || "")}</code>
+          <code class="uk-key">${esc(k.masked_key || "已隐藏")}</code>
           <small>${esc(k.created_at || "")}</small>
         </div>
         <div class="uk-ops">
-          <button class="btn-ghost" data-uk-copy="${esc(k.key || "")}">复制</button>
           <button class="btn-ghost" data-uk-toggle="${esc(k.id || "")}">${k.disabled ? "启用" : "停用"}</button>
           <button class="btn-ghost uk-del" data-uk-del="${esc(k.id || "")}">删除</button>
         </div>
@@ -303,21 +320,27 @@ async function loadUserKeys() {
 $("uk-create").onclick = async () => {
   const label = $("uk-label").value.trim();
   try {
-    await adminApi("/admin/user-keys", "POST", { label });
+    const data = await adminApi("/admin/user-keys", "POST", { label });
+    const rawKey = String(data.item?.key || "");
     $("uk-label").value = "";
-    toast("已生成访客 Key", "ok");
+    $("uk-created-key").textContent = rawKey;
+    $("uk-created").classList.toggle("hidden", !rawKey);
+    toast("访客 Key 已生成，请立即保存", "ok");
     loadUserKeys();
   } catch (e) { toast("生成失败：" + e.message, "bad"); }
 };
 
+$("uk-created-copy").onclick = async () => {
+  const rawKey = $("uk-created-key").textContent;
+  if (!rawKey) return;
+  try { await navigator.clipboard.writeText(rawKey); toast("完整 Key 已复制", "ok"); }
+  catch (error) { toast("复制失败，请手动选择", "bad"); }
+};
+
 $("uk-list").addEventListener("click", async (e) => {
-  const copy = e.target.closest("[data-uk-copy]");
   const tog = e.target.closest("[data-uk-toggle]");
   const del = e.target.closest("[data-uk-del]");
-  if (copy) {
-    try { await navigator.clipboard.writeText(copy.getAttribute("data-uk-copy")); toast("Key 已复制", "ok"); }
-    catch (err) { toast("复制失败，请手动选择", "bad"); }
-  } else if (tog) {
+  if (tog) {
     try { await adminApi("/admin/user-keys/toggle", "POST", { id: tog.getAttribute("data-uk-toggle") }); loadUserKeys(); }
     catch (err) { toast("操作失败：" + err.message, "bad"); }
   } else if (del) {
@@ -447,8 +470,7 @@ $("tab-reset").onclick = async () => {
 $("cfg-save").onclick = async () => {
   cfg.base = $("cfg-base").value.trim() || window.location.origin;
   cfg.key = $("cfg-key").value.trim();
-  localStorage.setItem(LS.base, cfg.base);
-  localStorage.setItem(LS.key, cfg.key);
+  rememberConnection();
   // 保存后校验一次连通
   try {
     const h = await health();
@@ -470,7 +492,8 @@ $("cfg-test").onclick = async () => {
   try {
     const h = await health();
     await refreshRole();
-    s.textContent = `连通 ✓ 角色=${isAdmin() ? "管理员" : "访客"} 交易日=${h.trade_open} 功能数=${h.functions} 版本=${h.data_version}`;
+    const market = MarketState.context(h);
+    s.textContent = `连接正常 · ${isAdmin() ? "管理员" : "访客"} · ${market.phaseLabel}`;
     s.className = "status ok";
   } catch (e) { s.textContent = "连接失败：" + e.message; s.className = "status bad"; }
 };
@@ -651,9 +674,7 @@ function compactDate(value) {
 }
 
 function localTodayCompact() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10).replaceAll("-", "");
+  return MarketState.context(_marketHealth).serverDate;
 }
 
 function industryNumber(row, key) {
@@ -942,28 +963,30 @@ function renderIndustry(data) {
 
 async function loadIndustry(force = false) {
   if ((_industryLoaded && !force) || !cfg.key) return;
+  if (!_marketHealth.date) {
+    try { await health(); } catch (error) { /* 业务请求仍由服务端给出明确错误 */ }
+  }
   const requestSeq = ++_industryRequestSeq;
   const button = $("i-run");
   const date = compactDate($("i-date").value);
-  const today = localTodayCompact();
-  if (date && date > today) {
-    $("i-date").value = formatFullDate(today);
-    toast("行业查看日期不能超过当天", "bad");
-    return loadIndustry(true);
-  }
+  const policy = MarketState.industryRequest($("i-mode").value, date, _marketHealth);
+  const today = policy.state.maxSelectableDate || policy.state.serverDate;
+  if (policy.notice) toast(policy.notice, "ok");
+  if ($("i-mode").value !== policy.mode) $("i-mode").value = policy.mode;
+  if (policy.date && policy.date !== date) $("i-date").value = formatFullDate(policy.date);
   _industryLoaded = true;
   button.disabled = true;
+  button.textContent = "刷新中…";
   $("i-result").innerHTML = '<div class="empty">加载行业评分中…</div>';
   $("i-bars").innerHTML = '<div class="empty">加载强弱行业中…</div>';
-  $("i-heat").innerHTML = '<div class="empty">加载因子矩阵中…</div>';
+  $("i-heat").innerHTML = '<div class="empty">加载指标矩阵中…</div>';
   $("i-trend").innerHTML = '<div class="empty">加载历史趋势中…</div>';
   const params = {
-    mode: $("i-mode").value,
+    mode: policy.mode,
     history_days: Math.max(3, Math.min(120, Number($("i-history-days").value) || 20)),
     top_n: Math.max(5, Math.min(100, Number($("i-topn").value) || 31)),
   };
-  // 最新完整模式始终由服务端解析当前安全就绪日，避免刷新时被输入框旧值锁住。
-  if (date && params.mode !== "latest_complete") params.date = date;
+  if (policy.date && policy.mode !== "latest_complete") params.date = policy.date;
   try {
     const data = await call("screen_sector", params);
     if (requestSeq !== _industryRequestSeq) return;
@@ -974,10 +997,14 @@ async function loadIndustry(force = false) {
     $("i-status").innerHTML = `<span class="industry-status-reason">行业数据加载失败：${esc(error.message)}</span>`;
     $("i-result").innerHTML = `<div class="empty">行业评分加载失败：${esc(error.message)}</div>`;
     $("i-bars").innerHTML = '<div class="empty">暂无强弱行业数据</div>';
-    $("i-heat").innerHTML = '<div class="empty">暂无因子矩阵</div>';
+    $("i-heat").innerHTML = '<div class="empty">暂无指标矩阵</div>';
     $("i-trend").innerHTML = '<div class="empty">暂无历史趋势</div>';
   } finally {
-    if (requestSeq === _industryRequestSeq) button.disabled = false;
+    if (requestSeq === _industryRequestSeq) {
+      button.disabled = false;
+      button.textContent = "刷新行业数据";
+      $("i-date").max = formatFullDate(today);
+    }
   }
 }
 
@@ -1057,6 +1084,8 @@ let _selectionRows = [];
 let _selectionData = {};
 let _selectionTag = "";
 let _selectionSort = "grouped";
+let _selectionRequestSeq = 0;
+let _selectionQuoteSeq = 0;
 
 const selectionScore = (row) => {
   const value = row.score_percentile ?? row.score;
@@ -1173,7 +1202,7 @@ function selectionCard(r) {
       <div class="selection-detail-grid">
         <div><small>选股价</small><b>${fmtMaybe(r.selected_price)}</b></div>
         <div><small>最新价</small><b>${fmtMaybe(r.latest_price)}</b></div>
-        <div><small>实时涨幅</small><b class="${chgCls}">${pctText(r.latest_chg_pct)}</b></div>
+        <div><small>最近涨幅</small><b class="${chgCls}">${pctText(r.latest_chg_pct)}</b></div>
         <div><small>换手率</small><b>${pctText(r.turnover_rate)}</b></div>
         <div><small>最近成交额</small><b>${amountYi}</b></div>
         <div><small>筛选排名</small><b>${rank}</b></div>
@@ -1183,7 +1212,7 @@ function selectionCard(r) {
       <div class="selection-detail-footer">
         <div class="factor-snapshot-wrap">
           <details class="factor-snapshot"><summary>查看因子快照</summary><p>${factors}</p></details>
-          <div class="selection-audit">选股 ${esc(r.selected_at || r.logged_at || "—")} · 选股价 ${esc(r.selected_price_date || "日期未知")} / ${esc(r.selected_price_source || "来源未知")}${r.price_backfilled_at ? ` · 已自动补价 ${esc(r.price_backfilled_at)}` : ""} · 行情 ${esc(r.latest_quote_time || "—")} · 原始分 ${fmtMaybe(r.score_raw, 4)} · 运行 ${esc(r.screening_run_id || "legacy")}</div>
+          <div class="selection-audit">入选时间 ${esc(r.selected_at || r.logged_at || "—")} · 入选价格日期 ${esc(r.selected_price_date || "未知")}${r.price_backfilled_at ? ` · 已补齐入选价` : ""} · 行情更新 ${esc(r.latest_quote_time || "—")}</div>
         </div>
         ${deleteButton}
       </div>
@@ -1247,11 +1276,12 @@ function drawSelections(data) {
 
 async function loadSelections(force = false) {
   if (_selectionsLoaded && !force) return;
+  const requestSeq = ++_selectionRequestSeq;
   _selectionsLoaded = true;
-  $("sl-result").innerHTML = '<div class="empty">加载选股记录并刷新实时行情…</div>';
+  $("sl-result").innerHTML = '<div class="empty">加载选股记录与当前行情…</div>';
   const refreshButton = $("sl-refresh-quotes");
   refreshButton.disabled = true;
-  refreshButton.textContent = "刷新中…";
+  refreshButton.textContent = "加载中…";
   const params = { limit: 500 };
   const from = $("sl-from").value.replaceAll("-", "");
   const to = $("sl-to").value.replaceAll("-", "");
@@ -1261,8 +1291,11 @@ async function loadSelections(force = false) {
   if (to) params.date_to = to;
   if (hotspot) params.hotspot = hotspot;
   if (category) params.category = category;
-  try { drawSelections(await call("selection_dashboard", params)); }
-  catch (e) {
+  try {
+    const data = await call("selection_dashboard", params);
+    if (requestSeq === _selectionRequestSeq) drawSelections(data);
+  } catch (e) {
+    if (requestSeq !== _selectionRequestSeq) return;
     _selectionsLoaded = false;
     _selectionRows = [];
     _selectionData = {};
@@ -1271,8 +1304,10 @@ async function loadSelections(force = false) {
     $("sl-refreshed").textContent = "刷新失败";
     $("sl-result").innerHTML = '<div class="empty">选股看板加载失败：' + esc(e.message) + "</div>";
   } finally {
-    refreshButton.disabled = false;
-    refreshButton.textContent = "刷新行情";
+    if (requestSeq === _selectionRequestSeq) {
+      refreshButton.disabled = false;
+      refreshButton.textContent = "刷新行情";
+    }
   }
 }
 
@@ -1292,10 +1327,14 @@ async function refreshSelectionQuotes() {
     toast("当前列表为空，请先查询选股记录");
     return;
   }
+  const quoteSeq = ++_selectionQuoteSeq;
   const button = $("sl-refresh-quotes");
+  const progress = $("sl-refresh-progress");
   const opened = openedSelectionIds();
   button.disabled = true;
   button.textContent = "刷新中…";
+  progress.classList.remove("hidden");
+  $("sl-refreshed").textContent = "正在更新行情";
   try {
     const res = await fetch(cfg.base.replace(/\/$/, "") + "/selections/quotes", {
       method: "POST",
@@ -1303,7 +1342,9 @@ async function refreshSelectionQuotes() {
       body: JSON.stringify({ items: _selectionRows.map((row) => ({ id: row.id, code: row.code })) }),
     });
     const body = await res.json();
-    if (!res.ok || body.ok === false) throw new Error(body.error || `HTTP ${res.status}`);
+    acceptHealth(body.health);
+    if (!res.ok || body.ok === false) throw new Error(body.error || `请求失败（${res.status}）`);
+    if (quoteSeq !== _selectionQuoteSeq) return;
     const quotes = body.quotes || {};
     const prices = body.selected_prices || {};
     _selectionRows = _selectionRows.map((row) => {
@@ -1343,10 +1384,16 @@ async function refreshSelectionQuotes() {
     restoreOpenedSelections(opened);
     toast(`已刷新当前 ${body.record_count ?? _selectionRows.length} 条记录${body.backfilled_prices ? `，补齐 ${body.backfilled_prices} 条选股价` : ""}`, "ok");
   } catch (error) {
-    toast("行情刷新失败：" + error.message, "bad");
+    if (quoteSeq === _selectionQuoteSeq) {
+      $("sl-refreshed").textContent = "行情刷新失败";
+      toast("行情刷新失败：" + error.message, "bad");
+    }
   } finally {
-    button.disabled = false;
-    button.textContent = "刷新行情";
+    if (quoteSeq === _selectionQuoteSeq) {
+      button.disabled = false;
+      button.textContent = "刷新行情";
+      progress.classList.add("hidden");
+    }
   }
 }
 
@@ -1419,7 +1466,6 @@ function resetPortfolioForm() {
   $("pf-type").value = "watch";
   $("pf-cost").value = "";
   $("pf-lots").value = "";
-  $("pf-note").value = "";
   $("pf-save").disabled = true;
   $("pf-status").textContent = "";
   $("pf-status").className = "status";
@@ -1427,7 +1473,7 @@ function resetPortfolioForm() {
 }
 
 function selectPortfolioStock(stock, existing = null) {
-  _portfolioSelected = { code: stock.code, name: stock.name };
+  _portfolioSelected = { code: stock.code, name: stock.name, note: existing?.note || "" };
   $("pf-search").value = `${stock.name} ${stock.code}`;
   $("pf-selected").innerHTML = `<b>${esc(stock.name)}</b><code>${esc(stock.code)}</code>`;
   $("pf-selected").classList.remove("empty-compact");
@@ -1439,14 +1485,13 @@ function selectPortfolioStock(stock, existing = null) {
     $("pf-type").value = existing.type;
     $("pf-cost").value = existing.cost_price ?? "";
     $("pf-lots").value = existing.lots ?? "";
-    $("pf-note").value = existing.note || "";
   }
   setPortfolioTypeFields();
 }
 
 function renderPortfolio(data) {
   _portfolioRows = Array.isArray(data?.rows) ? data.rows : [];
-  $("pf-version").textContent = `版本 ${data?.portfolio_version || "--"}`;
+  $("pf-version").textContent = `已同步 · ${_portfolioRows.length} 只`;
   $("pf-holding-count").textContent = String(data?.holding_count ?? _portfolioRows.filter((row) => row.type === "holding").length);
   $("pf-watch-count").textContent = String(data?.watch_count ?? _portfolioRows.filter((row) => row.type === "watch").length);
   $("pf-total-count").textContent = String(_portfolioRows.length);
@@ -1468,7 +1513,6 @@ function renderPortfolio(data) {
         <div class="portfolio-item-metrics">${details}</div>
         <div class="portfolio-item-time"><small>最近更新</small><span>${esc(row.updated_at || "—")}</span></div>
       </div>
-      <div class="portfolio-item-note">${esc(row.note || "暂无备注")}</div>
       <div class="portfolio-item-actions"><button type="button" class="btn-ghost" data-portfolio-edit="${esc(row.code)}">编辑</button><button type="button" class="portfolio-remove" data-portfolio-remove="${esc(row.code)}">移除</button></div>
     </article>`;
   }).join("");
@@ -1532,7 +1576,7 @@ $("pf-save").onclick = async () => {
   if (!isAdmin()) { toast("仅管理员可修改自选", "bad"); return; }
   if (!_portfolioSelected) { toast("请先搜索并选择股票", "bad"); return; }
   const type = $("pf-type").value;
-  const item = { ..._portfolioSelected, type, note: $("pf-note").value.trim() };
+  const item = { ..._portfolioSelected, type, note: _portfolioSelected.note || "" };
   if (type === "holding") {
     item.cost_price = Number($("pf-cost").value);
     item.lots = Number($("pf-lots").value);
@@ -1548,7 +1592,7 @@ $("pf-save").onclick = async () => {
     const data = await call("portfolio_upload", { items: [item], source: "web-admin" });
     renderPortfolio(data);
     resetPortfolioForm();
-    toast(data.changed ? "自选已保存，数据版本已更新" : "内容无变化，无需更新", "ok");
+    toast(data.changed ? "自选已保存" : "内容无变化，无需更新", "ok");
   } catch (e) {
     button.disabled = false;
     $("pf-status").textContent = "保存失败：" + e.message;
@@ -1750,11 +1794,11 @@ async function setSentimentDefaultDate() {
   if (!input || input.value.trim()) return;
   try {
     const h = await health();
-    const serverDate = String(h.date || "").trim();
-    if (/^\d{8}$/.test(serverDate)) {
-      _sentimentMaxDate = serverDate;
-      input.max = formatFullDate(serverDate);
-      if (h.trade_open !== false) input.value = formatFullDate(serverDate);
+    const defaults = MarketState.sentimentDefault(h);
+    if (defaults.date) {
+      _sentimentMaxDate = defaults.maxDate;
+      input.max = formatFullDate(defaults.maxDate);
+      input.value = formatFullDate(defaults.date);
       updateSentimentDateStepButtons();
     }
   } catch (e) { /* 健康检查失败时保留空值，由服务端选择最近交易日 */ }
@@ -2320,7 +2364,7 @@ function renderBacktestDetails() {
         <span class="controlled-badge ${row.controlled_auto ? "yes" : "no"}">${row.controlled_auto ? "受控样本" : "非调参样本"}</span>
       </div>
       <div class="return-chip-row">${HZ_ORDER.map((horizon) => returnChip(row, horizon)).join("")}</div>
-      <div class="backtest-detail-foot">选股价 ${fmtMaybe(row.selected_price)} · 分桶 ${esc(row.bucket || "—")} · 行情 ${esc(row.latest_quote_time || "不可用")}（${esc(row.quote_source || "不可用")}） · 计算 ${esc(row.return_calc_version || "—")}</div>
+      <div class="backtest-detail-foot">选股价 ${fmtMaybe(row.selected_price)} · 样本组 ${esc(row.bucket || "—")} · 最近行情 ${esc(row.latest_quote_time || "不可用")}</div>
     </article>`;
   }).join("");
   bindBacktestPagers(totalPages);
@@ -2465,9 +2509,8 @@ function updateLogScopeUI() {
 }
 
 $("log-scope").onchange = updateLogScopeUI;
-const nowForDateInput = new Date();
-const todayText = new Date(nowForDateInput.getTime() - nowForDateInput.getTimezoneOffset() * 60000)
-  .toISOString().slice(0, 10);
+const logTodayCompact = MarketState.context(_marketHealth).serverDate;
+const todayText = `${logTodayCompact.slice(0, 4)}-${logTodayCompact.slice(4, 6)}-${logTodayCompact.slice(6, 8)}`;
 $("log-date").value = todayText;
 $("log-from").value = todayText;
 $("log-to").value = todayText;
@@ -2630,7 +2673,7 @@ function modelBlock(model, info) {
   wrap.innerHTML = `
     <div class="model-head">
       <span class="model-name">${MODEL_LABEL[model] || model}</span>
-      <span class="model-sum">来源：${info.source}</span>
+      <span class="model-sum">当前生效配置</span>
     </div>
     <div class="weight-grid">${grid}</div>
     <div class="model-actions">
@@ -2705,16 +2748,15 @@ function renderPrecomputeTask(task) {
   const error = task.error ? `<div class="pc-message bad">${esc(task.error)}</div>` : "";
   box.innerHTML = `
     <div class="pc-task-head">
-      <div><div class="pc-task-title">${esc(mode)}<span class="pc-state ${esc(task.status)}">${esc(label)}</span></div>
-        <code class="pc-task-id">任务 ${esc(task.job_id)}</code></div>
-      <span class="meta">${esc(task.started_at || "")}</span>
+      <div><div class="pc-task-title">${esc(mode)}<span class="pc-state ${esc(task.status)}">${esc(label)}</span></div></div>
+      <span class="meta">开始于 ${esc(task.started_at || "—")}</span>
     </div>
     <div class="pc-progress-row"><div class="pc-progress"><i style="width:${progress}%"></i></div><span class="pc-progress-value">${progress}%</span></div>
     <div class="pc-task-grid">
       <div class="pc-task-stat"><small>当前阶段</small><b>${esc(task.stage || "—")}</b></div>
       <div class="pc-task-stat"><small>当前交易日</small><b>${esc(task.current_date || "—")}</b></div>
       <div class="pc-task-stat"><small>日期进度</small><b>${esc(count)}</b></div>
-      <div class="pc-task-stat"><small>最近心跳</small><b>${esc(task.heartbeat_at || "—")}</b></div>
+      <div class="pc-task-stat"><small>最近更新</small><b>${esc(task.heartbeat_at || "—")}</b></div>
     </div>
     <div class="pc-message">${esc(task.message || "等待任务更新")}</div>${error}`;
   btn.disabled = active;
@@ -2728,7 +2770,7 @@ function renderPrecompute(d) {
   const cov = (d.coverage || []).slice().reverse();
   const latest = d.latest_date ? `最新覆盖日 ${d.latest_date}` : "暂无覆盖数据";
   const usable = d.latest_usable_date ? ` · 最新可用 ${d.latest_usable_date}` : "";
-  $("pc-meta").textContent = `${latest}${usable} · 因子版 ${d.factor_version || "—"}`;
+  $("pc-meta").textContent = `${latest}${usable}`;
   const series = cov.map((row) => ({ label: fmtDate(row.trade_date), value: row.count }));
   $("pc-chart").innerHTML = series.length ? svgLine(series, { min: 0, color: "#16a34a" })
     : '<div class="empty">暂无因子数据，请运行预计算</div>';
@@ -2920,14 +2962,13 @@ function renderQuantWatchSectors(latest) {
 
 function quantWatchWindowQualityText(quality) {
   const windowQuality = quality.window;
-  if (windowQuality == null) return "窗口状态 未返回（不可确认）";
+  if (windowQuality == null) return "短线变化数据待确认";
   const status = typeof windowQuality === "object" ? windowQuality.status : windowQuality;
   const reason = typeof windowQuality === "object"
     ? windowQuality.warmup_reason || windowQuality.reason || windowQuality.note : "";
-  const statusNames = { available: "可用", warming: "预热中", unavailable: "不可用", stale: "陈旧", error: "异常" };
-  const statusText = statusNames[String(status || "").toLowerCase()] || status || "未知";
-  const reasonText = reason || (String(status).toLowerCase() === "warming" ? "服务未返回预热原因" : "");
-  return `窗口状态 ${statusText}${reasonText ? `（${reasonText}）` : ""}`;
+  const statusNames = { available: "短线变化数据已就绪", warming: "正在积累短线数据", unavailable: "短线变化数据不可用", stale: "短线变化数据已过时", error: "短线变化数据异常" };
+  const statusText = statusNames[String(status || "").toLowerCase()] || "短线变化数据待确认";
+  return `${statusText}${reason ? `（${reason}）` : ""}`;
 }
 
 function renderQuantWatch(data, forceConfig = false) {
@@ -2952,17 +2993,18 @@ function renderQuantWatch(data, forceConfig = false) {
     const universe = latest.universe || {};
     const missingCodes = Array.isArray(universe.missing_priority_codes) ? universe.missing_priority_codes : null;
     const priorityErrors = Array.isArray(quality.priority_errors) ? quality.priority_errors : null;
-    const completeText = universe.priority_complete === true ? "是" : universe.priority_complete === false ? "否" : "未返回";
+    const completeText = universe.priority_complete === true ? "完整" : universe.priority_complete === false ? "有缺失" : "待确认";
+    const minuteCount = finiteNumberText(minute.sample_count, { digits: 0 });
+    const sectorLevels = (sector.levels || []).length;
     const qualityParts = [
-      `行情 ${quality.quote_source || "—"}`,
-      `行情时间 ${quality.quote_as_of || "—"}`,
-      `分时样本 ${finiteNumberText(minute.sample_count, { digits: 0 })}`,
+      `行情更新 ${quality.quote_as_of || "待确认"}`,
+      `分时数据已积累 ${minuteCount} 次`,
       quantWatchWindowQualityText(quality),
-      `申万层级 ${(sector.levels || []).join("/") || "不可用"}`,
-      `优先标的覆盖完整 ${completeText}`,
-      `缺失优先代码 ${missingCodes == null ? "未返回" : (missingCodes.join("、") || "无")}`,
-      `优先标的读取错误 ${priorityErrors == null ? "未返回" : (priorityErrors.join("；") || "无")}`,
-      "大单逐笔 未接入",
+      `行业覆盖 ${sectorLevels ? `${sectorLevels} 个层级` : "不可用"}`,
+      `重点标的覆盖 ${completeText}`,
+      `缺失重点标的 ${missingCodes == null ? "待确认" : (missingCodes.join("、") || "无")}`,
+      `重点标的读取异常 ${priorityErrors == null ? "待确认" : (priorityErrors.join("；") || "无")}`,
+      "逐笔大单数据暂未接入",
     ];
     if (state.last_error) qualityParts.push(`最近错误 ${state.last_error}`);
     $("qw-quality").innerHTML = qualityParts.map((item) => `<span>${esc(item)}</span>`).join(" · ");
@@ -3044,6 +3086,8 @@ async function connectQuantWatchSocket() {
 
 async function loadQuantWatch(force = false) {
   if (!isAdmin()) return;
+  const refreshButton = $("qw-refresh");
+  if (force) { refreshButton.disabled = true; refreshButton.textContent = "刷新中…"; }
   try {
     const data = await call("quant_watch_status", { limit: 100 });
     renderQuantWatch(data, force || !_qwConfigLoaded);
@@ -3052,8 +3096,11 @@ async function loadQuantWatch(force = false) {
     } else {
       stopQuantWatchSocket();
     }
+    if (force) toast("盯盘状态已更新", "ok");
   } catch (error) {
     renderQuantWatchLoadFailure(error);
+  } finally {
+    if (force) { refreshButton.disabled = false; refreshButton.textContent = "刷新"; }
   }
 }
 

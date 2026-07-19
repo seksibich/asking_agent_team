@@ -14,7 +14,7 @@
       <span>盯盘 · 量化面板</span>
     </div>
     <div class="topbar-right">
-      <span id="role-badge" class="role-badge user" title="当前 API Key 角色">访客</span>
+      <span id="role-badge" class="role-badge user" title="当前访问身份">访客</span>
       <button id="tab-reset" class="icon-btn tab-reset-btn" type="button" title="恢复当前页签初始状态" aria-label="恢复当前页签初始状态">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.4-2.5L20 9M4 15l2.5 2.5A7 7 0 0 0 17.9 15"/></svg>
         <span>重置当前页</span>
@@ -256,6 +256,7 @@
         <div class="selection-query-actions">
           <button id="sl-run" class="btn-primary" type="button">查询选股记录</button>
           <button id="sl-refresh-quotes" class="btn-ghost" type="button">刷新行情</button>
+          <span id="sl-refresh-progress" class="refresh-progress hidden" role="status">正在拉取最新行情…</span>
           <span id="sl-refreshed" class="meta">尚未刷新</span>
         </div>
       </div>
@@ -290,7 +291,7 @@
         <div class="card-title-row">
           <div>
             <span class="sentiment-eyebrow">关注与持仓</span>
-            <div class="card-title portfolio-title">自选管理 <span id="pf-version" class="meta-chip">版本 --</span></div>
+            <div class="card-title portfolio-title">自选管理 <span id="pf-version" class="meta-chip">等待同步</span></div>
             <p class="hint">先按股票名称或代码片段搜索并选择，再添加为关注或持仓。同一代码只保留最新状态。</p>
           </div>
           <button id="pf-refresh" class="btn-ghost" type="button">刷新</button>
@@ -310,7 +311,6 @@
           <div class="form-row"><label for="pf-type">自选类型</label><select id="pf-type"><option value="watch">关注</option><option value="holding">持仓</option></select></div>
           <div class="form-row"><label for="pf-cost">持仓成本</label><input id="pf-cost" type="number" min="0.0001" step="0.0001" disabled placeholder="持仓时必填" /></div>
           <div class="form-row"><label for="pf-lots">持仓手数</label><input id="pf-lots" type="number" min="1" step="1" disabled placeholder="持仓时必填" /></div>
-          <div class="form-row portfolio-note"><label for="pf-note">备注</label><input id="pf-note" type="text" maxlength="2000" placeholder="关注理由、持仓计划或风险说明" /></div>
         </div>
         <div class="portfolio-actions">
           <span id="pf-status" class="status"></span>
@@ -550,7 +550,7 @@
 
       <div class="card backtest-log-card admin-only">
         <div class="card-title">运行审计日志下载 <span class="meta">管理员</span></div>
-        <p class="hint">按场景下载 JSONL，可用于后续分析接口稳定性、回测门禁和选股登记质量。</p>
+        <p class="hint">按场景下载运行日志，供后续分析接口稳定性、回测条件和选股登记质量。</p>
         <div class="log-download-grid">
           <label>场景<select id="log-scene"><option value="api">接口调用</option><option value="backtest">回测记录</option><option value="selection">选股记录</option></select></label>
           <label>范围<select id="log-scope"><option value="date">单日</option><option value="range">日期区间</option><option value="all">全量</option></select></label>
@@ -611,7 +611,7 @@
       </div>
       <div class="form-row">
         <label for="login-key">服务 Key</label>
-        <input id="login-key" type="password" autocomplete="current-password" placeholder="请输入 API Key" />
+        <input id="login-key" type="password" autocomplete="current-password" placeholder="请输入访问凭据" />
       </div>
       <div id="login-status" class="status"></div>
       <div class="modal-actions">
@@ -624,8 +624,8 @@
   <div id="settings" class="modal hidden">
     <div class="modal-card">
       <div class="card-title">服务设置</div>
-      <div class="form-row"><label>服务基址 Base URL</label><input id="cfg-base" type="text" /></div>
-      <div class="form-row"><label>X-API-Key</label><input id="cfg-key" type="password" /></div>
+      <div class="form-row"><label>服务地址</label><input id="cfg-base" type="text" /></div>
+      <div class="form-row"><label>访问凭据</label><input id="cfg-key" type="password" /></div>
       <div id="cfg-status" class="status"></div>
       <div class="modal-actions">
         <button id="cfg-test" class="btn-ghost">测试连接</button>
@@ -636,8 +636,13 @@
       <div id="userkeys" class="userkeys admin-only hidden">
         <div class="card-title">访客 Key 管理 <span class="meta">访客：可查看/选股/读情绪/查看回测结果，不能改配置或预计算</span></div>
         <div class="form-row inline">
-          <input id="uk-label" type="text" placeholder="备注（如：张三 / 演示）" />
+          <input id="uk-label" type="text" placeholder="名称（如：演示账号）" />
           <button id="uk-create" class="btn-primary">生成访客 Key</button>
+        </div>
+        <div id="uk-created" class="uk-created hidden" role="status">
+          <b>请立即保存：完整 Key 只显示这一次</b>
+          <code id="uk-created-key"></code>
+          <button id="uk-created-copy" class="btn-ghost" type="button">复制完整 Key</button>
         </div>
         <div id="uk-list" class="uk-list"><div class="empty">加载中…</div></div>
       </div>
@@ -684,6 +689,7 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <script src="market-state.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

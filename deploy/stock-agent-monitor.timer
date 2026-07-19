@@ -1,0 +1,12 @@
+[Unit]
+Description=每五分钟检查 Stock Agent 存活与就绪状态
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=15s
+Persistent=true
+Unit=__SERVICE_NAME__-monitor.service
+
+[Install]
+WantedBy=timers.target

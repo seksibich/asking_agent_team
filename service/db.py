@@ -24,7 +24,7 @@ from typing import Any, Iterator, Optional
 
 from sqlalchemy import (JSON, BigInteger, CheckConstraint, Column, Date, DateTime,
                         Integer, MetaData, Numeric, SmallInteger, String, Table, Text,
-                        UniqueConstraint, create_engine, func, inspect, select, text)
+                        UniqueConstraint, case, create_engine, func, inspect, select, text)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -160,6 +160,18 @@ config_kv = Table(
     Column("k", String(64), primary_key=True),
     Column("v", JSON, nullable=False),
     Column("updated_at", DateTime, nullable=False, default=datetime.now),
+)
+
+# 动态访客 Key：只保存高熵随机 Key 的 SHA-256 摘要和展示前缀。
+# 明文只在创建响应中返回一次，列表和数据库均不可恢复原始 Key。
+user_api_keys = Table(
+    "user_api_keys", metadata,
+    Column("id", String(24), primary_key=True),
+    Column("label", String(64), nullable=False, default="访客"),
+    Column("key_hash", String(64), nullable=False, unique=True, index=True),
+    Column("key_prefix", String(32), nullable=False),
+    Column("created_at", DateTime, nullable=False, default=datetime.now),
+    Column("disabled", SmallInteger, nullable=False, default=0),
 )
 
 # 配置变更留痕（因子/情绪权重、归一窗口等每次修改的版本历史，类 commit）
@@ -369,6 +381,59 @@ def get_engine() -> Engine:
     return _engine
 
 
+def _user_api_key_hash(value: str) -> str:
+    """为高熵访客 Key 生成不可逆摘要；数据库不保存可恢复明文。"""
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+
+def _insert_user_api_key(conn, values: dict[str, Any]) -> None:
+    """按方言幂等插入访客 Key，供旧配置迁移与创建接口复用。"""
+    dialect = conn.engine.dialect.name
+    if dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as dialect_insert
+        conn.execute(dialect_insert(user_api_keys).values(**values).on_conflict_do_nothing())
+    elif dialect == "mysql":
+        from sqlalchemy.dialects.mysql import insert as dialect_insert
+        conn.execute(dialect_insert(user_api_keys).values(**values).prefix_with("IGNORE"))
+    else:
+        try:
+            with conn.begin_nested():
+                conn.execute(user_api_keys.insert().values(**values))
+        except IntegrityError:
+            pass
+
+
+def _migrate_legacy_user_api_keys(conn) -> None:
+    """把旧 config_kv 明文数组一次性迁移为摘要表，并删除旧明文。"""
+    row = conn.execute(select(config_kv.c.v).where(
+        config_kv.c.k == "user_api_keys")).first()
+    value = row[0] if row else None
+    keys = value.get("keys") if isinstance(value, dict) else None
+    if not isinstance(keys, list):
+        return
+    for item in keys:
+        if not isinstance(item, dict):
+            continue
+        raw_key = str(item.get("key") or "").strip()
+        if not raw_key:
+            continue
+        created_at = item.get("created_at")
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at)
+            except ValueError:
+                created_at = None
+        _insert_user_api_key(conn, {
+            "id": str(item.get("id") or secrets.token_hex(6))[:24],
+            "label": str(item.get("label") or "访客")[:64],
+            "key_hash": _user_api_key_hash(raw_key),
+            "key_prefix": raw_key[:24],
+            "created_at": created_at or datetime.now(),
+            "disabled": int(bool(item.get("disabled"))),
+        })
+    conn.execute(config_kv.delete().where(config_kv.c.k == "user_api_keys"))
+
+
 def _ensure_columns(engine: Engine, table_name: str,
                     columns: dict[str, tuple[str, str]]) -> None:
     """通过反射为旧表补可空列；columns 的值为 SQLite/MySQL 类型声明。"""
@@ -407,6 +472,9 @@ def init_db() -> None:
     """建表并通过 inspect 幂等补齐 SQLite/MySQL 旧表列。"""
     engine = get_engine()
     metadata.create_all(engine)
+    # 旧版动态访客 Key 曾以明文 JSON 存在 config_kv；建表后立即迁移并删除明文。
+    with engine.begin() as conn:
+        _migrate_legacy_user_api_keys(conn)
     # 自选版本元数据固定为单行；旧库首次升级时从空/既有当前状态建立 revision=0 基线。
     with engine.begin() as conn:
         meta_row = conn.execute(select(portfolio_meta.c.id).where(
@@ -624,36 +692,49 @@ def apply_portfolio_upload(items: list[dict[str, Any]], source: str) -> dict[str
 
 # ---------- selections ----------
 def upsert_selection(rec: dict[str, Any]) -> dict[str, Any]:
-    """按唯一键写入；auto/manual 已存在时保持不可变，watch/holding 可更新。"""
+    """按唯一键原子写入；auto/manual 首次固化，watch/holding 后写覆盖。"""
     eng = get_engine()
     immutable = rec["category"] in {"auto", "manual"}
-    payload = {k: rec.get(k) for k in
-               ("sel_date", "code", "name", "score", "driver", "reason",
-                "category", "extra", "logged_at")}
+    payload = {key: rec.get(key) for key in (
+        "sel_date", "code", "name", "score", "driver", "reason",
+        "category", "extra", "logged_at")}
+    unique_where = (
+        (selections.c.sel_date == rec["sel_date"])
+        & (selections.c.code == rec["code"])
+        & (selections.c.category == rec["category"])
+    )
     with eng.begin() as conn:
-        stmt = select(selections).where(
-            selections.c.sel_date == rec["sel_date"],
-            selections.c.code == rec["code"],
-            selections.c.category == rec["category"],
-        )
-        if eng.dialect.name == "mysql":
-            stmt = stmt.with_for_update()
-        row = conn.execute(stmt).mappings().first()
-        if row and immutable:
-            record = dict(row)
+        existing = conn.execute(select(selections).where(unique_where)).mappings().first()
+        if existing and immutable:
+            record = dict(existing)
             return {"inserted": False, "id": record["id"], "record": record}
-        if row:
-            conn.execute(selections.update().where(
-                selections.c.id == row["id"]).values(**payload))
-            record = conn.execute(select(selections).where(
-                selections.c.id == row["id"])).mappings().one()
-            return {"inserted": False, "id": row["id"], "record": dict(record)}
 
-        result = conn.execute(selections.insert().values(**payload))
-        selection_id = int(result.inserted_primary_key[0])
-        record = conn.execute(select(selections).where(
-            selections.c.id == selection_id)).mappings().one()
-        return {"inserted": True, "id": selection_id, "record": dict(record)}
+        if eng.dialect.name == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            statement = dialect_insert(selections).values(**payload)
+            statement = (statement.on_conflict_do_nothing(
+                index_elements=["sel_date", "code", "category"])
+                if immutable else statement.on_conflict_do_update(
+                    index_elements=["sel_date", "code", "category"], set_=payload))
+            result = conn.execute(statement)
+        elif eng.dialect.name == "mysql":
+            from sqlalchemy.dialects.mysql import insert as dialect_insert
+            statement = dialect_insert(selections).values(**payload)
+            updates = {"id": selections.c.id} if immutable else payload
+            result = conn.execute(statement.on_duplicate_key_update(**updates))
+        else:
+            if existing:
+                result = conn.execute(selections.update().where(unique_where).values(**payload))
+            else:
+                try:
+                    with conn.begin_nested():
+                        result = conn.execute(selections.insert().values(**payload))
+                except IntegrityError:
+                    result = None
+
+        record = conn.execute(select(selections).where(unique_where)).mappings().one()
+        inserted = existing is None and bool(result is not None and result.rowcount == 1)
+        return {"inserted": inserted, "id": int(record["id"]), "record": dict(record)}
 
 
 def fetch_selections(date_from: Optional[Any] = None, date_to: Optional[Any] = None,
@@ -927,20 +1008,38 @@ def get_snapshot(id: int) -> Optional[dict[str, Any]]:
 
 
 # ---------- factor_contracts / screening_runs ----------
+def _save_factor_contract_conn(conn, contract: dict[str, Any]) -> dict[str, Any]:
+    row = conn.execute(select(factor_contracts).where(
+        factor_contracts.c.schema_hash == contract["schema_hash"])).mappings().first()
+    if not row:
+        values = {key: contract.get(key) for key in (
+            "schema_hash", "model", "factor_version", "components", "definition")}
+        values["created_at"] = contract.get("created_at") or datetime.now()
+        conn.execute(factor_contracts.insert().values(**values))
+        row = conn.execute(select(factor_contracts).where(
+            factor_contracts.c.schema_hash == contract["schema_hash"])).mappings().one()
+    return dict(row)
+
+
+def _save_screening_run_conn(conn, record: dict[str, Any]) -> dict[str, Any]:
+    row = conn.execute(select(screening_runs).where(
+        screening_runs.c.run_id == record["run_id"])).mappings().first()
+    if not row:
+        values = {key: record.get(key) for key in (
+            "run_id", "function_name", "trade_date", "factor_version",
+            "schema_hash", "weight_version", "contract", "candidate_codes",
+            "candidates", "params")}
+        values["created_at"] = record.get("created_at") or datetime.now()
+        conn.execute(screening_runs.insert().values(**values))
+        row = conn.execute(select(screening_runs).where(
+            screening_runs.c.run_id == record["run_id"])).mappings().one()
+    return dict(row)
+
+
 def save_factor_contract(contract: dict[str, Any]) -> dict[str, Any]:
     """按 schema_hash 不可变保存因子契约；重复保存直接返回原契约。"""
-    eng = get_engine()
-    with eng.begin() as conn:
-        row = conn.execute(select(factor_contracts).where(
-            factor_contracts.c.schema_hash == contract["schema_hash"])).mappings().first()
-        if not row:
-            values = {key: contract.get(key) for key in (
-                "schema_hash", "model", "factor_version", "components", "definition")}
-            values["created_at"] = contract.get("created_at") or datetime.now()
-            conn.execute(factor_contracts.insert().values(**values))
-            row = conn.execute(select(factor_contracts).where(
-                factor_contracts.c.schema_hash == contract["schema_hash"])).mappings().one()
-    return dict(row)
+    with get_engine().begin() as conn:
+        return _save_factor_contract_conn(conn, contract)
 
 
 def get_factor_contract(schema_hash: str) -> Optional[dict[str, Any]]:
@@ -953,20 +1052,19 @@ def get_factor_contract(schema_hash: str) -> Optional[dict[str, Any]]:
 
 def save_screening_run(record: dict[str, Any]) -> dict[str, Any]:
     """按 run_id 不可变保存筛选运行记录，重复保存返回原记录。"""
-    eng = get_engine()
-    with eng.begin() as conn:
-        row = conn.execute(select(screening_runs).where(
-            screening_runs.c.run_id == record["run_id"])).mappings().first()
-        if not row:
-            values = {key: record.get(key) for key in (
-                "run_id", "function_name", "trade_date", "factor_version",
-                "schema_hash", "weight_version", "contract", "candidate_codes",
-                "candidates", "params")}
-            values["created_at"] = record.get("created_at") or datetime.now()
-            conn.execute(screening_runs.insert().values(**values))
-            row = conn.execute(select(screening_runs).where(
-                screening_runs.c.run_id == record["run_id"])).mappings().one()
-    return dict(row)
+    with get_engine().begin() as conn:
+        return _save_screening_run_conn(conn, record)
+
+
+def save_screening_snapshot(contract: dict[str, Any],
+                            record: dict[str, Any]) -> dict[str, Any]:
+    """在同一事务内固化因子契约和筛选运行，避免出现半条证据链。"""
+    if str(record.get("schema_hash") or "") != str(contract.get("schema_hash") or ""):
+        raise ValueError("筛选运行与因子契约的 schema_hash 不一致")
+    with get_engine().begin() as conn:
+        saved_contract = _save_factor_contract_conn(conn, contract)
+        saved_run = _save_screening_run_conn(conn, record)
+    return {"contract": saved_contract, "run": saved_run}
 
 
 def get_screening_run(run_id: str) -> Optional[dict[str, Any]]:
@@ -1592,6 +1690,70 @@ def latest_sector_score_date() -> Optional[str]:
     eng = get_engine()
     with eng.connect() as conn:
         return conn.execute(select(func.max(daily_sector_scores.c.trade_date))).scalar()
+
+
+# ---------- 动态访客 Key ----------
+def list_user_api_keys() -> list[dict[str, Any]]:
+    """列出可管理元数据；只返回掩码，不返回摘要或明文。"""
+    with get_engine().connect() as conn:
+        rows = conn.execute(select(
+            user_api_keys.c.id, user_api_keys.c.label, user_api_keys.c.key_prefix,
+            user_api_keys.c.created_at, user_api_keys.c.disabled,
+        ).order_by(user_api_keys.c.created_at.desc())).mappings().all()
+    return [{
+        "id": str(row["id"]), "label": str(row["label"] or "访客"),
+        "masked_key": f"{str(row['key_prefix'])}…",
+        "created_at": str(row["created_at"] or ""),
+        "disabled": bool(row["disabled"]),
+    } for row in rows]
+
+
+def create_user_api_key(key_id: str, label: str, raw_key: str) -> dict[str, Any]:
+    """原子创建访客 Key；调用方负责仅在本次响应返回 raw_key。"""
+    values = {
+        "id": str(key_id)[:24], "label": str(label or "访客")[:64],
+        "key_hash": _user_api_key_hash(raw_key), "key_prefix": str(raw_key)[:24],
+        "created_at": datetime.now(), "disabled": 0,
+    }
+    with get_engine().begin() as conn:
+        conn.execute(user_api_keys.insert().values(**values))
+    return {
+        "id": values["id"], "label": values["label"],
+        "masked_key": f"{values['key_prefix']}…",
+        "created_at": str(values["created_at"]), "disabled": False,
+    }
+
+
+def verify_user_api_key(raw_key: str) -> bool:
+    """按摘要验证动态访客 Key，停用记录立即失效。"""
+    if not raw_key:
+        return False
+    with get_engine().connect() as conn:
+        row = conn.execute(select(user_api_keys.c.id).where(
+            user_api_keys.c.key_hash == _user_api_key_hash(raw_key),
+            user_api_keys.c.disabled == 0,
+        )).first()
+    return row is not None
+
+
+def toggle_user_api_key(key_id: str) -> Optional[bool]:
+    """单条 SQL 原子切换启停状态，避免整数组读改写导致并发丢更新。"""
+    with get_engine().begin() as conn:
+        result = conn.execute(user_api_keys.update().where(
+            user_api_keys.c.id == key_id).values(
+                disabled=case((user_api_keys.c.disabled == 0, 1), else_=0)))
+        if result.rowcount == 0:
+            return None
+        disabled = conn.execute(select(user_api_keys.c.disabled).where(
+            user_api_keys.c.id == key_id)).scalar_one()
+    return bool(disabled)
+
+
+def delete_user_api_key(key_id: str) -> bool:
+    """按主键原子删除动态访客 Key。"""
+    with get_engine().begin() as conn:
+        result = conn.execute(user_api_keys.delete().where(user_api_keys.c.id == key_id))
+    return result.rowcount > 0
 
 
 # ---------- config_kv ----------

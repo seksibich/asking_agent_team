@@ -56,39 +56,71 @@ def _table_from_db(end: str, code_filter: Optional[set],
     return pd.DataFrame(recs) if recs else None
 
 
-def _attach_quotes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """为候选补安全就绪日行情：最新价 last / 当日涨幅 chg / 近5日涨幅 ret5。
-
-    只读取 `last_data_ready_date`，并由缓存 v2 校验最大日期覆盖目标日；盘中和
-    收盘待就绪阶段都不会把当天不完整行情永久固化。
-    """
+def _attach_quotes(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """按交易日批量补充候选行情，最多请求六个日截面而非逐股请求。"""
+    report: dict[str, Any] = {
+        "requested_count": len(rows), "covered_count": 0,
+        "missing_codes": [], "errors": [],
+    }
     if not rows:
-        return rows
+        return report
     end = str(common.market_clock()["last_data_ready_date"])
     start = (datetime.strptime(end, "%Y%m%d") - timedelta(days=15)).strftime("%Y%m%d")
     pro = common.get_pro()
-    for r in rows:
-        code = r.get("code")
+    codes = {str(row.get("code") or "").upper() for row in rows if row.get("code")}
+    try:
+        calendar = pro.trade_cal(exchange="SSE", start_date=start, end_date=end)
+        calendar_frame = pd.DataFrame(calendar)
+        trade_dates = sorted(calendar_frame[
+            calendar_frame["is_open"].astype(int).eq(1)
+        ]["cal_date"].astype(str).tolist())[-6:]
+    except Exception as exc:
+        trade_dates = [end]
+        report["errors"].append(f"交易日历读取失败：{type(exc).__name__}: {exc}"[:300])
+
+    frames: list[pd.DataFrame] = []
+    for trade_date in trade_dates:
         try:
             payload = common.cached_call(
-                "daily", {"c": code, "s": start, "e": end},
-                lambda c=code: pro.daily(ts_code=c, start_date=start, end_date=end),
-                historical=True, data_status="final", expected_end=end)
-            df = pd.DataFrame(payload.get("rows", []))
-            if df.empty:
+                "daily_market_cross_section", {"td": trade_date},
+                lambda td=trade_date: pro.daily(trade_date=td),
+                historical=True, data_status="final", expected_end=trade_date)
+            frame = pd.DataFrame(payload.get("rows") or [])
+            if frame.empty:
+                report["errors"].append(f"{trade_date} 日行情为空")
                 continue
-            df = df[df["trade_date"].astype(str) <= end].sort_values("trade_date")
-            if df.empty or str(df.iloc[-1]["trade_date"]) != end:
-                continue
-            cl = df["close"].astype(float).tolist()
-            r["last"] = round(cl[-1], 2)
-            if "pct_chg" in df.columns:
-                r["chg"] = round(float(df.iloc[-1]["pct_chg"]), 2)
-            if len(cl) >= 6:
-                r["ret5"] = round((cl[-1] / cl[-6] - 1) * 100, 2)
-        except Exception:
+            code_column = "ts_code" if "ts_code" in frame.columns else "TS_CODE"
+            frame[code_column] = frame[code_column].astype(str).str.upper()
+            frames.append(frame[frame[code_column].isin(codes)].rename(
+                columns={code_column: "ts_code"}))
+        except Exception as exc:
+            report["errors"].append(
+                f"{trade_date} 日行情失败：{type(exc).__name__}: {exc}"[:300])
+
+    history = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    by_code = {code: part.sort_values("trade_date") for code, part in history.groupby("ts_code")} \
+        if not history.empty and "trade_date" in history.columns else {}
+    for row in rows:
+        code = str(row.get("code") or "").upper()
+        frame = by_code.get(code)
+        if frame is None or frame.empty or str(frame.iloc[-1]["trade_date"]) != end:
+            report["missing_codes"].append(code)
             continue
-    return rows
+        closes = pd.to_numeric(frame["close"], errors="coerce").dropna().tolist()
+        if not closes:
+            report["missing_codes"].append(code)
+            continue
+        row["last"] = round(float(closes[-1]), 2)
+        if "pct_chg" in frame.columns:
+            pct = pd.to_numeric(pd.Series([frame.iloc[-1]["pct_chg"]]), errors="coerce").iloc[0]
+            if pd.notna(pct):
+                row["chg"] = round(float(pct), 2)
+        if len(closes) >= 6 and float(closes[-6]) != 0:
+            row["ret5"] = round((float(closes[-1]) / float(closes[-6]) - 1) * 100, 2)
+        report["covered_count"] += 1
+    report.update({"trade_date": end, "request_count": len(trade_dates),
+                   "degraded": bool(report["missing_codes"] or report["errors"])})
+    return report
 
 
 def _build_factor_table(pro, codes: list[str], end: str) -> pd.DataFrame:
@@ -307,9 +339,8 @@ def run(industries: Optional[list[str]] = None,
                         "factor_version": contract["factor_version"],
                         "schema_hash": contract["schema_hash"],
                         "weight_version": contract["weight_version"]})
-    _attach_quotes(out)
-    db.save_factor_contract(factor_contract.base_contract("stock"))
-    db.save_screening_run({
+    quote_quality = _attach_quotes(out)
+    db.save_screening_snapshot(factor_contract.base_contract("stock"), {
         "run_id": run_id, "function_name": "screen_quant", "trade_date": end,
         "factor_version": contract["factor_version"], "schema_hash": contract["schema_hash"],
         "weight_version": contract["weight_version"], "contract": contract,
@@ -330,6 +361,7 @@ def run(industries: Optional[list[str]] = None,
         "screening_run_id": run_id,
         "factor_contract": contract,
         "weights": w,
+        "quote_quality": quote_quality,
         "factor_note": "响应展示启用因子，但契约和落库快照始终保存全部因子，包括当前权重为0的候选因子。",
         "candidates": out,
         "note": "score_raw 为横截面标准化原始分；score_percentile 为0~1分位，跨样本分桶统一使用分位。",

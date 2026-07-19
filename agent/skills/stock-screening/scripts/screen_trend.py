@@ -280,8 +280,7 @@ def run(industries: Optional[list[str]] = None, top_n: int = 30) -> dict[str, An
                     "factor_version": trend_contract["factor_version"],
                     "schema_hash": trend_contract["schema_hash"],
                     "weight_version": trend_contract["weight_version"]})
-    db.save_factor_contract(factor_contract.base_contract("trend"))
-    db.save_screening_run({
+    db.save_screening_snapshot(factor_contract.base_contract("trend"), {
         "run_id": run_id, "function_name": "screen_trend", "trade_date": end,
         "factor_version": trend_contract["factor_version"],
         "schema_hash": trend_contract["schema_hash"],

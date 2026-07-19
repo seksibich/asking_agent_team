@@ -465,8 +465,7 @@ def run(weights: Optional[dict[str, float]] = None, top_n: int = 10,
         is_complete = False
 
     run_id = uuid.uuid4().hex
-    db.save_factor_contract(factor_contract.base_contract("sector"))
-    db.save_screening_run({
+    db.save_screening_snapshot(factor_contract.base_contract("sector"), {
         "run_id": run_id, "function_name": "screen_sector", "trade_date": effective_date,
         "factor_version": contract["factor_version"], "schema_hash": contract["schema_hash"],
         "weight_version": contract["weight_version"], "contract": contract,

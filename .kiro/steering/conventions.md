@@ -21,6 +21,12 @@
 - 保持功能返回统一结构 `{source, fetched_at, rows/...}`；数据接口失败要如实抛错，禁止用编造/推断兜底。
 - 移动或删除 `agent/skills/*/scripts/` 结构时，务必同步 `service/loader.py` 的扫描路径与 `Dockerfile`、`docker-compose*.yml` 的挂载/COPY 路径，改动后用 `python cli.py functions` 验证功能可加载。
 
+## 文档同步（业务改动必守）
+
+- 新增或修改业务时，必须按 `.kiro/steering/documentation.md` 同步业务说明、接口、数据口径、交易时段、fallback、测试矩阵与监控运维。
+- 新增专题文档必须加入 `doc/README.md` 和根 `README.md` 的文档入口。
+- 文档与实现不一致视为改动未完成。
+
 ## 安全
 
 - `.env` 含真实 token / Key，已 gitignore，禁止提交或在日志/回复中回显密钥值，只按变量名引用。

@@ -3,8 +3,9 @@
 > 本文把「数据服务功能」与「agent 技能 / 定时任务」双向关联，便于开发与排障时快速定位。
 > 权威功能清单以运行时 `GET /functions` 为准（含参数）；调用协议与接口可用性说明见 `doc/AGENT_SERVICE_GUIDE.md` 与 `agent/skills/data-service/SKILL.md` 分组表。功能数随注册内容自动变化，不在本文硬编码。
 
-## 零、统一业务响应与版本自检
+## 零、统一业务响应、探针与版本自检
 
+- `/live` 只判断进程存活；`/ready` 校验数据库、Tushare 配置、功能数量和模块装载，是 Docker、部署与生产流量的权威探针；`/health` 保留 Agent 诊断与版本协调结构，不作为 readiness。
 - `GET /health` 的健康与五轨版本字段位于顶层；其他已连通的业务 JSON 响应无论成功或失败，都在保留原状态码的同时携带同口径 `health`，并保留顶层 `data_version`。
 - Agent 必须先消费 `health` 并协调 `agent_doc_version`、`git_revision`、`data_version`、`selection_tag_version`、`portfolio_version`，再处理业务结果；同一目标版本元组每个任务只执行一次协调。旧服务缺少 `health` 时只补调一次 `/health`。
 - 404、405、422、未捕获 500 以及权限和业务错误均遵守该结构；静态文件、根路径重定向、文档和 OpenAPI 不在业务 JSON 封装范围。
@@ -41,8 +42,8 @@
 ### fundamental 基本面（预期驱动为主，PE 仅风险背景）
 | 功能 | 用途 | 主要 skill |
 |---|---|---|
-| fundamental_forecast | 业绩预告（前瞻预期核心，无参默认最近交易日公告） | post-market（T7 业绩池）/ 基本面分析师 |
-| fundamental_express | 业绩快报 | post-market（T7 业绩池） |
+| fundamental_forecast | 业绩预告（前瞻预期核心，无参默认最近交易日公告） | post-market（T3 业绩池）/ 基本面分析师 |
+| fundamental_express | 业绩快报 | post-market（T3 业绩池） |
 | fundamental_income / fundamental_fina_indicator | 利润表/财务指标（披露期验证、重点复核） | stock-research / 基本面分析师 |
 | fundamental_daily_basic | 个股每日指标（PE/PB，风险背景） | stock-research |
 
@@ -74,9 +75,13 @@
 | screen_trend | 趋势+行业逻辑选股 | stock-screening |
 | screen_sector | 板块轮动量化 | quant-screening |
 | watch_intraday | 用户明确请求时的单轮盘中异动扫描 | intraday-watch（禁止定时/循环） |
-| precompute_daily_factors / precompute_status | 全市场因子预计算与覆盖状态 | quant-screening（D1） |
+| precompute_daily_factors / precompute_status | 服务端 16:00 日终收口与管理员单次诊断 | quant-screening（Agent 只读状态） |
 | get_factor_config / set_factor_weights | 因子权重读/写（写=管理员，留痕） | review-learning（调参闭环） |
 | get_config_history / get_config_version / restore_config_version | 配置留痕/定位/回滚（回滚=管理员） | review-learning |
+
+### watch 服务端量化盯盘
+
+`quant_watch_status`（读取当日聚合）`quant_watch_get_config` / `quant_watch_set_config`（管理员设置）`quant_watch_scan_once`（仅用户明确要求时单次诊断）。服务端可在连续竞价自动扫描，使用数据库租约、fencing token、消息持久化和通知幂等；Agent 不轮询、不自动触发，也不把盘中结论写成正式选股或日终因子。
 
 ### research / review
 `research_build`（投研数据包）→ industry-analysis / stock-research。
@@ -88,13 +93,14 @@
 
 | 任务 | 时间 | 主用 skill | 关键数据接口 | 资讯（外部多源） |
 |---|---|---|---|---|
-| T1 盘前汇总 | 08:30 | pre-market + 全角色 | macro_ppi/cpi/pmi、price_hike_scan、screen_sector、sentiment_temperature/extreme、market_timing、hot_dc/ths/kpl_list、overseas_hk、selection_backtest；新正式 auto 候选必须来自实际 screen_quant/screen_trend 并携带 screening_run_id 后 log_selection | 新闻/时政/外盘 |
-| T6 当日总结 | 17:30 | post-market | market_index、sector_dc、market_limit/lianban、hot_dc/ths/kpl_list、sentiment_*、market_timing、money_hsgt、price_hike_scan | 新闻/公告 |
-| T7 综合复盘+选股+新预判登记+成熟历史回测+业绩池 | 22:00 | post-market + review + 选股 + 全角色 | 上述 + money_toplist、screen_sector/quant/trend、fundamental_forecast/express、先 log_prediction 登记下一交易日新预判、再 predictions_backtest 核验已成熟历史预判、selection_backtest、selection_tag_catalog→log_selection（仅正式候选） | 新闻/公告 |
+| T1 盘前汇总 | 08:30 | pre-market + 全角色 | macro_ppi/cpi/pmi、price_hike_scan、screen_sector、sentiment_temperature/extreme、market_timing、hot_dc/ths/kpl_list、overseas_hk、selection_backtest；正式 auto 候选必须来自真实 screen_quant/screen_trend 并携带 screening_run_id | 新闻/时政/外盘 |
+| T2 当日总结 | 17:30 | post-market，主 Agent 单跑 | market_index、sector_dc、market_limit/lianban、hot_dc/ths/kpl_list、sentiment_*、market_timing、money_hsgt、price_hike_scan；只读 health.daily_finalize / precompute_status | 新闻/公告 |
+| T3 综合复盘、选股与成熟回测 | 22:00 | post-market + review + 选股 + 全角色 | T2 链路 + money_toplist、screen_sector/quant/trend、fundamental_forecast/express、log_prediction、predictions_backtest、selection_backtest、selection_tag_catalog→log_selection | 新闻/公告 |
 | W1 周回测/周报 | 周日 20:00 | review + 选股 | selection_backtest、predictions_backtest、screen_*、get/set_factor_weights | — |
 | M1 月回测/月报 | 月末 21:00 | review + quant | selection_backtest、get/set_factor_weights | — |
-| D1 全市场预计算 | 交易日 17:45 | quant-screening | precompute_daily_factors（失败按 retryable_dates 重跑） | — |
 | P1 涨价链扫描 | 周六 12:00 | industry-analysis | price_hike_scan、macro_ppi | 行业价格/资讯 |
+
+> 全市场个股因子与行业评分由服务端在交易日 16:00 自动收口，不注册 Agent D1，不因状态失败自动调用 `precompute_daily_factors`。
 
 ## 三、降级二分（贯穿全部取数）
 

@@ -24,7 +24,7 @@
 
 **Key 分级（管理员 vs 用户）**：
 - **管理员 Key**（`.env` 的 `API_KEY`，向后兼容，亦可用 `ADMIN_API_KEY`）：完整权限。
-- **访客 Key**（`.env` 的 `USER_API_KEY`，可选）：可查看/选股/读情绪/查看回测结果，但**不能**修改配置、运行/查看预计算诊断，也不能搜索、读取或修改用户自选。管理员专属功能以 `/whoami.admin_only` 为准，包括 `portfolio_stock_search`、`portfolio_get`、`portfolio_upload`。
+- **访客 Key**（`.env` 的 `USER_API_KEY`，可选）：可查看/选股/读情绪/查看回测结果，但**不能**修改配置、运行/查看预计算诊断，也不能搜索、读取或修改用户自选及量化盯盘。管理员专属功能以 `/whoami.admin_only` 为准，包括 `portfolio_stock_search`、`portfolio_get`、`portfolio_upload` 和全部 `quant_watch_*` 功能。
 - 未输入 token 时，Web 界面按访客隐藏管理员入口；若服务未配置任何 Key，服务端允许只读访问。若服务已配置管理员 Key，未授权请求仍返回 `401`；管理员操作必须使用 `API_KEY` 或 `ADMIN_API_KEY`。
 - **访客 Key 动态管理**（仅管理员，独立表 `user_api_keys`）：数据库只保存高熵 Key 的 SHA-256 摘要、展示前缀、名称和状态；旧版 `config_kv.user_api_keys` 明文会在启动时迁移后删除。列表只返回掩码，完整 Key 仅创建响应返回一次：
   - `GET /admin/user-keys`：列出名称、掩码、创建时间和启停状态
@@ -108,6 +108,7 @@ Agent 侧逻辑（详见 `agent/init.md`「文档版本与同步」）：
 - 资金：`money_hsgt` `money_toplist` `money_flow_ind`
 - 涨价/宏观：`price_hike_scan` `macro_ppi` `macro_cpi` `macro_pmi`
 - 选股/手动盯盘/预计算：`screen_trend` `screen_quant` `screen_sector`（优先读取每日行业评分）`watch_intraday`（仅用户明确请求时单轮调用，禁止定时/循环）`precompute_daily_factors`（盘后同时计算个股因子与行业评分并做覆盖校验）`precompute_status`（覆盖率/失败日期/因子版本）
+- 服务端量化盯盘（仅管理员）：`quant_watch_status {limit?, trade_date?}` 读取聚合结果；`trade_date` 接受 `YYYYMMDD` 或 `YYYY-MM-DD`，省略时返回不晚于当前上海日期的最近有数据日。响应区分 `requested_trade_date`、`effective_trade_date`、`current_trade_date`、`is_historical`，并返回 `available_trade_dates`。聚合消息保留最近 30 个自然日，原始分钟快照仍只在进程内存；历史查询只读，不触发扫描，WebSocket 只推“最新/实时”模式。`quant_watch_get_config` / `quant_watch_set_config` 管理设置，`quant_watch_scan_once` 仅用于连续竞价时的管理员单次诊断。
 - 自选管理（仅管理员）：`portfolio_stock_search`（按名称或代码片段模糊搜索，添加前必须选择结果）`portfolio_get`（获取当前关注/持仓及版本）`portfolio_upload`（同代码取最新；持仓必填成本和整数手数；`deleted=true` 移除）
 - 选股标签/持久化/看板：`selection_tag_catalog`（版本化固定标签及中文说明）`log_selection`（保存按日正式选股/观察历史快照）`selection_dashboard`（查询选股并刷新可核验行情与市场标签）
   - 正式 `auto/manual` 上传字段：完整代码、同日真实 `screening_run_id`、`selected_at`、精炼 `core_event`、精炼 `reason`、`tags` 和类别；评分、排名、因子契约及依赖从筛选运行固化，调用方不得覆盖。
@@ -134,6 +135,7 @@ Agent 侧逻辑（详见 `agent/init.md`「文档版本与同步」）：
 - 选股/预判/前向收益/回测快照/每日个股因子/每日行业评分继续落原有表（DDL 见 `service/db/schema.sql`）。
 - `daily_sector_scores` 保存申万一级行业的原始因子、综合分与横截面分位；`daily_factors.factors.industry_strength` 保存个股所属行业当日分位，`_meta` 保存行业代码/名称/原始分。
 - `DB_URL` 未设=本地 SQLite（`DATA_DIR/stock_agent.db`，随卷持久化）；上云设为 RDS MySQL。
+- 量化盯盘聚合消息落库 `quant_watch_messages`，按交易日期和扫描时间查询，保留最近 30 个自然日；清理只删除截止日前记录，不重置当前调度状态。数据库不保存全市场原始分钟快照，服务重启后可恢复聚合历史，但不能重算已丢失的盘中采样序列。
 - `portfolio_upload` 在单批次按代码去重并取最后一项，数据库再按代码 upsert；相同内容为 no-op，不升级 `portfolio_version`。`selections` 的 watch/holding 只保留历史快照兼容，不作为当前持仓事实源。
 - `log_selection` 按 (日期,代码,category)、`log_prediction` 按 (日期,标的,方向) **幂等去重**；只有 auto 样本进入自动调参。
 - `log_selection` 重复上传返回 HTTP 200，`logged=true`、`inserted=false`、`duplicate=true`；`record` 保持首次固化记录，`current_quote` 明确表示本次重试刷新行情。历史版本曾在写库成功后因 `Decimal`/日期类型直接交给 JSON 响应而偶发 HTTP 500，现统一经标准编码后返回，避免“已写入但响应 500”。

@@ -29,33 +29,29 @@
   </header>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="quant">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      量化选股
-    </button>
-    <button class="tab admin-only" data-tab="quant-watch">
+    <button class="tab admin-only active" data-tab="quant-watch">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       量化盯盘
-    </button>
-    <button class="tab" data-tab="industry">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 17V9h4v8m2 0V4h4v13m2 0v-6h3v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      行业分析
-    </button>
-    <button class="tab" data-tab="selections">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      选股看板
-    </button>
-    <button class="tab admin-only" data-tab="portfolio">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v14H4zM8 3v6m8-6v6M7 13h4m-4 4h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      自选
     </button>
     <button class="tab" data-tab="sentiment">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9M12 12l5-5M3 12h2m14 0h2M12 3v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       情绪温度
     </button>
+    <button class="tab" data-tab="industry">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 17V9h4v8m2 0V4h4v13m2 0v-6h3v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      行业分析
+    </button>
+    <button class="tab" data-tab="quant">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      量化选股
+    </button>
+    <button class="tab" data-tab="selections">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      选股看板
+    </button>
     <button class="tab" data-tab="backtest">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16M8 16l3-4 3 2 4-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      回测复盘
+      回测分析
     </button>
     <button class="tab admin-only" data-tab="precompute">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16M8 4v16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -63,13 +59,13 @@
     </button>
     <button class="tab" data-tab="weights">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h6M4 18h13M18 4v6m-6 0v8m10-14v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      权重配置
+      配置管理
     </button>
   </nav>
 
   <main class="content">
     <!-- 量化选股 -->
-    <section id="tab-quant" class="panel active">
+    <section id="tab-quant" class="panel">
       <div class="card quant-hero">
         <div class="card-title-row">
           <div>
@@ -128,7 +124,7 @@
     </section>
 
     <!-- 服务端量化盯盘：只在管理员停留本页时建立 WebSocket -->
-    <section id="tab-quant-watch" class="panel admin-only quant-watch-panel">
+    <section id="tab-quant-watch" class="panel active admin-only quant-watch-panel">
       <div class="card qw-hero">
         <div class="card-title-row">
           <div>
@@ -136,7 +132,12 @@
             <div class="card-title qw-title">量化盯盘 <span id="qw-connection" class="qw-connection off">未连接</span></div>
             <p class="hint">服务端在交易日连续竞价按设置频率扫描；离开本页即断开浏览器长连接，但不会停止服务端确定性扫描。</p>
           </div>
-          <div class="qw-head-actions"><button id="qw-refresh" class="btn-ghost" type="button">刷新</button><button id="qw-scan" class="btn-primary" type="button">立即扫描</button></div>
+          <div class="qw-head-actions">
+            <label class="qw-date-control" for="qw-date">查看日期<input id="qw-date" type="date" aria-label="量化盯盘查看日期" /></label>
+            <button id="qw-latest-date" class="btn-ghost" type="button">最新</button>
+            <button id="qw-refresh" class="btn-ghost" type="button">刷新</button>
+            <button id="qw-scan" class="btn-primary" type="button">立即扫描</button>
+          </div>
         </div>
         <div class="qw-kpis">
           <div><small>运行状态</small><b id="qw-kpi-status">—</b></div>
@@ -169,15 +170,15 @@
 
       <div class="card qw-latest-card">
         <div class="card-title">最新盯盘结论 <span id="qw-meta" class="meta"></span></div>
-        <div id="qw-latest"><div class="empty">进入页面后建立长连接并加载当天结果</div></div>
+        <div id="qw-latest"><div class="empty">进入页面后加载最近有数据日；当前交易日保持实时更新</div></div>
       </div>
       <div class="card">
         <div class="card-title">板块轮动 <span class="meta">申万可用分级 · 窗口涨速与成交额</span></div>
         <div id="qw-sectors" class="table-wrap"><div class="empty">等待扫描结果</div></div>
       </div>
       <div class="card">
-        <div class="card-title">当日历史消息 <span class="meta">默认折叠，最新一条在上方展开</span></div>
-        <div id="qw-history" class="qw-history"><div class="empty">当天暂无历史消息</div></div>
+        <div class="card-title">所选日期历史消息 <span class="meta">默认折叠，最新一条在上方展开</span></div>
+        <div id="qw-history" class="qw-history"><div class="empty">所选日期暂无历史消息</div></div>
       </div>
     </section>
 
@@ -285,8 +286,9 @@
       </div>
     </section>
 
-    <!-- 管理员自选：当前关注与持仓 -->
+    <!-- 管理员自选：纳入配置管理二级入口 -->
     <section id="tab-portfolio" class="panel admin-only">
+      <div class="config-subnav"><button id="cfg-portfolio-weights" class="btn-ghost" type="button">因子权重</button><button class="btn-primary" type="button">自选管理</button></div>
       <div class="card portfolio-hero">
         <div class="card-title-row">
           <div>
@@ -443,7 +445,7 @@
       <div class="card backtest-hero">
         <div class="backtest-hero-main">
           <div>
-            <div class="card-title backtest-title">回测复盘 <span id="b-meta" class="meta"></span></div>
+            <div class="card-title backtest-title">回测分析 <span id="b-meta" class="meta"></span></div>
             <p class="hint">统一观察选股后 1 / 2 / 3 个交易日，以及 7 / 30 个自然日目标后的首个交易日。收益使用前复权行情；超额收益以同日沪深300为基准。</p>
           </div>
           <button id="b-run" class="btn-primary" type="button">
@@ -590,8 +592,9 @@
       </div>
     </section>
 
-    <!-- 权重配置 -->
+    <!-- 配置管理：因子权重与管理员自选 -->
     <section id="tab-weights" class="panel">
+      <div class="config-subnav"><button class="btn-primary" type="button">因子权重</button><button id="cfg-weights-portfolio" class="btn-ghost admin-only" type="button">自选管理</button></div>
       <div class="card">
         <div class="card-title">因子 / 指标权重配置</div>
         <p class="hint">每个模型的权重之和须为 1.0；保存时若因子列表不匹配（服务端已增改因子），会提示并自动刷新。</p>
@@ -604,7 +607,7 @@
   <div id="login-modal" class="modal login-modal">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="login-title">
       <div id="login-title" class="card-title">登录数据服务</div>
-      <p class="hint">请输入服务 Key，验证成功后才能使用量化选股、情绪温度、回测和权重配置功能。</p>
+      <p class="hint">请输入服务 Key，验证成功后才能使用量化盯盘、情绪温度、选股、回测和配置管理功能。</p>
       <div class="form-row">
         <label for="login-base">服务基址</label>
         <input id="login-base" type="text" autocomplete="url" />

@@ -81,7 +81,7 @@
 
 ### watch 服务端量化盯盘
 
-`quant_watch_status`（读取当日聚合）`quant_watch_get_config` / `quant_watch_set_config`（管理员设置）`quant_watch_scan_once`（仅用户明确要求时单次诊断）。服务端可在连续竞价自动扫描，使用数据库租约、fencing token、消息持久化和通知幂等；Agent 不轮询、不自动触发，也不把盘中结论写成正式选股或日终因子。
+`quant_watch_status`（可按日期读取最近 30 个自然日内的聚合结果；省略日期时返回最近有数据日）`quant_watch_get_config` / `quant_watch_set_config`（管理员设置）`quant_watch_scan_once`（仅用户明确要求时单次诊断）。状态响应区分请求日期、实际日期、当前上海日期和历史标记；历史读取不触发扫描。服务端可在连续竞价自动扫描，使用数据库租约、fencing token、消息持久化和通知幂等；Agent 不轮询、不自动触发，也不把盘中结论写成正式选股或日终因子。
 
 ### research / review
 `research_build`（投研数据包）→ industry-analysis / stock-research。

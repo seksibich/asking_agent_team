@@ -44,9 +44,10 @@ _FILTER_CACHE: dict[str, Any] = {}
 _FACTOR_CACHE: dict[str, Any] = {}
 _SECTOR_CACHE: dict[str, Any] = {}
 _LAST_CLEAN_DATE = ""
+_QUANT_WATCH_RETENTION_DAYS = 30
 _STATUS_CACHE_TTL = 0.5
 _STATUS_CACHE_LOCK = threading.Lock()
-_STATUS_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+_STATUS_CACHE: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 
 
 def _invalidate_status_cache() -> None:
@@ -1136,7 +1137,9 @@ def _clean_for_trade_day(clock: dict[str, Any]) -> None:
     if (clock.get("is_trading_day")
             and now.time().replace(tzinfo=None) >= datetime.strptime("09:00", "%H:%M").time()
             and _LAST_CLEAN_DATE != today):
-        db.clear_quant_watch_before(today)
+        cutoff = (datetime.strptime(today, "%Y%m%d")
+                  - timedelta(days=_QUANT_WATCH_RETENTION_DAYS)).strftime("%Y%m%d")
+        db.clear_quant_watch_before(cutoff)
         _SNAPSHOTS.clear()
         _INDEX_SNAPSHOTS.clear()
         _invalidate_status_cache()
@@ -1191,27 +1194,51 @@ def _state_with_scheduler(config: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
-def status(limit: int = 60) -> dict[str, Any]:
-    """返回量化盯盘状态；同一条数的并发读取在半秒内复用不可变快照。"""
+def _normalize_history_date(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip().replace("-", "")
+    if not text:
+        return None
+    try:
+        parsed = datetime.strptime(text, "%Y%m%d")
+    except ValueError as exc:
+        raise ParamError("trade_date 必须是 YYYYMMDD 或 YYYY-MM-DD 格式") from exc
+    normalized = parsed.strftime("%Y%m%d")
+    if normalized > common.today_str():
+        raise ParamError("trade_date 不能晚于当前上海日期")
+    return normalized
+
+
+def status(limit: int = 60, trade_date: Optional[str] = None) -> dict[str, Any]:
+    """返回指定日期或最近有数据日的量化盯盘聚合结果。"""
     effective_limit = max(1, min(int(limit), 300))
+    requested_date = _normalize_history_date(trade_date)
+    cache_key = (effective_limit, requested_date or "latest")
     now_mono = time.monotonic()
     with _STATUS_CACHE_LOCK:
-        cached = _STATUS_CACHE.get(effective_limit)
+        cached = _STATUS_CACHE.get(cache_key)
         if cached and now_mono - cached[0] < _STATUS_CACHE_TTL:
             return copy.deepcopy(cached[1])
         config = get_config()
-        today = common.today_str()
-        messages = db.fetch_quant_watch_messages(today, effective_limit)
+        current_date = common.today_str()
+        available_dates = db.fetch_quant_watch_dates(current_date, 30)
+        effective_date = requested_date or (available_dates[0] if available_dates else current_date)
+        messages = db.fetch_quant_watch_messages(effective_date, effective_limit)
         latest = messages[0]["payload"] if messages else None
         snapshot = {
             "source": "quant_watch", "fetched_at": common.now_str(),
-            "trade_date": today, "config": config,
+            "trade_date": effective_date,
+            "requested_trade_date": requested_date,
+            "effective_trade_date": effective_date,
+            "current_trade_date": current_date,
+            "is_historical": effective_date != current_date,
+            "available_trade_dates": available_dates,
+            "config": config,
             "state": _state_with_scheduler(config),
             "latest": latest, "messages": messages,
             "notification_channels": notifications.available_channels(),
-            "retention": "接口仅返回当天聚合消息；下一交易日 09:00 清理旧消息",
+            "retention": f"聚合消息保留最近 {_QUANT_WATCH_RETENTION_DAYS} 个自然日；默认展示最近有数据日",
         }
-        _STATUS_CACHE[effective_limit] = (time.monotonic(), snapshot)
+        _STATUS_CACHE[cache_key] = (time.monotonic(), snapshot)
         return copy.deepcopy(snapshot)
 
 
@@ -1283,15 +1310,16 @@ def stop() -> None:
 
 
 @register("quant_watch_status", "watch",
-          "量化盯盘当天状态与聚合消息；仅返回当日数据，下一交易日09:00清理",
-          params=[{"name": "limit", "type": "int", "required": False, "default": 60}],
-          returns="config / state / latest / messages")
+          "读取量化盯盘聚合消息；可指定历史日期，缺省时返回最近有数据日，历史保留30个自然日",
+          params=[{"name": "limit", "type": "int", "required": False, "default": 60},
+                  {"name": "trade_date", "type": "string", "required": False}],
+          returns="日期口径 / config / state / latest / messages / available_trade_dates")
 def quant_watch_status(p: dict[str, Any]) -> dict[str, Any]:
     try:
         limit = int(p.get("limit", 60))
     except (TypeError, ValueError) as exc:
         raise ParamError("limit 必须是整数") from exc
-    return status(limit)
+    return status(limit, p.get("trade_date"))
 
 
 @register("quant_watch_get_config", "watch", "读取量化盯盘设置与通知渠道配置状态",

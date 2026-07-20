@@ -77,6 +77,7 @@ async function health() {
 const ADMIN_ONLY_TABS = new Set(["portfolio", "precompute", "quant-watch"]);
 let _role = "user";
 let _authReady = false;
+let _initialTabSelected = false;
 let _selectionsLoaded = false;
 let _portfolioLoaded = false;
 let _portfolioRows = [];
@@ -173,14 +174,14 @@ function applyRoleUI() {
   document.querySelectorAll(".admin-only").forEach((el) => {
     el.classList.toggle("hidden", !admin);
   });
-  // 角色切换时若当前正停留在管理员 Tab，回到普通选股页
+  if (_authReady && !_initialTabSelected) {
+    activateTab(admin ? "quant-watch" : "sentiment");
+    _initialTabSelected = true;
+  }
+  // 角色切换时若当前正停留在管理员页，回到首个普通业务页。
   const activeTab = document.querySelector(".tab.active");
-  if (!admin && activeTab && ADMIN_ONLY_TABS.has(activeTab.dataset.tab)) {
-    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    const fallbackTab = document.querySelector('.tab[data-tab="quant"]');
-    fallbackTab?.classList.add("active");
-    $("tab-quant")?.classList.add("active");
+  if (_authReady && !admin && activeTab && ADMIN_ONLY_TABS.has(activeTab.dataset.tab)) {
+    activateTab("sentiment");
   }
   // 情绪归一窗口：访客不可修改，但仍可调整展示日期和走势天数
   const sw = $("s-window"), sws = $("s-window-save");
@@ -232,26 +233,33 @@ function applyRoleUI() {
 }
 
 /* ---------- tabs ---------- */
+function activateTab(tabName) {
+  if (!_authReady) return;
+  const button = document.querySelector(`.tab[data-tab="${tabName}"]`);
+  const panel = $("tab-" + tabName);
+  if (!button || !panel || button.classList.contains("hidden")) return;
+  if (tabName !== "quant-watch") stopQuantWatchSocket();
+  document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach((item) => item.classList.remove("active"));
+  button.classList.add("active");
+  panel.classList.add("active");
+  if (tabName === "weights") loadWeights();
+  if (tabName === "backtest") loadBacktest();
+  if (tabName === "precompute") loadPrecompute();
+  if (tabName === "quant-watch") loadQuantWatch(true);
+  // 情绪与行业均为时效敏感页面：每次进入都重新请求；情绪连续交易时段额外强刷盘中快照。
+  if (tabName === "sentiment") loadSentiment(true, true);
+  if (tabName === "industry") loadIndustry(true);
+  if (tabName === "selections") loadSelections(true);
+}
+
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     if (!_authReady) {
       openLogin("请先输入有效的服务 Key");
       return;
     }
-    if (btn.dataset.tab !== "quant-watch") stopQuantWatchSocket();
-    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    $("tab-" + btn.dataset.tab).classList.add("active");
-    if (btn.dataset.tab === "weights") loadWeights();
-    if (btn.dataset.tab === "backtest") loadBacktest();
-    if (btn.dataset.tab === "precompute") loadPrecompute();
-    if (btn.dataset.tab === "quant-watch") loadQuantWatch(true);
-    // 情绪与行业均为时效敏感页面：每次进入都重新请求；情绪连续交易时段额外强刷盘中快照。
-    if (btn.dataset.tab === "sentiment") loadSentiment(true, true);
-    if (btn.dataset.tab === "industry") loadIndustry(true);
-    if (btn.dataset.tab === "selections") loadSelections(true);
-    if (btn.dataset.tab === "portfolio") loadPortfolio();
+    activateTab(btn.dataset.tab);
   });
 });
 
@@ -350,10 +358,21 @@ $("uk-list").addEventListener("click", async (e) => {
   }
 });
 $("settings").addEventListener("click", (e) => { if (e.target.id === "settings") $("settings").classList.add("hidden"); });
+function showConfigSection(section) {
+  if (section === "portfolio" && !isAdmin()) return;
+  $("tab-weights")?.classList.toggle("active", section === "weights");
+  $("tab-portfolio")?.classList.toggle("active", section === "portfolio");
+  if (section === "weights") loadWeights();
+  if (section === "portfolio") loadPortfolio(true);
+}
+$("cfg-weights-portfolio").onclick = () => showConfigSection("portfolio");
+$("cfg-portfolio-weights").onclick = () => showConfigSection("weights");
+
 function reloadActiveTab() {
   const active = document.querySelector(".tab.active");
   const t = active && active.dataset.tab;
-  if (t === "weights") loadWeights();
+  if (t === "weights" && $("tab-portfolio")?.classList.contains("active")) loadPortfolio(true);
+  else if (t === "weights") loadWeights();
   else if (t === "backtest") loadBacktest(true);
   else if (t === "precompute") loadPrecompute(true);
   else if (t === "quant-watch") loadQuantWatch(true);
@@ -2890,9 +2909,13 @@ let _qwSocket = null;
 let _qwReconnectTimer = null;
 let _qwSocketGeneration = 0;
 let _qwConfigLoaded = false;
+let _qwRequestedTradeDate = "";
+let _qwCurrentTradeDate = "";
+let _qwLoadSequence = 0;
 
 const quantWatchActive = () => document.querySelector('.tab.active')?.dataset.tab === "quant-watch";
-const quantWatchShouldConnect = () => isAdmin() && quantWatchActive() && document.visibilityState === "visible";
+const quantWatchShouldConnect = () => isAdmin() && quantWatchActive()
+  && !_qwRequestedTradeDate && document.visibilityState === "visible";
 const splitTerms = (value) => String(value || "").replaceAll("，", ",").split(",").map((item) => item.trim()).filter(Boolean);
 const amountText = (value) => {
   const number = finiteNumber(value);
@@ -2976,12 +2999,18 @@ function renderQuantWatch(data, forceConfig = false) {
   const state = data.state || {};
   const latest = data.latest;
   const summary = latest?.market_summary || {};
+  const effectiveDate = String(data.effective_trade_date || data.trade_date || "");
+  const currentDate = String(data.current_trade_date || "");
+  const historical = Boolean(data.is_historical);
+  _qwCurrentTradeDate = currentDate;
+  if (effectiveDate.length === 8) $("qw-date").value = `${effectiveDate.slice(0, 4)}-${effectiveDate.slice(4, 6)}-${effectiveDate.slice(6, 8)}`;
+  if (currentDate.length === 8) $("qw-date").max = `${currentDate.slice(0, 4)}-${currentDate.slice(4, 6)}-${currentDate.slice(6, 8)}`;
   const stateNames = {
     running: "运行中", waiting: "等待交易时段", disabled: "已停用",
     unavailable: "服务不可用", degraded: "服务降级", error: "异常",
   };
-  $("qw-kpi-status").textContent = stateNames[state.status] || state.status || "—";
-  $("qw-kpi-time").textContent = latest?.scanned_at?.slice(11) || state.last_scan_at?.slice(11) || "—";
+  $("qw-kpi-status").textContent = historical ? "历史回看" : (stateNames[state.status] || state.status || "—");
+  $("qw-kpi-time").textContent = latest?.scanned_at?.slice(11) || (!historical ? state.last_scan_at?.slice(11) : "—") || "—";
   $("qw-kpi-count").textContent = finiteNumberText(summary.scanned_count, { digits: 0 });
   $("qw-kpi-signal").textContent = latest
     ? `${finiteNumberText(summary.qualified_count, { digits: 0 })} / ${finiteNumberText(summary.priority_alert_count, { digits: 0 })}`
@@ -3006,9 +3035,9 @@ function renderQuantWatch(data, forceConfig = false) {
       `重点标的读取异常 ${priorityErrors == null ? "待确认" : (priorityErrors.join("；") || "无")}`,
       "逐笔大单数据暂未接入",
     ];
-    if (state.last_error) qualityParts.push(`最近错误 ${state.last_error}`);
+    if (!historical && state.last_error) qualityParts.push(`最近错误 ${state.last_error}`);
     $("qw-quality").innerHTML = qualityParts.map((item) => `<span>${esc(item)}</span>`).join(" · ");
-    $("qw-meta").textContent = `${latest.scanned_at || ""} · ${finiteNumberText(latest.window_minutes, { digits: 0 })}分钟窗口 · ${latest.manual ? "手动诊断" : "自动扫描"}`;
+    $("qw-meta").textContent = `${effectiveDate || "日期待确认"} · ${latest.scanned_at || ""} · ${finiteNumberText(latest.window_minutes, { digits: 0 })}分钟窗口 · ${latest.manual ? "手动诊断" : "自动扫描"}${historical ? " · 历史数据" : ""}`;
     $("qw-latest").innerHTML = [
       qwStockTable("评分达标候选", latest.qualified, 20),
       qwStockTable("关注 / 持仓 / 近期选股异动", latest.priority_alerts, 30),
@@ -3019,9 +3048,9 @@ function renderQuantWatch(data, forceConfig = false) {
       qwStockTable("当日总成交额前二十", latest.top_total_amount, 20),
     ].join("");
   } else {
-    $("qw-quality").textContent = state.last_error ? `最近错误：${state.last_error}` : "当前交易日暂无扫描结果";
-    $("qw-meta").textContent = "";
-    $("qw-latest").innerHTML = '<div class="empty">连续竞价开始并完成首轮扫描后显示；指标预热期间会明确标注样本不足。</div>';
+    $("qw-quality").textContent = (!historical && state.last_error) ? `最近错误：${state.last_error}` : `${effectiveDate || "所选日期"}暂无扫描结果`;
+    $("qw-meta").textContent = effectiveDate ? `${effectiveDate} · 暂无数据` : "";
+    $("qw-latest").innerHTML = '<div class="empty">所选日期没有可展示的聚合消息；切换日期或点击「最新」查看最近有数据日。</div>';
   }
   renderQuantWatchSectors(latest);
   const history = (data.messages || []).slice(latest ? 1 : 0);
@@ -3029,7 +3058,7 @@ function renderQuantWatch(data, forceConfig = false) {
     const payload = item.payload || {};
     const s = payload.market_summary || {};
     return `<details class="qw-history-item"><summary><b>${esc(item.scanned_at || "—")}</b><span>扫描 ${finiteNumberText(s.scanned_count, { digits: 0 })} · 达标 ${finiteNumberText(s.qualified_count, { digits: 0 })} · 优先异动 ${finiteNumberText(s.priority_alert_count, { digits: 0 })}</span></summary><div>${qwStockTable("当轮达标", payload.qualified, 12)}${qwStockTable("当轮优先异动", payload.priority_alerts, 12)}</div></details>`;
-  }).join("") : '<div class="empty">当天暂无更早消息</div>';
+  }).join("") : '<div class="empty">所选日期暂无更早消息</div>';
 }
 
 function renderQuantWatchLoadFailure(error) {
@@ -3067,7 +3096,7 @@ async function connectQuantWatchSocket() {
       badge.textContent = "实时连接"; badge.className = "qw-connection on";
     };
     socket.onmessage = (event) => {
-      if (socket !== _qwSocket) return;
+      if (socket !== _qwSocket || _qwRequestedTradeDate) return;
       try { const message = JSON.parse(event.data); if (message.data) renderQuantWatch(message.data); } catch (error) { /* 忽略单条格式异常 */ }
     };
     socket.onerror = () => { if (socket === _qwSocket) { badge.textContent = "连接异常"; badge.className = "qw-connection bad"; } };
@@ -3086,21 +3115,25 @@ async function connectQuantWatchSocket() {
 
 async function loadQuantWatch(force = false) {
   if (!isAdmin()) return;
+  const sequence = ++_qwLoadSequence;
   const refreshButton = $("qw-refresh");
   if (force) { refreshButton.disabled = true; refreshButton.textContent = "刷新中…"; }
   try {
-    const data = await call("quant_watch_status", { limit: 100 });
+    const params = { limit: 100 };
+    if (_qwRequestedTradeDate) params.trade_date = _qwRequestedTradeDate;
+    const data = await call("quant_watch_status", params);
+    if (sequence !== _qwLoadSequence) return;
     renderQuantWatch(data, force || !_qwConfigLoaded);
     if (quantWatchShouldConnect()) {
       if (!_qwSocket || _qwSocket.readyState > WebSocket.OPEN) connectQuantWatchSocket();
     } else {
       stopQuantWatchSocket();
     }
-    if (force) toast("盯盘状态已更新", "ok");
+    if (force) toast(data.is_historical ? "历史盯盘数据已更新" : "盯盘状态已更新", "ok");
   } catch (error) {
-    renderQuantWatchLoadFailure(error);
+    if (sequence === _qwLoadSequence) renderQuantWatchLoadFailure(error);
   } finally {
-    if (force) { refreshButton.disabled = false; refreshButton.textContent = "刷新"; }
+    if (force && sequence === _qwLoadSequence) { refreshButton.disabled = false; refreshButton.textContent = "刷新"; }
   }
 }
 
@@ -3133,12 +3166,26 @@ async function saveQuantWatchConfig() {
   }
 }
 
+$("qw-date").onchange = () => {
+  _qwRequestedTradeDate = String($("qw-date").value || "").replaceAll("-", "");
+  stopQuantWatchSocket();
+  loadQuantWatch(true);
+};
+$("qw-latest-date").onclick = () => {
+  _qwRequestedTradeDate = "";
+  loadQuantWatch(true);
+};
 $("qw-refresh").onclick = () => loadQuantWatch(true);
 $("qw-save").onclick = saveQuantWatchConfig;
 $("qw-scan").onclick = async () => {
   const button = $("qw-scan");
   button.disabled = true; button.textContent = "扫描中…";
-  try { await call("quant_watch_scan_once", {}); await loadQuantWatch(true); toast("手动扫描完成", "ok"); }
+  try {
+    await call("quant_watch_scan_once", {});
+    _qwRequestedTradeDate = "";
+    await loadQuantWatch(true);
+    toast("手动扫描完成", "ok");
+  }
   catch (error) { toast("扫描失败：" + error.message, "bad"); }
   finally { button.disabled = false; button.textContent = "立即扫描"; }
 };

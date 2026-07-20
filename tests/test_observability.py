@@ -43,9 +43,11 @@ class ObservabilityTest(unittest.TestCase):
 
     def test普通四百状态只计业务拒绝(self):
         with tempfile.TemporaryDirectory() as directory:
+            now = datetime(2026, 7, 19, 22, 50, tzinfo=ZoneInfo("Asia/Shanghai"))
             log_root = Path(directory) / "logs" / "monitor"
             with patch.object(observability, "LOG_ROOT", log_root), \
-                    patch.object(observability.common, "DATA_DIR", Path(directory)):
+                    patch.object(observability.common, "DATA_DIR", Path(directory)), \
+                    patch.object(observability, "_now", return_value=now):
                 observability.record_http("/whoami", None, 401, 10.0)
                 observability.record_http("/missing", None, 404, 12.0)
                 result = observability.build_daily_summary("20260719")

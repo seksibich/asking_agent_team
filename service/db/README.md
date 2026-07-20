@@ -5,7 +5,7 @@
 - `selections.jsonl` —— `log_selection` 登记的每条选股（auto/watch/holding）
 - `predictions.jsonl` —— 每日预判
 
-回测「结果」由 `selection_backtest` / `predictions_backtest` 每次实时计算（读 JSONL + 拉 tushare 前向行情）。前端「回测复盘」页直接调用这两个功能，无需数据库即可可视化。
+回测「结果」由 `selection_backtest` / `predictions_backtest` 每次实时计算（读 JSONL + 拉 tushare 前向行情）。前端「回测分析」页直接调用这两个功能，无需数据库即可可视化。
 
 ## 为什么上数据库
 JSONL 适合单机小规模，但上云后有三个痛点：

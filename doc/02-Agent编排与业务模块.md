@@ -51,7 +51,7 @@ sequenceDiagram
   participant I as 服务实例
   participant DB as 数据库租约
   participant Q as 行情与评分
-  participant M as 当日聚合消息
+  participant M as 30日聚合消息
   participant N as 通知渠道
   I->>DB: 认领租约并取得 fencing token
   I->>Q: 批量扫描与质量门禁

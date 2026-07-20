@@ -31,6 +31,27 @@
 
 ## 版本记录（最新在上）
 
+### v2.4.2 — 2026-07-21（量化盯盘历史回看与默认入口调整）
+
+- **摘要**：修复量化盯盘跨自然日后无法查看上一交易日数据的问题；聚合消息改为保留最近 30 个自然日，接口支持指定日期并在缺省时返回最近有数据日。前端增加历史日期切换和“最新”实时模式，历史页不接收 WebSocket 覆盖；管理员默认进入量化盯盘，并按“盯盘→情绪→行业→选股→看板→回测→预计算→配置”重排主入口，自选管理并入配置二级入口。
+- **对应 git commit**：待提交。
+- **变更文件清单（Agent 相关）**：
+  - `agent/init.md`
+  - `agent/skills/data-service/SKILL.md`
+  - `doc/01-系统全景与审查结论.md`
+  - `doc/02-Agent编排与业务模块.md`
+  - `doc/03-前端业务与全时段规则.md`
+  - `doc/04-数据存储缓存与一致性.md`
+  - `doc/05-测试探针监控与运维.md`
+  - `doc/AGENT_SERVICE_GUIDE.md`
+  - `doc/SERVICE_INDEX.md`
+  - `profile/CHANGELOG-AGENT.md`
+- **服务、前端与测试配套（非 Agent 文档）**：`service/quant_watch.py`、`service/db.py`、`service/db/schema.sql`、`service/db/README.md`、`service/web/index.html`、`service/web/app.js`、`service/web/style.css`、`tests/test_observability.py`。
+- **Agent 动作**：
+  1. 用户要求盘中或历史盯盘分析时，可单次调用 `quant_watch_status` 并传入目标日期；不传日期时接受服务端返回的最近有数据日。
+  2. 必须区分请求日期、实际返回日期、当前上海日期和历史标记；无数据时如实披露，不用其他日期结果冒充。
+  3. 历史查询仍不构成自动扫描、轮询或主动通知授权，盘中聚合也不得写成完整日因子、正式选股或预测。
+
 ### v2.4.1 — 2026-07-19（监控降噪、日志生命周期与部署配置收口）
 
 - **摘要**：将普通 4xx 业务拒绝与 408/429/5xx 服务故障分开统计，避免监控误报；为审计与监控日志增加默认 90 日保留、7 日后 gzip 压缩、调查冻结开关和磁盘双阈值告警；部署完成地址改由 `PUBLIC_BASE_URL` 配置；服务指南中的日期、功能数和版本改为动态占位示例。

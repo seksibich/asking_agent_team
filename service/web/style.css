@@ -628,3 +628,10 @@ details.selection-item.leader{border-left:4px solid #ef4444;background:linear-gr
 .refresh-progress::before{content:"";width:10px;height:10px;border:2px solid #cbd9fc;border-top-color:var(--brand);border-radius:50%;animation:refresh-spin .8s linear infinite}
 @keyframes refresh-spin{to{transform:rotate(360deg)}}
 .portfolio-form-grid{grid-template-columns:150px 150px 150px}
+
+/* 盯盘历史日期与配置二级入口 */
+.qw-head-actions{display:flex;align-items:flex-end;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.qw-date-control{display:flex;flex-direction:column;gap:4px;color:var(--sub);font-size:11px;font-weight:600}
+.qw-date-control input{min-width:138px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+.config-subnav{display:flex;justify-content:flex-end;gap:8px;margin:0 0 12px}
+@media(max-width:640px){.qw-head-actions{justify-content:flex-start}.qw-date-control{width:100%}.qw-date-control input{width:100%}.config-subnav{justify-content:flex-start}}

@@ -349,7 +349,7 @@ CREATE TABLE IF NOT EXISTS daily_sentiment (
 -- VALUES ('selection', NOW(), CAST('{"total_selections":42}' AS JSON));
 
 
--- ---------- 量化盯盘：跨实例租约、票据、通知幂等与当日聚合消息 ----------
+-- ---------- 量化盯盘：跨实例租约、票据、通知幂等与短期历史聚合消息 ----------
 CREATE TABLE IF NOT EXISTS quant_watch_state (
   task_key       VARCHAR(32)  NOT NULL COMMENT '固定 quant_watch，全服务唯一',
   owner_id       VARCHAR(64)  NULL COMMENT '当前扫描实例，不对外返回',
@@ -379,7 +379,7 @@ CREATE TABLE IF NOT EXISTS quant_watch_messages (
   created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (message_id),
   KEY idx_qwm_date_time (trade_date, scanned_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='量化盯盘当日聚合消息，不保存原始分钟快照';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='量化盯盘聚合消息保留30个自然日，不保存原始分钟快照';
 
 CREATE TABLE IF NOT EXISTS quant_watch_tickets (
   ticket_hash CHAR(64)    NOT NULL COMMENT '原始票据的 SHA-256 摘要',

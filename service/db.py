@@ -2310,22 +2310,24 @@ def fetch_quant_watch_messages(trade_date: str, limit: int = 60) -> list[dict[st
     return result
 
 
-def clear_quant_watch_before(trade_date: str) -> int:
-    """下一交易日 09:00 删除更早聚合消息，并在无活跃租约时清空旧日指针。"""
+def fetch_quant_watch_dates(on_or_before: str, limit: int = 30) -> list[str]:
+    """返回不晚于指定日期且实际有聚合消息的日期，按新到旧排列。"""
     eng = get_engine()
-    now = datetime.now()
+    stmt = (select(quant_watch_messages.c.trade_date)
+            .where(quant_watch_messages.c.trade_date <= str(on_or_before))
+            .group_by(quant_watch_messages.c.trade_date)
+            .order_by(quant_watch_messages.c.trade_date.desc())
+            .limit(max(1, min(int(limit), 366))))
+    with eng.connect() as conn:
+        return [str(value) for value in conn.execute(stmt).scalars().all()]
+
+
+def clear_quant_watch_before(cutoff_date: str) -> int:
+    """删除保留截止日之前的聚合消息和通知事件；不影响截止日及之后数据。"""
+    eng = get_engine()
     with eng.begin() as conn:
         result = conn.execute(quant_watch_messages.delete().where(
-            quant_watch_messages.c.trade_date < str(trade_date)))
+            quant_watch_messages.c.trade_date < str(cutoff_date)))
         conn.execute(quant_watch_notification_events.delete().where(
-            quant_watch_notification_events.c.trade_date < str(trade_date)))
-        conn.execute(quant_watch_state.update().where(
-            quant_watch_state.c.task_key == "quant_watch",
-            quant_watch_state.c.trade_date < str(trade_date),
-            quant_watch_state.c.owner_id.is_(None)
-            | quant_watch_state.c.lease_until.is_(None)
-            | (quant_watch_state.c.lease_until <= now),
-        ).values(last_message_id=None, last_scan_at=None, last_error=None,
-                 next_scan_at=None, status="waiting", trade_date=str(trade_date),
-                 heartbeat_at=now))
+            quant_watch_notification_events.c.trade_date < str(cutoff_date)))
     return int(result.rowcount or 0)

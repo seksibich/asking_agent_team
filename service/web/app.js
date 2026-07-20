@@ -77,7 +77,6 @@ async function health() {
 const ADMIN_ONLY_TABS = new Set(["portfolio", "precompute", "quant-watch"]);
 let _role = "user";
 let _authReady = false;
-let _initialTabSelected = false;
 let _selectionsLoaded = false;
 let _portfolioLoaded = false;
 let _portfolioRows = [];
@@ -130,7 +129,7 @@ async function login() {
     _authReady = true;
     $("login-modal").classList.add("hidden");
     setAppLocked(false);
-    applyRoleUI();
+    applyRoleUI(true);
     toast(`登录成功：${isAdmin() ? "管理员" : "访客"}`, "ok");
   } catch (e) {
     _authReady = false;
@@ -143,7 +142,7 @@ async function login() {
   }
 }
 
-async function refreshRole() {
+async function refreshRole(selectDefault = false) {
   try {
     const res = await fetch(cfg.base.replace(/\/$/, "") + "/whoami", {
       headers: { "X-API-Key": cfg.key },
@@ -163,20 +162,19 @@ async function refreshRole() {
   }
   setAppLocked(!_authReady);
   if (_authReady) $("login-modal").classList.add("hidden");
-  applyRoleUI();
+  applyRoleUI(selectDefault);
   if (!_authReady) openLogin("Key 无效或服务不可用，请重新输入");
   return _role;
 }
 
 // 依据角色隐藏管理员入口，并保留服务端鉴权作为最终安全边界
-function applyRoleUI() {
+function applyRoleUI(selectDefault = false) {
   const admin = isAdmin();
   document.querySelectorAll(".admin-only").forEach((el) => {
     el.classList.toggle("hidden", !admin);
   });
-  if (_authReady && !_initialTabSelected) {
+  if (_authReady && selectDefault) {
     activateTab(admin ? "quant-watch" : "sentiment");
-    _initialTabSelected = true;
   }
   // 角色切换时若当前正停留在管理员页，回到首个普通业务页。
   const activeTab = document.querySelector(".tab.active");
@@ -3204,5 +3202,5 @@ applyRoleUI();
 if (!cfg.key) {
   openLogin("请输入服务 Key 后继续");
 } else {
-  refreshRole();
+  refreshRole(true);
 }

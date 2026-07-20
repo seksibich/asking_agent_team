@@ -387,6 +387,9 @@ async def audit_http_requests(request: Request, call_next):
             request.url.path, getattr(request.state, "function", None), 500, duration_ms)
         raise
     response.headers["X-Request-ID"] = request_id
+    if request.url.path.startswith("/ui"):
+        # 静态前端每次导航均向服务端重验证，避免发布后沿用旧 HTML/JS 默认页逻辑。
+        response.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
     if _should_audit_path(request.url.path):
         role = getattr(request.state, "role", None)
         if role is None:

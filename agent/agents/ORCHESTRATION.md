@@ -82,11 +82,15 @@
 
 << 收集全部意见（超时 5 分钟的子 Agent 标 [超时] 跳过）
 
->> 正式选股：
-   · screen_sector → screen_trend/screen_quant(top_n=50) → 四维与择时复核
+>> 正式选股（热点 → 申万分级行业 → 行业内量化，禁止无差别全市场机械筛选）：
+   · 先定位当日热点主线 → 映射申万一级/二级/三级行业 → screen_sector 确认行业强度
+   · screen_trend/screen_quant(top_n=50) 通过 industries 传入定位到的申万分级行业在行业内量化 → 四维与择时复核
    · 每只输出完整理由链：量化信号 → 板块趋势 → 当前主线关系 →
      涨价/逻辑/预期催化 → 情绪与择时 → 风险/证伪
-   · 缺环写“无可核验证据”；正式候选才可 log_selection(category=auto)
+   · 缺环写“无可核验证据”；正式候选逐只 log_selection(category=auto) 上传服务端，
+     携带 screening_run_id、selected_at、core_event、写清受益逻辑的 reason、按“题材→细分→事件→固定属性”的 tags；报告正文写明逐只选股理由
+
+>> 任务收尾：清理 tmp/ 中子 Agent 中间产物与草稿；只保留最终报告与规则允许的业务快照（daily、log_selection、predictions、学习日志）
 
 >> 业绩增长参考池（独立支线）：
    · 实际公告日期/接口返回优先；最近3个交易日有新预告/快报/公告也触发

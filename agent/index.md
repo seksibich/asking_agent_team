@@ -14,7 +14,7 @@
 3. **读取分层记忆**：固定读取运行期 `MEMORY.md`、`USER.md` 与 `服务状态与能力.md`；只有涉及关注/持仓时读取 `关注与持仓.md`；只读取与当前任务相关且未过期的 `短期记忆/` 条目；daily 仅在盘前、盯盘、复盘或回测时读取。
 4. 校验数据服务：刷新 health；除 `portfolio_version` 外的版本和状态写入 `服务状态与能力.md`。功能版本变化或本地版本为空时刷新 `/functions`，标签版本变化或本地版本为空时刷新标签目录；涉及持仓且版本变化或本地持仓版本为空时调用 `portfolio_get` 全量覆盖 `关注与持仓.md`。
 5. 清理短期记忆：完成、证伪或过期条目及其全部关联附件立即删除；禁止把进度、问题、待办或业务内容转写主 MEMORY 或 USER。
-6. **完整读取固定 12 个 Skills 的正文**：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research` 对应的 `skills/<name>/SKILL.md`。
+6. **先把固定 12 个 Skills 落地工作目录（`盯盘/skills/`，Coze 左侧 `skills/`）再完整读取正文**：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research` 对应的 `skills/<name>/SKILL.md`；技能缓存是工作产物不进记忆，文档版本变化时先刷新缓存。
 7. 判定任务类型并按 `agents/TEAM.md` 执行；若为定时任务，再按 `schedule.md` 执行。
 
 > 只要涉及取数、分析、选股、盯盘、复盘，上述 1~5 必须先完成，禁止直接凭记忆或臆测作答。
@@ -129,7 +129,7 @@
 
 ## 6. 选股回测（闭环）
 
-- **自动选股**（量化+消息面+热度跑出）→ 先读取 `selection_tag_catalog`，再以规范字段调用 `log_selection(category=auto)`（用于自动回测与因子调参）：完整代码、同日 `screening_run_id`、`selected_at`、精炼 `core_event`、精炼 `reason`、按“题材→细分→事件→固定属性”排序的 `tags`。
+- **自动选股**（量化+消息面+热度跑出）→ 必须先定位当日热点主线并映射申万一级/二级/三级行业，用 `screen_sector` 确认行业强度，再在 `screen_quant`/`screen_trend` 传入对应 `industries` 在行业内量化（**禁止无差别全市场机械筛选**）；跑出候选后先读取 `selection_tag_catalog`，再以规范字段调用 `log_selection(category=auto)` 上传服务端（用于自动回测与因子调参）：完整代码、同日 `screening_run_id`、`selected_at`、精炼 `core_event`、写清受益逻辑的 `reason`、按“题材→细分→事件→固定属性”排序的 `tags`；报告正文写明逐只选股理由。
 - **用户触发正式选股**（明确要求筛选/推荐候选，且通过完整题材→强势股→量化→理由链流程）→ 同样规范调用 `log_selection(category=manual)`；评分、排名、因子版本和依赖由服务端筛选运行提供，仅隔离回测。
 - **用户关注/持仓当前状态** → 先 `portfolio_stock_search` 确认股票，再 `portfolio_upload(type=watch|holding)`；持仓必填成本和整数手数。`portfolio_get` 是当前事实源。
 - **历史观察回测（可选）** → 用户明确要求时，额外 `log_selection(category=watch|holding)`；该快照不承担当前持仓状态。
@@ -150,7 +150,7 @@
 ## 9. v1.2.0 报告、候选与业绩池运行期硬约束
 
 1. **详尽报告、精简推送**：T1/T2/T3 报告固定按“一眼结论（核心摘要）→目录导读→详细正文”；标题后首屏先给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。动态题材综合消息面、热榜、涨停连板、量能资金识别，不限传统板块。数据缺失时章节不删除，须写失败接口、fallback、实际日期与缺失字段。
-2. **面向用户必须说人话**：报告首屏、结论、正文、推送和表头统一使用通俗中文，直接说明“发生了什么、影响谁、为何关注、何时失效”；不得堆砌英文接口名、参数名、JSON 字段、内部类别或因子代码。技术名称只允许出现在数据来源附录、故障诊断或用户明确要求的参数说明中，并紧邻中文解释。
+2. **面向用户必须说人话、结论前置、不暴露过程**：报告首屏、结论、正文、推送和表头统一使用通俗中文，直接说明“发生了什么、影响谁、为何关注、何时失效”；不得堆砌英文接口名、参数名、JSON 字段、内部类别或因子代码，也不得输出非结论性思考过程、推理独白、子 Agent 原始意见或逐接口原始返回。复盘/研报/选股类报告一眼结论严格按用户视角前置：①今天市场发生了什么→②板块行情与大环境（板块强度/轮动、择时顺势仓位）→③明天该关注哪些股票（短线+趋势核心股、热点龙头、事件受益股）→④综合量化/择时/趋势/热点/短线选股结果与理由。技术名称只允许出现在数据来源附录、故障诊断或用户明确要求的参数说明中，并紧邻中文解释。
 3. **正式候选不能只报分数**：量化/趋势候选逐只执行 `skills/output-format/SKILL.md` 的「正式候选综合理由表」，固定理由链为“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”；没有证据的环节写“无可核验证据”。
 4. **T3 业绩增长参考池**：实际公告日期/接口返回优先判断窗口，基本面分析师调用 `fundamental_forecast`、`fundamental_express`（公司公告改由外部财经平台多源核验），必要时 `fundamental_income`、`fundamental_fina_indicator` 复核；正向公告按 `code+report_period+announcement_date` 去重并全量展示真实字段，无数据写“当晚无可核验的增长/预增公告”。
 5. **参考池隔离**：不调用 `log_selection`，不写 `predictions.jsonl` 或创建短期事项，不纳入选股类别、回测与调参。

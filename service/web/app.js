@@ -75,6 +75,11 @@ async function health() {
 /* ---------- 角色 / 权限（管理员 vs 用户） ---------- */
 // 未通过 Key 验证前禁止调用功能，服务端鉴权作为最终安全边界
 const ADMIN_ONLY_TABS = new Set(["portfolio", "precompute", "quant-watch"]);
+// 临时开关：禁用前端「量化盯盘」页（隐藏入口+面板、改默认落地页、不建 WebSocket）。
+// 恢复时把此项改回 false 即可；服务端确定性扫描与接口不受影响。
+const QUANT_WATCH_DISABLED = true;
+// 管理员默认落地页：盯盘禁用时回退到情绪页（全角色可用）
+const ADMIN_DEFAULT_TAB = QUANT_WATCH_DISABLED ? "sentiment" : "quant-watch";
 let _role = "user";
 let _authReady = false;
 let _selectionsLoaded = false;
@@ -173,8 +178,14 @@ function applyRoleUI(selectDefault = false) {
   document.querySelectorAll(".admin-only").forEach((el) => {
     el.classList.toggle("hidden", !admin);
   });
+  // 临时禁用「量化盯盘」：无论角色，强制隐藏入口与面板并断开长连接（覆盖 admin-only 的显示）
+  if (QUANT_WATCH_DISABLED) {
+    stopQuantWatchSocket();
+    document.querySelectorAll('.tab[data-tab="quant-watch"], #tab-quant-watch')
+      .forEach((el) => el.classList.add("hidden"));
+  }
   if (_authReady && selectDefault) {
-    activateTab(admin ? "quant-watch" : "sentiment");
+    activateTab(admin ? ADMIN_DEFAULT_TAB : "sentiment");
   }
   // 角色切换时若当前正停留在管理员页，回到首个普通业务页。
   const activeTab = document.querySelector(".tab.active");
@@ -3112,6 +3123,7 @@ async function connectQuantWatchSocket() {
 }
 
 async function loadQuantWatch(force = false) {
+  if (QUANT_WATCH_DISABLED) return;   // 临时禁用前端量化盯盘：不建连、不取数
   if (!isAdmin()) return;
   const sequence = ++_qwLoadSequence;
   const refreshButton = $("qw-refresh");

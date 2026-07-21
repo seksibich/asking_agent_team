@@ -1225,6 +1225,37 @@ def claim_precompute_job(job_id: str, params: dict[str, Any],
     return started, job
 
 
+def reap_stale_precompute_jobs(stale_after_minutes: int = 10) -> int:
+    """独立回收心跳超时的活跃预计算任务（进程异常退出/被杀留下的僵尸任务）。
+
+    与 `claim_precompute_job` 内联回收同口径，但不认领新任务，供启动自检和周期巡检调用，
+    使僵尸任务无需等到下一次预计算调用即可自愈。`stale_after_minutes<=0` 表示回收全部活跃
+    任务（仅用于单实例启动自检：新进程内不可能存在在跑的预计算线程）。返回回收条数。
+    """
+    eng = get_engine()
+    now = datetime.now()
+    conditions = [
+        precompute_jobs.c.task_key == PRECOMPUTE_TASK_KEY,
+        precompute_jobs.c.status.in_(ACTIVE_PRECOMPUTE_STATUSES),
+    ]
+    if stale_after_minutes > 0:
+        conditions.append(
+            precompute_jobs.c.heartbeat_at < now - timedelta(minutes=stale_after_minutes))
+        reason = f"预计算任务超过 {stale_after_minutes} 分钟没有心跳，已自动释放"
+    else:
+        reason = "服务重启时发现无归属的活跃预计算任务，已自动释放"
+    with eng.begin() as conn:
+        result = conn.execute(precompute_jobs.update().where(*conditions).values(
+            status="failed",
+            stage="任务中断",
+            message="任务心跳超时或进程已退出，自愈机制已自动释放",
+            error=reason,
+            heartbeat_at=now,
+            finished_at=now,
+        ))
+    return int(result.rowcount or 0)
+
+
 def update_precompute_job(job_id: str, **changes: Any) -> bool:
     """仅允许任务持有者更新状态，防止旧 worker 覆盖后续任务。"""
     allowed = {

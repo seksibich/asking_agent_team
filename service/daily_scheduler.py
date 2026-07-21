@@ -170,6 +170,14 @@ def _tick() -> None:
 
 def _loop() -> None:
     while not _STOP.is_set():
+        # 自愈③：每轮先回收心跳超时的僵尸预计算任务（覆盖硬崩溃/OOM 未走优雅停止的情况），
+        # 不受市场阶段限制，使僵尸任务无需等到下一个 final 阶段或手动触发即可在超时后自愈。
+        try:
+            reaped = db.reap_stale_precompute_jobs(_TASK_STALE_MINUTES)
+            if reaped:
+                print(f"[daily-finalize] reaped {reaped} stale precompute job(s)")
+        except Exception:
+            pass
         try:
             _tick()
         except Exception as exc:  # 调度循环不能影响主服务。

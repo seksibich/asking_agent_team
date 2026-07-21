@@ -293,6 +293,15 @@ def _startup() -> None:
         _DB_INIT_ERROR = f"{type(exc).__name__}: {exc}"[:500]
         print(f"[startup] db init skipped: {exc}")
     imported = loader.discover()
+    # 自愈①：新进程内不可能存在在跑的预计算线程，回收上次进程被杀留下的活跃僵尸任务，
+    # 避免其一直显示 running 并占用全局单例（单实例部署；多 worker 需收敛到单进程执行）。
+    if _DB_READY:
+        try:
+            reaped = db.reap_stale_precompute_jobs(0)
+            if reaped:
+                print(f"[startup] reaped {reaped} orphaned precompute job(s)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[startup] precompute reap skipped: {exc}")
     try:
         import daily_scheduler
         daily_scheduler.start()
@@ -328,6 +337,12 @@ async def _shutdown() -> None:
     try:
         import daily_scheduler
         await asyncio.to_thread(daily_scheduler.stop)
+    except Exception:
+        pass
+    # 自愈②：优雅停止时把本进程仍在跑的预计算任务标记为中断，避免部署重启留下僵尸 running 记录。
+    try:
+        import precompute
+        await asyncio.to_thread(precompute.abort_active_job, "服务停止，预计算被中断")
     except Exception:
         pass
 

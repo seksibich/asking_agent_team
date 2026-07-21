@@ -33,6 +33,34 @@ SECTOR_CONTRACT = factor_contract.base_contract("sector")
 LOOKBACK_DEFAULT = 260
 MIN_COVERAGE_RATIO = 0.80
 
+# 本进程当前在跑的预计算任务 id；用于服务优雅停止时把在跑任务标记为中断（自愈机制之一）。
+_ACTIVE_JOB_ID: Optional[str] = None
+_ACTIVE_JOB_LOCK = threading.Lock()
+
+
+def abort_active_job(reason: str = "服务停止，预计算被中断") -> bool:
+    """服务优雅停止时调用：把本进程仍持有的在跑预计算任务标记为失败，避免留下僵尸 running 记录。
+
+    只处理本进程认领且仍活跃的任务（栅栏校验），多实例安全；无在跑任务时返回 False。
+    """
+    global _ACTIVE_JOB_ID
+    with _ACTIVE_JOB_LOCK:
+        job_id = _ACTIVE_JOB_ID
+    if not job_id:
+        return False
+    try:
+        if not db.precompute_job_owned(job_id):
+            return False
+        ok = db.update_precompute_job(
+            job_id, status="failed", stage="任务中断",
+            message=reason, error=reason, finished_at=datetime.now())
+    except Exception:
+        return False
+    with _ACTIVE_JOB_LOCK:
+        if _ACTIVE_JOB_ID == job_id:
+            _ACTIVE_JOB_ID = None
+    return bool(ok)
+
 
 def _trade_dates(pro, end: str, n: int) -> list[str]:
     """通过交易所日历返回截至 end 的最近 n 个交易日（升序）。"""
@@ -529,6 +557,9 @@ def _execute_precompute(p: dict, notify: Callable[..., bool], job_id: str) -> di
 
 def _run_precompute_job(job_id: str, params: dict[str, Any]) -> None:
     """后台线程入口；任何异常都会把唯一任务可靠地落为失败终态。"""
+    global _ACTIVE_JOB_ID
+    with _ACTIVE_JOB_LOCK:
+        _ACTIVE_JOB_ID = job_id
     db.update_precompute_job(job_id, status="running", stage="启动任务",
                              message="后台预计算已启动")
     try:
@@ -549,6 +580,10 @@ def _run_precompute_job(job_id: str, params: dict[str, Any]) -> None:
         db.update_precompute_job(
             job_id, status="failed", stage="任务异常", message="后台预计算执行失败",
             error=_error_text(exc), finished_at=datetime.now())
+    finally:
+        with _ACTIVE_JOB_LOCK:
+            if _ACTIVE_JOB_ID == job_id:
+                _ACTIVE_JOB_ID = None
 
 
 @register("precompute_daily_factors", "screening",

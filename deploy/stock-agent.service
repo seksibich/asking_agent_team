@@ -17,6 +17,12 @@ RestartSec=3
 # 优雅停止，给 uvicorn 时间释放端口
 KillSignal=SIGINT
 TimeoutStopSec=15
+# ---- 内存护栏（由 remote_deploy.sh 按总内存渲染，可用 MEMORY_MAX/MEMORY_HIGH 覆盖）----
+# MemoryHigh：软上限，超过后内核对本服务施压回收；MemoryMax：硬上限，超过即在本 cgroup
+# 内 OOM，只杀本服务、随后 Restart=on-failure 自动拉起，避免拖垮整机与 SSH。
+MemoryHigh=__MEMORY_HIGH__
+MemoryMax=__MEMORY_MAX__
+OOMPolicy=kill
 
 [Install]
 WantedBy=multi-user.target

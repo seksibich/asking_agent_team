@@ -8,12 +8,20 @@ import json
 import os
 import time
 import hashlib
+import threading
 from datetime import datetime, date, timedelta, time as clock_time
 from pathlib import Path
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
+from requests.adapters import HTTPAdapter
+
+try:
+    from urllib3.util.retry import Retry
+except ImportError:  # pragma: no cover - urllib3 随 requests 提供，兜底不重试
+    Retry = None  # type: ignore
 
 try:
     import tushare as ts
@@ -44,6 +52,50 @@ def get_pro() -> Any:
     ts.set_token(TUSHARE_TOKEN)
     _pro_cache = ts.pro_api()
     return _pro_cache
+
+
+# ---- 共享 HTTP 会话（连接复用 + keep-alive + 连接池 + 有限重试） ----
+# 盯盘每 ~60s 拉全市场行情（如新浪分页约 70 次请求、8 并发），若每次新建 TCP+TLS
+# 连接会显著增加单轮延迟。共享 Session 复用连接、维持 keep-alive，稳定降低延迟与握手开销。
+_session_cache: Optional[requests.Session] = None
+_session_lock = threading.Lock()
+
+_HTTP_POOL_SIZE = int(os.getenv("HTTP_POOL_MAXSIZE", "16"))
+_HTTP_RETRY_TOTAL = int(os.getenv("HTTP_RETRY_TOTAL", "1"))
+
+
+def get_session() -> requests.Session:
+    """返回全局共享的 requests.Session（单例，线程安全地按需创建）。
+
+    - 连接池：`pool_maxsize` 覆盖盯盘分页并发（默认 16，可用 HTTP_POOL_MAXSIZE 调整）。
+    - keep-alive：默认开启，跨请求/跨轮次复用到同一主机的连接。
+    - 有限重试：仅对幂等 GET 的连接错误/部分 5xx 重试 1 次，不做激进重试以免拖慢盯盘。
+    调用方仍需自行传 timeout；本会话不设默认超时，避免掩盖上层的严格超时约定。
+    """
+    global _session_cache
+    if _session_cache is not None:
+        return _session_cache
+    with _session_lock:
+        if _session_cache is not None:
+            return _session_cache
+        session = requests.Session()
+        retry: Any = None
+        if Retry is not None:
+            retry = Retry(
+                total=_HTTP_RETRY_TOTAL, connect=_HTTP_RETRY_TOTAL,
+                read=0, status=0, backoff_factor=0.3,
+                allowed_methods=frozenset({"GET"}),
+                raise_on_status=False,
+            )
+        adapter = HTTPAdapter(
+            pool_connections=_HTTP_POOL_SIZE,
+            pool_maxsize=_HTTP_POOL_SIZE,
+            max_retries=retry,
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _session_cache = session
+        return _session_cache
 
 
 def shanghai_now(now: Optional[datetime] = None) -> datetime:

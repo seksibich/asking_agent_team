@@ -24,6 +24,9 @@ RUN_USER="${RUN_USER:-root}"
 VENV="${VENV:-$APP_DIR/.venv}"
 INSTALL_DEPS="${INSTALL_DEPS:-1}"          # 1=每次同步依赖，0=跳过
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-40}"     # 健康检查最长等待秒数
+# 内存护栏：默认按总内存的 85%(硬)/70%(软)，可用 MEMORY_MAX/MEMORY_HIGH 覆盖（如 "6G"/"5G"）
+MEMORY_MAX="${MEMORY_MAX:-}"
+MEMORY_HIGH="${MEMORY_HIGH:-}"
 
 log()  { echo -e "[$(date '+%F %T')] $*"; }
 die()  { echo -e "[$(date '+%F %T')] [ERROR] $*" >&2; exit 1; }
@@ -111,10 +114,28 @@ step "6/7 安装/更新 systemd 单元并启动"
 UNIT_SRC="$APP_DIR/deploy/stock-agent.service"
 UNIT_DST="/etc/systemd/system/${SERVICE_NAME}.service"
 [ -f "$UNIT_SRC" ] || die "缺少 systemd 单元模板 $UNIT_SRC"
+
+# 内存护栏：未显式指定时，按总内存的 85%(硬 MemoryMax)/70%(软 MemoryHigh) 计算。
+# 超过硬上限只在本服务 cgroup 内 OOM（OOMPolicy=kill）并由 Restart=on-failure 拉起，
+# 不再拖垮整机与 SSH。总内存不可解析时退回 infinity（等于不设护栏，保持旧行为）。
+mem_total_kb="$(awk '/MemTotal/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+if [ -z "$MEMORY_MAX" ] || [ -z "$MEMORY_HIGH" ]; then
+  if [ "${mem_total_kb:-0}" -gt 0 ]; then
+    [ -z "$MEMORY_MAX" ]  && MEMORY_MAX="$(( mem_total_kb * 85 / 100 ))K"
+    [ -z "$MEMORY_HIGH" ] && MEMORY_HIGH="$(( mem_total_kb * 70 / 100 ))K"
+  else
+    [ -z "$MEMORY_MAX" ]  && MEMORY_MAX="infinity"
+    [ -z "$MEMORY_HIGH" ] && MEMORY_HIGH="infinity"
+  fi
+fi
+log "内存护栏：MemoryHigh=$MEMORY_HIGH MemoryMax=$MEMORY_MAX（总内存 ${mem_total_kb}KB）"
+
 sed -e "s#__APP_DIR__#$APP_DIR#g" \
     -e "s#__VENV__#$VENV#g" \
     -e "s#__PORT__#$PORT#g" \
     -e "s#__RUN_USER__#$RUN_USER#g" \
+    -e "s#__MEMORY_MAX__#$MEMORY_MAX#g" \
+    -e "s#__MEMORY_HIGH__#$MEMORY_HIGH#g" \
     "$UNIT_SRC" > "$UNIT_DST"
 log "已写入 $UNIT_DST"
 for template in stock-agent-monitor.service stock-agent-monitor.timer \

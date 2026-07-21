@@ -209,7 +209,8 @@ def _fetch_sina_market(anchor: dict[str, str]) -> tuple[pd.DataFrame, dict[str, 
     )
     from tushare.util.format_stock_code import format_stock_code
 
-    count_response = requests.get(
+    session = common.get_session()
+    count_response = session.get(
         zh_sina_a_stock_count_url, headers=zh_sina_a_stock_headers,
         cookies=zh_sina_a_stock_cookies, timeout=(3.05, 6),
     )
@@ -224,7 +225,7 @@ def _fetch_sina_market(anchor: dict[str, str]) -> tuple[pd.DataFrame, dict[str, 
     def fetch_page(page: int) -> list[dict[str, Any]]:
         payload = dict(zh_sina_a_stock_payload)
         payload["page"] = str(page)
-        response = requests.get(
+        response = session.get(
             zh_sina_a_stock_url, headers=zh_sina_a_stock_headers,
             cookies=zh_sina_a_stock_cookies, params=payload, timeout=(3.05, 6),
         )

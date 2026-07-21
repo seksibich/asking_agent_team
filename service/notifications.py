@@ -10,6 +10,8 @@ from typing import Any
 
 import requests
 
+import common
+
 _CHANNELS = {
     "feishu": "QUANT_WATCH_FEISHU_WEBHOOK",
     "wecom": "QUANT_WATCH_WECOM_WEBHOOK",
@@ -64,7 +66,8 @@ def send_text(channels: list[str], text: str) -> dict[str, Any]:
             results[channel] = {"ok": False, "error": "未配置 webhook"}
             continue
         try:
-            response = requests.post(url, json=_payload(channel, text), timeout=(3.05, 5))
+            response = common.get_session().post(
+                url, json=_payload(channel, text), timeout=(3.05, 5))
             response.raise_for_status()
             results[channel] = _business_result(channel, response)
         except requests.Timeout:

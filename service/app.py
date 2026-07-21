@@ -137,6 +137,14 @@ def _install_ws_ticket_log_filter() -> None:
 _install_ws_ticket_log_filter()
 app = FastAPI(title="Stock Data Service", version="1.0.0")
 
+# Gzip 压缩：仅当客户端发送 Accept-Encoding: gzip 时才压缩（按需协商，标准 HTTP 客户端
+# 透明解压，解压后内容与版本头完全一致；不影响 Agent 的五轨版本协调）。仅压缩超过阈值的
+# 大响应（选股结果、看板、/functions、quant_watch_status 等），显著降低出方向带宽占用；
+# WebSocket 不经过本中间件。compresslevel=6 在单核机型上兼顾压缩比与 CPU 开销。
+from starlette.middleware.gzip import GZipMiddleware
+
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+
 # 数据库初始化结果为进程级事实；初始化失败时量化盯盘不得再次探测数据库。
 _DB_READY = False
 _DB_INIT_ERROR: Optional[str] = None

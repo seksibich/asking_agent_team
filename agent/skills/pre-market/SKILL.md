@@ -81,6 +81,24 @@ disable-model-invocation: false
 T1 关键数据接口 4xx/5xx/空数据时先记失败，5 分钟、15 分钟各重试一次；401/配置错误不盲目重试。`market_index` 失败/空/部分缺失时按 code 逐个调用 `market_daily(code,start,end)` 最近记录并标 `degraded`/实际日期（数据接口间等价回退，非编造）。**数据类接口失败则失败、如实披露，禁止编造兜底**。资讯类（新闻/时政/公告/外盘）不在数据服务，直接从各财经平台多源检索（≥2 来源交叉，标来源与时间）；全部资讯来源失败标“资讯面不可用 + 已尝试来源”，不得解释为无风险。关键数据源最终失败后继续可完成部分，非关键源失败不阻塞整份盘前报告。
 ## v2.2.0 当前调度与日终边界
 
-- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；本 Skill 的定时入口仅为 T1，不承接旧 T6/T7/D1 或任何自动盯盘任务。
+- 现行 Agent 定时任务仅为 T1/T3/W1/M1/P1；本 Skill 的定时入口仅为 T1，不承接旧 T6/T7/D1 或任何自动盯盘任务。
 - 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
 - 只有用户当前明确要求管理员诊断或补数时，才允许单次手动调用 `precompute_daily_factors`；不得用于定时、自动补跑或失败回退。
+
+## 本技能接口速查与规范位置（v2.6.0）
+
+> 完整协议/参数/返回/错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；取数契约见 `工作文档/skills/data-service/SKILL.md`。
+
+| 功能 | 用途 | 关键参数要点 |
+|---|---|---|
+| macro_ppi / macro_cpi / macro_pmi | 宏观景气与涨价锚 | — |
+| price_hike_scan | 涨价链线索 | 外部 ≥2 来源交叉 |
+| screen_sector | 板块强度与申万行业方向 | 选股先经申万分级行业收窄 |
+| sentiment_temperature / sentiment_extreme_index / market_timing | 情绪温度 / 极端指数 / 择时 | 极端指数只消费不复算；择时给次日出手权重 |
+| hot_dc / hot_ths / hot_kpl_list | 热榜识别题材 | — |
+| overseas_hk / money_hsgt | 港股外盘 / 北向 | 美股外盘走外部多源 |
+| market_index | 指数行情 | 失败逐 code 回退 market_daily |
+| screen_quant / screen_trend | 正式候选量化/趋势 | 携带 screening_run_id |
+| selection_backtest / log_prediction / selection_tag_catalog → log_selection | 近7日回测 / 预判登记 / 上传候选 | 上传附完整字段与参数 |
+
+报告接口失败/降级问题置于 output-format「🛠️ 数据接口问题」文末附录；仅量化选股与 `log_selection` 附请求参数。

@@ -49,3 +49,7 @@
 
 - 本角色使用现行 T1/T3/W1/M1/P1 或用户任务，不使用旧 T6/T7/D1。
 - 服务端交易日 16:00 自动收口，本角色只读 `health.daily_finalize` / `precompute_status`，不得因行业或财务数据缺失自动调用 `precompute_daily_factors`；管理员手动补数仅限用户明确要求。
+
+## 接口规范位置（v2.6.0）
+
+本角色所用接口（`price_hike_scan`/`macro_ppi`/`macro_cpi`/`fundamental_forecast`/`fundamental_express`/`fundamental_income`/`fundamental_fina_indicator`/`research_build`）的完整协议、参数、返回与错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`，取数契约见 `工作文档/skills/data-service/SKILL.md`；新闻/公告走 data-service「资讯类外部获取」。随时可查，禁止猜参数。回传意见只写中文结论，接口问题由主 Agent 汇总后置于报告文末。

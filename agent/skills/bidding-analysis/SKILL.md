@@ -83,6 +83,17 @@ disable-model-invocation: false
 - `intraday-watch` 只能在用户另行明确请求时独立执行，不得由本 Skill 自动衔接。
 ## v2.2.0 当前调度与日终边界
 
-- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；竞价分析不在定时任务中，只能由用户当前明确请求后单轮执行。
+- 现行 Agent 定时任务仅为 T1/T3/W1/M1/P1；竞价分析不在定时任务中，只能由用户当前明确请求后单轮执行。
 - 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
 - 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得与竞价失败、自动续跑、Hook、cron 或 Agent 循环联动。
+
+## 本技能接口速查与规范位置（v2.6.0）
+
+> 完整协议/参数/返回/错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；取数契约见 `工作文档/skills/data-service/SKILL.md`。仅用户明确请求时单轮调用，禁止定时/循环/自动衔接盯盘。
+
+| 功能 | 用途 | 关键参数要点 |
+|---|---|---|
+| bidding_analysis | 09:25 竞价数据 + 竞价成交额 TopN + 异常高开 + 竞价爆量 | 单轮调用；返回 targets/market_top/abnormal_gap_top/burst_volume_top |
+| market_realtime | 关注/持仓/指定标的实时行情 | 支持 codes 与 name/names 混合批量 |
+
+报告接口失败/降级问题置于 output-format「🛠️ 数据接口问题」文末附录；本技能接口不附请求参数（仅量化选股与选股上传接口需附）。

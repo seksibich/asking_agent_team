@@ -86,3 +86,17 @@ disable-model-invocation: false
 
 - 自动趋势选股使用现行 T1/T3/W1，不使用旧 T6/T7/D1。
 - 服务端交易日 16:00 自动收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得因因子缺失或筛选失败自动调用 `precompute_daily_factors`。管理员单次补数仅限用户明确要求。
+
+## 本技能接口速查与规范位置（v2.6.0）
+
+> 完整协议/参数/返回/错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；取数契约见 `工作文档/skills/data-service/SKILL.md`。
+
+| 功能 | 用途 | 关键参数要点 |
+|---|---|---|
+| screen_sector | 确认申万行业强度与轮动方向 | 选股先经申万分级行业收窄 |
+| screen_trend | 趋势+行业逻辑选股 | `industries`（申万分级行业收窄，禁止省略跑全市场）、`boards`、`top_n`(自动50)；返回 screening_run_id |
+| sector_dc / price_hike_scan | 板块涨幅 / 涨价链线索 | 涨价需外部 ≥2 来源交叉 |
+| selection_tag_catalog → log_selection | 读标签 → 上传候选 | 附完整代码、screening_run_id、selected_at、core_event、reason、tags、category |
+| portfolio_stock_search / portfolio_upload | 用户要求持续跟踪时加自选 | 先搜索确认标准代码再上传 watch |
+
+报告接口失败/降级问题置于 output-format「🛠️ 数据接口问题」文末附录；仅量化选股与 `log_selection` 附请求参数。

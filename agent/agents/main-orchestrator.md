@@ -22,7 +22,7 @@
    - 按四维重心（涨价>逻辑>预期>情绪）加权排序；情绪主导（涨价+逻辑均<0.4）标高风险。
    - PE/PB 只进风险提示，不作看多依据。
 4. 输出最终结果（遵循 `skills/output-format/SKILL.md`）：
-   - T1/T2/T3、趋势/量化选股、用户方向选股和单股调研的 Markdown 标题后第一节固定为 `## 一眼结论（核心摘要）`，顺序为**一眼结论（核心摘要） → 目录导读 → 详细正文**；首屏依次给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。
+   - T1/T3、趋势/量化选股、用户方向选股和单股调研的 Markdown 标题后第一节固定为 `## 一眼结论（核心摘要）`，顺序为**一眼结论（核心摘要） → 目录导读 → 详细正文**；首屏依次给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。
    - 动态题材综合消息面、热榜、涨停连板、量能和资金识别，不限传统板块；数据不可用仍保留章节并写明缺失、fallback、重试轨迹和实际日期。
    - 报告与推送强制分离。推送建议不超过 500 字，只含任务/日期、仓位或次日倾向、1~3 条主线/事件、重点候选或持仓风险、报告路径、数据降级提示；不得复制全文，也不得只发“报告已生成”。
    - 对每只正式量化/趋势候选检查「正式候选综合理由表」是否完整：量化综合分与关键因子、四维分、板块/产业链、板块短中期动量/量能/阶段、主线关系、催化与炒作路径、固定理由链、情绪与择时、风险/证伪。任一环缺证据必须写「无可核验证据」，缺项不得发布为正式候选。
@@ -47,17 +47,23 @@
 ## Skill 强制加载与主绑定
 
 - **完整加载**：首次及每次任务/角色启动，先逐文件完整读取固定 12 个 Skills：`skills/priority-framework/SKILL.md`、`skills/data-service/SKILL.md`、`skills/output-format/SKILL.md`、`skills/pre-market/SKILL.md`、`skills/bidding-analysis/SKILL.md`、`skills/intraday-watch/SKILL.md`、`skills/post-market/SKILL.md`、`skills/industry-analysis/SKILL.md`、`skills/stock-screening/SKILL.md`、`skills/quant-screening/SKILL.md`、`skills/review-learning/SKILL.md`、`skills/stock-research/SKILL.md`；不得只读索引或角色摘要。
-- **主绑定**：全部 12 个 Skills。盘前执行 `skills/pre-market/SKILL.md`；用户明确请求竞价时单次执行 `skills/bidding-analysis/SKILL.md`，用户明确请求盘中分析时单次执行 `skills/intraday-watch/SKILL.md`；盘后执行 `skills/post-market/SKILL.md`；选股执行 `skills/stock-screening/SKILL.md` 与 `skills/quant-screening/SKILL.md`；用户主动单股调研执行 `skills/stock-research/SKILL.md`；回测执行 `skills/review-learning/SKILL.md`；所有任务同时执行 `skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`。完整加载不授权自动调用竞价或盯盘；`stock-research` 不加入定时 T1/T2/T3 的必执行绑定。
-- **职责/流程要求**：分发给子 Agent 时必须点名其主绑定 `skills/<name>/SKILL.md`，汇总前检查其是否完整加载 12 Skills。接口失败统一按 `skills/data-service/SKILL.md` 降级；T1/T2/T3 关键接口按 5 分钟、15 分钟延迟重试。
+- **主绑定**：全部 12 个 Skills。盘前执行 `skills/pre-market/SKILL.md`；用户明确请求竞价时单次执行 `skills/bidding-analysis/SKILL.md`，用户明确请求盘中分析时单次执行 `skills/intraday-watch/SKILL.md`；盘后执行 `skills/post-market/SKILL.md`；选股执行 `skills/stock-screening/SKILL.md` 与 `skills/quant-screening/SKILL.md`；用户主动单股调研执行 `skills/stock-research/SKILL.md`；回测执行 `skills/review-learning/SKILL.md`；所有任务同时执行 `skills/data-service/SKILL.md`、`skills/priority-framework/SKILL.md`、`skills/output-format/SKILL.md`。完整加载不授权自动调用竞价或盯盘；`stock-research` 不加入定时 T1/T3 的必执行绑定。
+- **职责/流程要求**：分发给子 Agent 时必须点名其主绑定 `skills/<name>/SKILL.md`，汇总前检查其是否完整加载 12 Skills。接口失败统一按 `skills/data-service/SKILL.md` 降级；T1/T3 关键接口按 5 分钟、15 分钟延迟重试。
 
 ## v1.6 证据链复核职责
 
 - 汇总正式候选前核对每只股票均有当日 `screening_run_id`，且候选代码、排名、`score_raw`、`score_percentile`、完整因子契约和上游依赖一致；任一不一致必须重筛，不得手工补值。
-- T2/T3 先只读核对 `health.daily_finalize` 与 `precompute_status`：只有服务端 16:00 日终任务成功、覆盖达标且契约/依赖/`run_id` 一致时才可消费；失败或部分结果只披露缺口并重试读取状态，禁止自动调用 `precompute_daily_factors`。
+- T3 先只读核对 `health.daily_finalize` 与 `precompute_status`：只有服务端 16:00 日终任务成功、覆盖达标且契约/依赖/`run_id` 一致时才可消费；失败或部分结果只披露缺口并重试读取状态，禁止自动调用 `precompute_daily_factors`。
 - 只有用户当前明确要求管理员诊断或补数时，才可单次调用 `precompute_daily_factors`；不得由定时任务、失败回退、Hook、cron 或 Agent 循环触发。
 - 回测分析师提出调参后，主 Agent 必须复核 `optimization_gate.eligible`、`snapshot_id`、样本哈希、当前父权重版本和样本外指标；任一缺失即禁止执行。
 - T3 方向预判登记时确认目标为下一 SSE 交易日；回测报告必须列出未成熟、legacy 和失败数量，禁止把这些样本静默排除后美化准确率。
 ## v2.2.0 当前调度边界
 
-- 仅注册 T1/T2/T3/W1/M1/P1；初始化删除旧 T6/T7/D1、历史 T2/T3/T4/T5 及旧自动盯盘任务。
+- 仅注册 T1/T3/W1/M1/P1；初始化删除旧 T6/T7/D1、历史 T2/T3/T4/T5 及旧自动盯盘任务。
 - 服务端交易日 16:00 自动收口，主 Agent 只读 `health.daily_finalize` / `precompute_status`；不得自动补跑或因失败调用 `precompute_daily_factors`。仅用户当前明确要求管理员诊断/补数时，才可单次手动调用。
+
+## 接口规范位置与文档地图（v2.6.0）
+
+- 初始化时业务文档已从工程目录落地到工作目录缓存 `工作文档/`（`index.md`、`agents/`、`skills/`、`接口文档/`）；接口完整规范见 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`，落地路径以 `服务状态与能力.md`「工作目录文档地图」为准。分发子 Agent 时点名其主绑定 `工作文档/skills/<name>/SKILL.md`。
+- 汇总输出报告时，正文只写面向用户的中文结论；把所有接口失败/降级/缺数问题统一收敛到 output-format「🛠️ 数据接口问题」文末附录，标接口名称、功能、报错信息，**仅量化选股（`screen_quant`/`screen_trend`/`screen_sector`）与选股上传（`log_selection`）附请求参数**。
+- 版本升级本地优先读工程文件、读不到再 git；子 Agent 定义 / Skill / 接口文档 / 索引更新时重新落地工作目录缓存并更新文档地图，定时任务定义更新时重设任务日程；记忆只保留最新版本快照。

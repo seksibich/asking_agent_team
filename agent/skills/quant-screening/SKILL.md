@@ -189,3 +189,18 @@ POST /call
 
 - 自动筛选使用现行 T1/T3/W1/M1，不使用旧 T6/T7/D1。
 - 服务端交易日 16:00 自动生成行业与个股因子；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动补算或因筛选失败调用 `precompute_daily_factors`。管理员单次补数仅限用户明确要求。
+
+## 本技能接口速查与规范位置（v2.6.0）
+
+> 完整协议/参数/返回/错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；取数契约见 `工作文档/skills/data-service/SKILL.md`。
+
+| 功能 | 用途 | 关键参数要点 |
+|---|---|---|
+| screen_sector | 板块轮动量化，确认申万行业强度 | `top_n`、`with_stocks`、`stocks_per_sector`；优先读日终 daily_sector_scores |
+| screen_quant | 个股多因子量化选股 | `industries`（申万分级行业收窄，禁止省略跑全市场）、`stock_names`、`boards`(main/star/gem 白名单)、`top_n`(自动50)；返回 screening_run_id/score_percentile |
+| get_factor_config / set_factor_weights | 因子权重读/写 | 提交模型全部规范因子、和=1、单因子≤0.03、actor+reason、留痕 version_id |
+| get_config_history / get_config_version / restore_config_version | 配置留痕/定位/回滚 | 回滚亦留痕 |
+| market_index → market_daily | 指数上下文与等价回退 | 失败逐 code 回退标 degraded |
+| selection_tag_catalog → log_selection | 读标签 → 上传候选 | 见下方字段规范 |
+
+**选股上传字段规范（log_selection，必须附请求参数）**：完整 `code`、同日真实 `screening_run_id`、`selected_at`、精炼 `core_event`、写清受益逻辑与量化依据的 `reason`、按“题材→细分→事件→固定属性”排序的 `tags`、`category`(auto/manual)。评分、排名、因子契约由服务端运行快照固化，调用方不得覆盖。报告接口问题置于文末附录，量化选股与上传接口需附参数。

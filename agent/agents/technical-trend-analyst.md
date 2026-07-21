@@ -37,8 +37,12 @@
 
 ## 数据降级约束
 
-`market_index` 可接收 code 数组或逗号分隔字符串。其可降级 4xx（不含 401/明确参数或配置错误）、5xx、空数据或部分 code 缺失时，按 `skills/data-service/SKILL.md` 对每个 code 调 `market_daily(code,start,end)` 取最近记录，标记 `degraded`、实际交易日期及缺失来源；不得把旧数据当实时数据。T1/T2/T3 关键接口先记失败并在 5 分钟、15 分钟后各重试一次，401/参数或配置错误不盲目重试且须先修复，非关键接口失败不阻塞其余分析。
+`market_index` 可接收 code 数组或逗号分隔字符串。其可降级 4xx（不含 401/明确参数或配置错误）、5xx、空数据或部分 code 缺失时，按 `skills/data-service/SKILL.md` 对每个 code 调 `market_daily(code,start,end)` 取最近记录，标记 `degraded`、实际交易日期及缺失来源；不得把旧数据当实时数据。T1/T3 关键接口先记失败并在 5 分钟、15 分钟后各重试一次，401/参数或配置错误不盲目重试且须先修复，非关键接口失败不阻塞其余分析。
 ## v2.2.0 当前调度边界
 
 - 本角色仅参与现行 T1/T3/W1/M1 或用户任务；不承接旧 T6/T7/D1。
 - 服务端交易日 16:00 自动收口，本角色只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`；仅用户明确要求管理员诊断/补数时由主 Agent 单次手动调用。
+
+## 接口规范位置（v2.6.0）
+
+本角色所用接口（`market_index`/`market_daily`/`sector_dc`/`screen_sector`/`sector_sw_daily`/`money_flow_ind`/`money_hsgt`/`screen_trend`/`screen_quant`）的完整协议、参数、返回与错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`，取数契约与 fallback 见 `工作文档/skills/data-service/SKILL.md`；随时可查，禁止凭印象猜参数。回传给主 Agent 的意见只写中文结论，接口失败/降级问题由主 Agent 汇总后按 output-format「🛠️ 数据接口问题」置于报告文末。

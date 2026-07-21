@@ -31,6 +31,43 @@
 
 ## 版本记录（最新在上）
 
+### v2.7.0 — 2026-07-21（交易日定时任务精简为 T1 08:30 + T3 22:00，取消 T2 17:30 当日总结；日报目录重编号；服务端修复 NaN 序列化 500）
+
+- **摘要**：① **取消 T2（17:30 当日总结）**，交易日盘后只保留 T3（22:00 综合复盘），当天市场复盘、板块强度、次日倾向统一并入 T3；周期任务 W1/M1/P1 不变。② 日报目录路径同步重编号：`盯盘/yyyy年MM月dd日/` 固定只含 `01-盘前汇总.md`（T1）与 `02-综合复盘.md`（T3），取消 `04-当日总结.md`，原 `05-综合复盘.md` 重编号为 `02-综合复盘.md`。③ 全量文档把「T1/T2/T3」枚举更新为「T1/T3」，并在 init.md 增加权威覆盖块统一旧编号解释。④ **服务端配套修复**（非 Agent 文档）：`macro_*`、`fundamental_*`、`hot_ths`、`market_limit` 等接口因响应含 pandas `NaN/Inf`、在 Starlette `JSONResponse`（`allow_nan=False`）渲染时抛 `ValueError` 返回 HTTP 500；已在 `service/app.py` 的 `_versioned` 增加 `_json_safe` 递归清洗为合法 JSON `null`，全量接口测试从 11 个 500 降为 0。
+- **对应 git commit**：待提交。
+- **变更文件清单（Agent 相关）**：
+  - `agent/init.md`、`agent/index.md`、`agent/schedule.md`、`agent/memory/MEMORY.md`
+  - `agent/agents/TEAM.md`、`ORCHESTRATION.md`、`main-orchestrator.md`、及各分析师角色（编号边界）
+  - `agent/skills/output-format/SKILL.md`（删 T2 模板、重编号、表格矩阵）、`post-market/SKILL.md`（仅 T3）、其余 SKILL 编号边界
+  - `doc/02-Agent编排与业务模块.md`、`doc/SERVICE_INDEX.md`、`doc/AGENT_SERVICE_GUIDE.md`
+  - `profile/CHANGELOG-AGENT.md`
+- **服务配套（非 Agent 文档）**：`service/app.py`（`_json_safe` NaN/Inf 清洗）。
+- **Agent 动作**：
+  1. 重设定时任务：删除任何已注册的 T2/17:30 当日总结，交易日只注册 T1（08:30）与 T3（22:00），周期任务 W1/M1/P1 不变。
+  2. 日报按新编号保存：`01-盘前汇总.md`、`02-综合复盘.md`；不再生成 `04-当日总结.md`。
+  3. 遇旧文档 T1/T2/T3 枚举一律按 T1/T3 执行，原 T2/T3 规则按 T3 执行。
+
+### v2.6.0 — 2026-07-21（业务文档全量落地工作目录、接口规范就近附带、定时任务描述结构化、报告接口问题置于文末、版本控制本地优先）
+
+- **摘要**：按「一切业务文档落地工作目录、全链路文档/接口指引明确、禁止让 agent 猜」的原则系统性优化——① 各使用接口的 Skill、子 Agent 定义与定时任务就近附「接口速查」并指向工作目录接口文档；② 初始化要求把子 Agent 定义、Skill、接口文档（`AGENT_SERVICE_GUIDE.md`/`SERVICE_INDEX.md`）、执行索引全量同步落地到 `盯盘/工作文档/`（Coze 左侧 `工作文档/`）后再读取；③ 定时任务描述结构化，加载完文档后按工作目录路径生成含【工作目标 / 结果目录结构 / Agent 编排 / 使用的 Skill 与接口文档路径】四段；④ 报告中数据接口问题统一置于文末「🛠️ 数据接口问题」附录，标接口名称/功能/报错信息，仅量化选股与选股上传接口附请求参数；⑤ 版本控制本地优先（先读本地工程文件，读不到再 git），按改动类型重载——子 Agent/Skill/接口/索引更新重载工作目录缓存、定时任务定义更新重设日程；⑥ SOUL 与主记忆保留查阅路由/文档地图索引，加载完成后在 `服务状态与能力.md` 记录「工作目录文档地图」，记忆只保留最新版本快照不罗列历史。
+- **对应 git commit**：待提交。
+- **变更文件清单（Agent 相关）**：
+  - `agent/init.md`
+  - `agent/index.md`
+  - `agent/SOUL.md`
+  - `agent/schedule.md`
+  - `agent/memory/MEMORY.md`
+  - `agent/agents/main-orchestrator.md`、`technical-trend-analyst.md`、`sentiment-analyst.md`、`fundamental-research-analyst.md`、`macro-news-analyst.md`、`backtest-analyst.md`
+  - `agent/skills/*/SKILL.md`（全部 12 个：就近附接口速查 / 报告接口问题置于文末）
+  - `doc/02-Agent编排与业务模块.md`
+  - `profile/CHANGELOG-AGENT.md`
+- **Agent 动作**：
+  1. 初始化及每次任务/角色启动，先把 `index.md`、`agents/`、`skills/`、`接口文档/` 全量同步落地到工作目录缓存 `工作文档/` 再从工作目录读取；在 `服务状态与能力.md` 记录「工作目录文档地图」。
+  2. 使用接口时以工作目录 `工作文档/接口文档/` 与各 Skill「接口速查」为准，禁止猜参数。
+  3. 生成定时任务描述时按结构化四段模板，引用工作目录内化路径；任务定义更新时重设日程。
+  4. 报告接口问题统一置于文末附录，仅量化选股与 `log_selection` 附请求参数。
+  5. 版本升级本地优先读工程文件、读不到再 git；按改动类型重载工作目录缓存或重设任务；记忆只留最新版本快照。
+
 ### v2.5.0 — 2026-07-21（技能落地工作目录、中间产物不留存、报告说人话与结论前置、热点→申万分级行业量化选股并上传服务端）
 
 - **摘要**：针对编排审查发现的四类问题优化提示词——① 初始化与每次任务/角色启动时必须先把 12 个 `SKILL.md` 落地到工作目录技能缓存（`盯盘/skills/`，Coze 左侧 `skills/`）再读取内化；② 定时任务中子 Agent 的原始意见、逐接口返回、草稿、中间打分表等中间产物一律只写 `tmp/`、任务结束即清理，只有主 Agent 汇总的最终报告与规则允许的业务快照可保存；③ 面向用户报告强制说人话、结论前置（今天市场发生了什么→板块行情大环境→明天该关注哪些股票→综合量化/择时/趋势/热点/短线选股结果与理由）、严禁暴露非结论性思考过程与原始接口数据；④ 正式选股必须先定位当日热点主线、映射申万一级/二级/三级行业、在行业内量化（禁止无差别全市场机械筛选），并按规范 `log_selection` 上传服务端、报告写明逐只选股理由。

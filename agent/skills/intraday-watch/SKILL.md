@@ -76,6 +76,19 @@ disable-model-invocation: false
 - 本 Skill 只由主 Agent 在当前用户明确请求下单轮执行，不启用团队，也不转交调度器。
 ## v2.2.0 当前调度与日终边界
 
-- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；盘中盯盘不在定时任务中，只能由用户当前明确请求后单轮执行，结束后不得续跑。
+- 现行 Agent 定时任务仅为 T1/T3/W1/M1/P1；盘中盯盘不在定时任务中，只能由用户当前明确请求后单轮执行，结束后不得续跑。
 - 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
 - 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得由盯盘失败、自动补跑、Hook、cron 或 Agent 循环触发。
+
+## 本技能接口速查与规范位置（v2.6.0）
+
+> 完整协议/参数/返回/错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；取数契约见 `工作文档/skills/data-service/SKILL.md`。仅用户明确请求时单轮执行，禁止定时/循环/自动衔接。
+
+| 功能 | 用途 | 关键参数要点 |
+|---|---|---|
+| watch_intraday | 单轮盘中异动扫描 | 用户明确请求时单次调用，不循环、不写自动记忆 |
+| market_realtime | 指定标的实时行情 | codes 与 name/names 混合批量 |
+| market_stk_limit | 个股涨跌停价 | — |
+| money_flow | 个股资金流向 | 盘中循环单轮 ≤3 次调用 |
+
+报告接口失败/降级问题置于 output-format「🛠️ 数据接口问题」文末附录；本技能接口不附请求参数（仅量化选股与选股上传接口需附）。

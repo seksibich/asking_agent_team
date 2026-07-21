@@ -145,3 +145,21 @@ disable-model-invocation: false
 
 - 每日回测并入现行 T3，周期回测使用 W1/M1；不使用旧 T6/T7/D1。
 - 服务端交易日 16:00 自动收口；回测只读 `health.daily_finalize` / `precompute_status`，不得因样本缺失、状态失败或门禁未通过自动调用 `precompute_daily_factors`。管理员单次补数仅限用户明确要求。
+
+## 本技能接口速查与规范位置（v2.6.0）
+
+> 完整协议/参数/返回/错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；取数契约见 `工作文档/skills/data-service/SKILL.md`。
+
+| 功能 | 用途 | 关键参数要点 |
+|---|---|---|
+| selection_tag_catalog | 读版本化固定标签 | selection_tag_version 变化时刷新 |
+| log_selection | 上传正式候选/观察快照（幂等：日期+代码+category） | 附完整字段与请求参数（见 quant-screening 规范） |
+| log_prediction / predictions_backtest | 预判登记 / 成熟预判回测 | 目标日为下一 SSE 交易日，不可反向覆盖 |
+| selection_backtest | 正式 auto 样本 1/3/7/30 收益与调参门禁 | 仅 auto 进优化；score_percentile 分桶 |
+| selection_dashboard | 查看选股与刷新行情 | 默认目标日及前三个交易日 |
+| get_factor_config / set_factor_weights | 因子权重读/写 | 提交全部因子、门禁通过才调参、留痕 version_id |
+| get_config_history / get_config_version / restore_config_version | 配置历史/定位/回滚 | — |
+| get_sentiment_config / set_sentiment_config | 情绪归一窗口读/写 | 仅回测与情绪指数背离时调整 |
+| screen_trend / screen_quant / market_daily | 生成候选池 / 回测取价 | qfq 前复权、SSE 统一交易日 |
+
+报告接口失败/降级问题置于 output-format「🛠️ 数据接口问题」文末附录；仅量化选股与 `log_selection` 附请求参数。

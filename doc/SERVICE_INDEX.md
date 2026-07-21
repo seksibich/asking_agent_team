@@ -94,8 +94,9 @@
 | 任务 | 时间 | 主用 skill | 关键数据接口 | 资讯（外部多源） |
 |---|---|---|---|---|
 | T1 盘前汇总 | 08:30 | pre-market + 全角色 | macro_ppi/cpi/pmi、price_hike_scan、screen_sector、sentiment_temperature/extreme、market_timing、hot_dc/ths/kpl_list、overseas_hk、selection_backtest；正式 auto 候选必须来自真实 screen_quant/screen_trend 并携带 screening_run_id | 新闻/时政/外盘 |
-| T2 当日总结 | 17:30 | post-market，主 Agent 单跑 | market_index、sector_dc、market_limit/lianban、hot_dc/ths/kpl_list、sentiment_*、market_timing、money_hsgt、price_hike_scan；只读 health.daily_finalize / precompute_status | 新闻/公告 |
-| T3 综合复盘、选股与成熟回测 | 22:00 | post-market + review + 选股 + 全角色 | T2 链路 + money_toplist、screen_sector/quant/trend、fundamental_forecast/express、log_prediction、predictions_backtest、selection_backtest、selection_tag_catalog→log_selection | 新闻/公告 |
+| T3 综合复盘、选股与成熟回测 | 22:00 | post-market + review + 选股 + 全角色 | market_index、sector_dc、market_limit/lianban、hot_dc/ths/kpl_list、sentiment_*、market_timing、money_hsgt/toplist、price_hike_scan、screen_sector/quant/trend、fundamental_forecast/express、log_prediction、predictions_backtest、selection_backtest、selection_tag_catalog→log_selection；只读 health.daily_finalize / precompute_status | 新闻/公告 |
+
+> **v2.7.0：已取消 T2（17:30 当日总结）**。交易日只保留 T1（08:30）与 T3（22:00），当天市场复盘并入 T3。
 | W1 周回测/周报 | 周日 20:00 | review + 选股 | selection_backtest、predictions_backtest、screen_*、get/set_factor_weights | — |
 | M1 月回测/月报 | 月末 21:00 | review + quant | selection_backtest、get/set_factor_weights | — |
 | P1 涨价链扫描 | 周六 12:00 | industry-analysis | price_hike_scan、macro_ppi | 行业价格/资讯 |

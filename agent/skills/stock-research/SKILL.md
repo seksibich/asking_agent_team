@@ -82,6 +82,20 @@ disable-model-invocation: false
 - **协同 Skills**：`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market` 提供时段事实；`review-learning` 仅在用户明确持久化为 watch 后执行隔离的观察性回测。
 ## v2.2.0 当前调度与日终边界
 
-- 现行 Agent 定时任务仅为 T1/T2/T3/W1/M1/P1；本 Skill 仍仅由用户主动单股调研触发，不加入任何定时任务，也不承接旧 T6/T7/D1。
+- 现行 Agent 定时任务仅为 T1/T3/W1/M1/P1；本 Skill 仍仅由用户主动单股调研触发，不加入任何定时任务，也不承接旧 T6/T7/D1。
 - 服务端在交易日 16:00 自动完成日终收口；Agent 只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`。
 - 管理员预计算仅可在用户当前明确要求诊断或补数时单次手动调用，不得因单股数据缺失、调研失败、Hook、cron 或 Agent 循环触发。
+
+## 本技能接口速查与规范位置（v2.6.0）
+
+> 完整协议/参数/返回/错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；取数契约见 `工作文档/skills/data-service/SKILL.md`。默认 ephemeral，不调用 log_selection、不回测，除非用户明确持久化。
+
+| 功能 | 用途 | 关键参数要点 |
+|---|---|---|
+| research_build | 单股投研数据包 | 题材/产业链素材聚合 |
+| fundamental_income / fundamental_fina_indicator / fundamental_daily_basic | 利润表/财务指标/每日指标 | 披露期验证；PE/PB 仅风险背景 |
+| fundamental_forecast | 业绩预告（前瞻预期） | 非过往业绩驱动 |
+| screen_quant / market_daily | 单股量化分位与关键因子 / 取价 | `stock_names` 指定该股；qfq 前复权 |
+| portfolio_stock_search / portfolio_upload | 用户要求持续跟踪时加自选 | 先搜索确认标准代码 |
+
+报告接口失败/降级问题置于 output-format「🛠️ 数据接口问题」文末附录；仅量化选股（screen_quant）需附请求参数，其余不附。

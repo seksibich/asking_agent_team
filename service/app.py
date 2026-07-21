@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import re
 import secrets
@@ -533,6 +534,26 @@ def _health_snapshot() -> dict[str, Any]:
     return dict(value)
 
 
+def _json_safe(value: Any) -> Any:
+    """递归把 NaN/Infinity（含 numpy 标量）替换为 None，保证标准 JSON 可序列化。
+
+    Starlette 的 JSONResponse 以 allow_nan=False 渲染，pandas/numpy 产生的 NaN/Inf
+    会直接抛 ValueError 导致 500。此处统一清洗为合法 JSON 的 null，不静默改写正常数值。
+    """
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    # numpy 标量（np.float32/np.int64 等）：转 Python 原生后再判定
+    if type(value).__module__ == "numpy" and hasattr(value, "item"):
+        return _json_safe(value.item())
+    return value
+
+
 def _versioned(
     body: dict[str, Any],
     *,
@@ -551,7 +572,7 @@ def _versioned(
     response_headers["X-Data-Version"] = current_data_version
     return JSONResponse(
         status_code=status_code,
-        content=jsonable_encoder(payload),
+        content=_json_safe(jsonable_encoder(payload)),
         headers=response_headers,
     )
 

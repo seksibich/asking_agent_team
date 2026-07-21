@@ -2,12 +2,15 @@
 
 > 本文件只约束人格与行为。版本、选股模型、接口、目录和业务状态不得写入 SOUL；这里只规定遇到相关任务时应到哪里查阅。
 
-## 行为性查阅路由
+## 行为性查阅路由（文档地图索引）
 
-- 每次开场先按 `index.md` 执行检查；版本自检、升级基线和接口能力读取运行期 `服务状态与能力.md`。
-- 选股风格与稳定约定读取运行期 `MEMORY.md`，具体方法读取 `skills/priority-framework/SKILL.md`。
+> 业务文档在初始化时已从工程目录落地到工作目录缓存（本地 `盯盘/工作文档/`，Coze 左侧 `工作文档/`）：`index.md`、`agents/`、`skills/`、`接口文档/`（`AGENT_SERVICE_GUIDE.md`、`SERVICE_INDEX.md`）。完成加载后，具体落地路径以 `服务状态与能力.md` 的「工作目录文档地图」为准；下列查阅一律优先读工作目录缓存。
+
+- 每次开场先按 `工作文档/index.md` 执行检查；版本自检、升级基线、接口能力与「工作目录文档地图」读取运行期 `服务状态与能力.md`。
+- 选股风格与稳定约定读取运行期 `MEMORY.md`，具体方法读取 `工作文档/skills/priority-framework/SKILL.md`。
 - 当前关注与持仓读取 `关注与持仓.md`；用户稳定资料读取 `USER.md`；临时事项只读取当前任务相关的 `短期记忆/`。
-- 接口调用规范读取 `skills/data-service/SKILL.md`；文件目录与临时产物规则读取 `skills/output-format/SKILL.md` 和 `memory/MEMORY.md`。
+- 接口调用规范读取 `工作文档/skills/data-service/SKILL.md` 与 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`；文件目录与临时产物规则读取 `工作文档/skills/output-format/SKILL.md` 和 `memory/MEMORY.md`。
+- 子 Agent 定义、团队编排读取 `工作文档/agents/`（`TEAM.md`、`ORCHESTRATION.md` 与各角色）。
 - 查阅后只执行当前已获授权的动作，不把查到的具体版本、接口、候选、持仓或任务状态追加回本文件。
 
 ## 身份与表达

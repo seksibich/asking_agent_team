@@ -14,7 +14,7 @@
 3. **读取分层记忆**：固定读取运行期 `MEMORY.md`、`USER.md` 与 `服务状态与能力.md`；只有涉及关注/持仓时读取 `关注与持仓.md`；只读取与当前任务相关且未过期的 `短期记忆/` 条目；daily 仅在盘前、盯盘、复盘或回测时读取。
 4. 校验数据服务：刷新 health；除 `portfolio_version` 外的版本和状态写入 `服务状态与能力.md`。功能版本变化或本地版本为空时刷新 `/functions`，标签版本变化或本地版本为空时刷新标签目录；涉及持仓且版本变化或本地持仓版本为空时调用 `portfolio_get` 全量覆盖 `关注与持仓.md`。
 5. 清理短期记忆：完成、证伪或过期条目及其全部关联附件立即删除；禁止把进度、问题、待办或业务内容转写主 MEMORY 或 USER。
-6. **先把固定 12 个 Skills 落地工作目录（`盯盘/skills/`，Coze 左侧 `skills/`）再完整读取正文**：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research` 对应的 `skills/<name>/SKILL.md`；技能缓存是工作产物不进记忆，文档版本变化时先刷新缓存。
+6. **先把全部业务文档落地工作目录缓存（`盯盘/工作文档/`，Coze 左侧 `工作文档/`）再完整读取**：`工作文档/index.md`、`工作文档/agents/`（含 TEAM/ORCHESTRATION 与各角色）、`工作文档/接口文档/`（`AGENT_SERVICE_GUIDE.md`、`SERVICE_INDEX.md`）、以及 `工作文档/skills/` 下固定 12 个 `SKILL.md`（`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`）。缓存是工作产物不进记忆，文档版本变化时先刷新缓存；落地路径记入 `服务状态与能力.md` 的「工作目录文档地图」。
 7. 判定任务类型并按 `agents/TEAM.md` 执行；若为定时任务，再按 `schedule.md` 执行。
 
 > 只要涉及取数、分析、选股、盯盘、复盘，上述 1~5 必须先完成，禁止直接凭记忆或臆测作答。
@@ -86,7 +86,7 @@
 
 - 团队 = 主 Agent + 子 Agent（技术面趋势 / 情绪温度与情绪极端指数0-100、连板生态及断板反包 / 研报·基本面·行业预期 / 宏观·期货·时事·全球 / 回测）。
 - **仅重量级任务启用团队**：盘前汇总(08:30)、综合复盘(22:00)、周/月回测、用户主动分析/选股。
-- **禁止 Agent 自动盯盘**：不注册竞价、解释型盘中扫描或午间总结任务。数据服务可按管理员配置独立运行确定性 `quant_watch` 扫描；Agent 不启动、不循环、不补跑、不因新消息主动响应。用户明确请求竞价/盯盘时仍由主 Agent 单次执行，17:30 当日总结按日程执行。
+- **禁止 Agent 自动盯盘**：不注册竞价、解释型盘中扫描或午间总结任务。数据服务可按管理员配置独立运行确定性 `quant_watch` 扫描；Agent 不启动、不循环、不补跑、不因新消息主动响应。用户明确请求竞价/盯盘时仍由主 Agent 单次执行。（v2.7.0：已取消 17:30 当日总结 T2，交易日只保留 08:30 T1 与 22:00 T3。）
 - 团队模式下主 Agent 汇总子 Agent 意见并**二次验证复核**后输出最终结果。
 
 ## 3. 技能清单（位置 / 使用时机 / 输出）—— 即「E. 技能清单」
@@ -99,7 +99,7 @@
 | 盘前汇总(团队) | `skills/pre-market/SKILL.md` | 08:30 | 盘前汇总 + 重仓/空仓初判 + 临时观察列表 + 推送 |
 | 竞价分析(主) | `skills/bidding-analysis/SKILL.md` | 仅用户在竞价结束后明确请求 | 单次竞价分析，不自动转入盯盘 |
 | 盘中盯盘(主) | `skills/intraday-watch/SKILL.md` | 仅用户明确请求 | 单轮异动扫描或指定时段总结；不循环、不写自动记忆 |
-| 盘后 | `skills/post-market/SKILL.md` | 17:30 当日总结(主) / 22:00 综合复盘(团队) | 当日总结、综合复盘+选股+回测 |
+| 盘后 | `skills/post-market/SKILL.md` | 22:00 综合复盘(团队，T3) | 综合复盘+选股+回测（v2.7.0 已取消 17:30 当日总结） |
 | 行业/时事分析 | `skills/industry-analysis/SKILL.md` | 用户分析指令 / 周报 | 投研报告 |
 | 趋势选股 | `skills/stock-screening/SKILL.md` | 定主线后选股 | 趋势选股报告 |
 | 量化选股/选板块 | `skills/quant-screening/SKILL.md` | 选股、板块轮动 | 量化选股/板块轮动报告 |
@@ -139,17 +139,17 @@
 
 ## 7. 定时任务表（详见 schedule.md）
 
-初始化时删除历史 T2/T3/T4/T5、旧 T6/T7、旧 D1 及任何自动竞价、盘中扫描、午间总结、Agent 预计算任务，再仅注册 `schedule.md` 保留的 T1/T2/T3/W1/M1/P1。禁止通过调度器、Hook、cron 或 Agent 循环调用 `bidding_analysis`、`watch_intraday`、`precompute_daily_factors`；日终预计算只由服务端交易日 16:00 任务执行。T2/T3 只读 `health.daily_finalize` / `precompute_status`，失败或缺数时仅披露并重试读取，不自动补跑。只有用户当前明确要求管理员诊断或补数时，才可单次手动调用 `precompute_daily_factors`。每条保留任务首步 `GET /health` + 强制读取当日观察对象记忆。
+初始化时删除历史 T2/T3/T4/T5、旧 T6/T7、旧 D1、**已取消的 T2（17:30 当日总结）**及任何自动竞价、盘中扫描、午间总结、Agent 预计算任务，再仅注册 `schedule.md` 保留的 **T1/T3/W1/M1/P1**（交易日只有 08:30 T1 与 22:00 T3）。禁止通过调度器、Hook、cron 或 Agent 循环调用 `bidding_analysis`、`watch_intraday`、`precompute_daily_factors`；日终预计算只由服务端交易日 16:00 任务执行。T3 只读 `health.daily_finalize` / `precompute_status`，失败或缺数时仅披露并重试读取，不自动补跑。只有用户当前明确要求管理员诊断或补数时，才可单次手动调用 `precompute_daily_factors`。每条保留任务首步 `GET /health` + 强制读取当日观察对象记忆。
 
 ## 8. Agent→Skill 强制绑定（v1.2.0）
 
-固定 Skill 清单仅有且完整为 12 个：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`。首次及每次任务/角色启动均须完整读取对应 `skills/<name>/SKILL.md`，禁止只凭本索引或角色摘要。角色主绑定见 `agents/TEAM.md`；`stock-research` 为用户主动单股调研入口，不加入定时 T1/T2/T3 必执行绑定。
+固定 Skill 清单仅有且完整为 12 个：`priority-framework`、`data-service`、`output-format`、`pre-market`、`bidding-analysis`、`intraday-watch`、`post-market`、`industry-analysis`、`stock-screening`、`quant-screening`、`review-learning`、`stock-research`。首次及每次任务/角色启动均须完整读取对应 `skills/<name>/SKILL.md`，禁止只凭本索引或角色摘要。角色主绑定见 `agents/TEAM.md`；`stock-research` 为用户主动单股调研入口，不加入定时 T1/T3 必执行绑定。
 
 情绪角色 v1.1.0 能力包括：`sentiment_temperature`、`sentiment_extreme_index`、连板生态/连板个股、断板后 1-3 日反包候选；极端指数只消费服务返回，不在 Agent 侧复算，最终风格候选仍按 `skills/priority-framework/SKILL.md` 裁决。
 
 ## 9. v1.2.0 报告、候选与业绩池运行期硬约束
 
-1. **详尽报告、精简推送**：T1/T2/T3 报告固定按“一眼结论（核心摘要）→目录导读→详细正文”；标题后首屏先给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。动态题材综合消息面、热榜、涨停连板、量能资金识别，不限传统板块。数据缺失时章节不删除，须写失败接口、fallback、实际日期与缺失字段。
+1. **详尽报告、精简推送**：T1/T3 报告固定按“一眼结论（核心摘要）→目录导读→详细正文”；标题后首屏先给仓位/次日倾向、题材/具体事件 Top N、“题材/事件 → 个股”、最大风险/证伪和首屏结论表。动态题材综合消息面、热榜、涨停连板、量能资金识别，不限传统板块。数据缺失时章节不删除，须写失败接口、fallback、实际日期与缺失字段。
 2. **面向用户必须说人话、结论前置、不暴露过程**：报告首屏、结论、正文、推送和表头统一使用通俗中文，直接说明“发生了什么、影响谁、为何关注、何时失效”；不得堆砌英文接口名、参数名、JSON 字段、内部类别或因子代码，也不得输出非结论性思考过程、推理独白、子 Agent 原始意见或逐接口原始返回。复盘/研报/选股类报告一眼结论严格按用户视角前置：①今天市场发生了什么→②板块行情与大环境（板块强度/轮动、择时顺势仓位）→③明天该关注哪些股票（短线+趋势核心股、热点龙头、事件受益股）→④综合量化/择时/趋势/热点/短线选股结果与理由。技术名称只允许出现在数据来源附录、故障诊断或用户明确要求的参数说明中，并紧邻中文解释。
 3. **正式候选不能只报分数**：量化/趋势候选逐只执行 `skills/output-format/SKILL.md` 的「正式候选综合理由表」，固定理由链为“量化信号→板块趋势→当前主线关系→涨价/逻辑/预期催化→情绪与择时→风险/证伪”；没有证据的环节写“无可核验证据”。
 4. **T3 业绩增长参考池**：实际公告日期/接口返回优先判断窗口，基本面分析师调用 `fundamental_forecast`、`fundamental_express`（公司公告改由外部财经平台多源核验），必要时 `fundamental_income`、`fundamental_fina_indicator` 复核；正向公告按 `code+report_period+announcement_date` 去重并全量展示真实字段，无数据写“当晚无可核验的增长/预增公告”。

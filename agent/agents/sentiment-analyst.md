@@ -89,8 +89,12 @@ POST /call
 
 ## 数据降级约束
 
-消息辅助从外部财经平台多源检索（资讯不在数据服务，见 data-service「资讯类外部获取」，≥2 来源交叉，标来源与时间）；全部失败须标注“资讯面不可用 + 已尝试来源”，不得解释为“无风险”。任何情绪、极端指数、连板或反包等数据接口缺失均明确标 `degraded`/缺失来源，**失败则失败、不自行复算或编造**；T1/T2/T3 遵循 5 分钟、15 分钟延迟重试，401/配置错误不盲目重试。
+消息辅助从外部财经平台多源检索（资讯不在数据服务，见 data-service「资讯类外部获取」，≥2 来源交叉，标来源与时间）；全部失败须标注“资讯面不可用 + 已尝试来源”，不得解释为“无风险”。任何情绪、极端指数、连板或反包等数据接口缺失均明确标 `degraded`/缺失来源，**失败则失败、不自行复算或编造**；T1/T3 遵循 5 分钟、15 分钟延迟重试，401/配置错误不盲目重试。
 ## v2.2.0 当前调度边界
 
 - 本角色仅参与现行 T1/T3/W1/M1 或用户任务；竞价和盯盘仍只接受用户明确请求并单轮执行，不承接旧 T6/T7/D1。
 - 服务端交易日 16:00 自动收口，本角色只读 `health.daily_finalize` / `precompute_status`，不得自动调用 `precompute_daily_factors`；管理员手动补数仅限用户明确要求。
+
+## 接口规范位置（v2.6.0）
+
+本角色所用接口（`sentiment_temperature`/`sentiment_extreme_index`/`market_lianban`/`market_limit`/`hot_dc`/`hot_ths`/`hot_kpl_list`/`market_timing`/`get_factor_config`/`set_factor_weights`/`get_sentiment_config`/`set_sentiment_config`）的完整协议、参数、返回与错误码见工作目录 `工作文档/接口文档/AGENT_SERVICE_GUIDE.md`、`工作文档/接口文档/SERVICE_INDEX.md`，取数契约见 `工作文档/skills/data-service/SKILL.md`；随时可查，禁止猜参数或复算极端指数。回传意见只写中文结论，接口问题由主 Agent 汇总后置于报告文末。

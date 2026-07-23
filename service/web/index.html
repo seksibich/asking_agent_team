@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>盯盘 · 量化面板</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=20260722-1" />
+  <link rel="stylesheet" href="style.css?v=20260723-1" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="color-scheme" content="dark" />
 </head>
 <body class="auth-locked">
   <header class="topbar">
@@ -57,6 +59,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16M8 4v16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       预计算
     </button>
+    <button class="tab admin-only" data-tab="portfolio">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      自选管理
+    </button>
     <button class="tab" data-tab="weights">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h6M4 18h13M18 4v6m-6 0v8m10-14v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       配置管理
@@ -99,7 +105,7 @@
             <input id="q-topn" type="number" value="30" min="5" max="100" />
           </div>
           <span class="compact-note">个股名称非空时优先；均留空则筛全市场</span>
-          <button id="q-run" class="btn-primary">
+          <button id="q-run" class="btn-accent">
             <svg viewBox="0 0 24 24" class="btn-ic"><path d="M5 3l14 9-14 9V3Z" fill="currentColor"/></svg>
             运行量化选股
           </button>
@@ -286,9 +292,8 @@
       </div>
     </section>
 
-    <!-- 管理员自选：纳入配置管理二级入口 -->
+    <!-- 管理员自选：顶部独立页签（管理员权限） -->
     <section id="tab-portfolio" class="panel admin-only">
-      <div class="config-subnav"><button id="cfg-portfolio-weights" class="btn-ghost" type="button">因子权重</button><button class="btn-primary" type="button">自选管理</button></div>
       <div class="card portfolio-hero">
         <div class="card-title-row">
           <div>
@@ -368,9 +373,9 @@
             <div class="gauge-block">
               <div id="s-gauge" class="gauge">
                 <svg viewBox="0 0 200 120" class="gauge-svg">
-                  <path d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="#e8ecf3" stroke-width="16" stroke-linecap="round"/>
+                  <path d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="#2a3344" stroke-width="16" stroke-linecap="round"/>
                   <path id="s-arc" d="M20 110 A80 80 0 0 1 180 110" fill="none" stroke="url(#g)" stroke-width="16" stroke-linecap="round" stroke-dasharray="251" stroke-dashoffset="251"/>
-                  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3b82f6"/><stop offset="0.5" stop-color="#f59e0b"/><stop offset="1" stop-color="#ef4444"/></linearGradient></defs>
+                  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5b8cff"/><stop offset="0.5" stop-color="#e0a13a"/><stop offset="1" stop-color="#e15554"/></linearGradient></defs>
                 </svg>
                 <div class="gauge-center"><span id="s-temp">--</span><small id="s-level">情绪温度</small></div>
               </div>
@@ -571,7 +576,7 @@
         <p class="hint">任务在服务端后台运行，全服务同一时刻只会有一个。重复点击或多个管理员同时发起时会复用当前任务，可离开页面后再回来查看进度。</p>
         <div class="form-row inline pc-actions">
           <button id="pc-refresh" class="btn-ghost">刷新状态</button>
-          <button id="pc-run" class="btn-primary">
+          <button id="pc-run" class="btn-accent">
             <svg viewBox="0 0 24 24" class="btn-ic"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             运行增量预计算
           </button>
@@ -594,7 +599,6 @@
 
     <!-- 配置管理：因子权重与管理员自选 -->
     <section id="tab-weights" class="panel">
-      <div class="config-subnav"><button class="btn-primary" type="button">因子权重</button><button id="cfg-weights-portfolio" class="btn-ghost admin-only" type="button">自选管理</button></div>
       <div class="card">
         <div class="card-title">因子 / 指标权重配置</div>
         <p class="hint">每个模型的权重之和须为 1.0；保存时若因子列表不匹配（服务端已增改因子），会提示并自动刷新。</p>
@@ -693,6 +697,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script src="market-state.js?v=20260721-3"></script>
-  <script src="app.js?v=20260722-1"></script>
+  <script src="app.js?v=20260723-1"></script>
 </body>
 </html>

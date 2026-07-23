@@ -54,9 +54,12 @@ class FrontendContractTest(unittest.TestCase):
         self.assertNotIn('selection_dashboard', body)
         self.assertIn('sl-refresh-progress', body)
 
-    def test访问凭据不写入长期浏览器存储(self):
-        self.assertNotIn('localStorage.setItem(LS.key', self.javascript)
+    def test访问凭据缓存到本地便于移动端复用(self):
+        # 为满足移动端浏览器（如 Safari）免重复登录的需求，访问凭据缓存到 localStorage；
+        # 同时保留 sessionStorage 写入以兼容旧逻辑，并提供 forgetConnection 清除入口。
+        self.assertIn('localStorage.setItem(LS.key', self.javascript)
         self.assertIn('sessionStorage.setItem(SS.key', self.javascript)
+        self.assertIn('function forgetConnection', self.javascript)
 
     def test访客Key列表不提供明文复制(self):
         self.assertNotIn('data-uk-copy', self.javascript)

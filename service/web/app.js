@@ -1,16 +1,25 @@
 /* 盯盘量化面板 —— 与数据服务同源部署，调用 POST /call */
-const LS = { base: "sa_base" };
+const LS = { base: "sa_base", key: "sa_service_key" };
 const SS = { key: "sa_session_key" };
+// 访问凭据持久化到 localStorage，方便手机浏览器（如 Safari）缓存，无需每次重新登录；
+// 兼容旧版本仅存于 sessionStorage 的凭据。
 const cfg = {
   base: localStorage.getItem(LS.base) || window.location.origin,
-  // 访问凭据只保留当前标签页会话，关闭后自动清除。
-  key: sessionStorage.getItem(SS.key) || "",
+  key: localStorage.getItem(LS.key) || sessionStorage.getItem(SS.key) || "",
 };
 let _marketHealth = {};
 
 function rememberConnection() {
   localStorage.setItem(LS.base, cfg.base);
+  // 同时写入 localStorage（长期缓存）与 sessionStorage（兼容旧逻辑）。
+  localStorage.setItem(LS.key, cfg.key);
   sessionStorage.setItem(SS.key, cfg.key);
+}
+
+function forgetConnection() {
+  localStorage.removeItem(LS.key);
+  sessionStorage.removeItem(SS.key);
+  cfg.key = "";
 }
 
 function acceptHealth(value) {
@@ -36,9 +45,22 @@ const finiteNumberText = (value, { digits = 2, trim = false, sign = false, suffi
   if (trim) text = text.replace(/\.?0+$/, "");
   return `${sign && number >= 0 ? "+" : ""}${text}${suffix}`;
 };
+// 统一涨跌配色：上涨红(pos)、下跌绿(neg)、平盘白偏灰(flat)、缺失无色。
 const finiteNumberClass = (value) => {
   const number = finiteNumber(value);
-  return number == null ? "" : (number >= 0 ? "pos" : "neg");
+  if (number == null) return "";
+  if (number > 0) return "pos";
+  if (number < 0) return "neg";
+  return "flat";
+};
+// 依据涨跌幅返回颜色类，供“最新价与涨幅同色”复用。
+const changeClass = (value) => finiteNumberClass(value);
+const changeClassBt = (value) => {
+  const number = finiteNumber(value);
+  if (number == null) return "";
+  if (number > 0) return "bt-up";
+  if (number < 0) return "bt-down";
+  return "bt-flat";
 };
 const toast = (msg, type = "") => {
   const t = $("toast");
@@ -253,6 +275,7 @@ function activateTab(tabName) {
   button.classList.add("active");
   panel.classList.add("active");
   if (tabName === "weights") loadWeights();
+  if (tabName === "portfolio") loadPortfolio(true);
   if (tabName === "backtest") loadBacktest();
   if (tabName === "precompute") loadPrecompute();
   if (tabName === "quant-watch") loadQuantWatch(true);
@@ -367,21 +390,10 @@ $("uk-list").addEventListener("click", async (e) => {
   }
 });
 $("settings").addEventListener("click", (e) => { if (e.target.id === "settings") $("settings").classList.add("hidden"); });
-function showConfigSection(section) {
-  if (section === "portfolio" && !isAdmin()) return;
-  $("tab-weights")?.classList.toggle("active", section === "weights");
-  $("tab-portfolio")?.classList.toggle("active", section === "portfolio");
-  if (section === "weights") loadWeights();
-  if (section === "portfolio") loadPortfolio(true);
-}
-$("cfg-weights-portfolio").onclick = () => showConfigSection("portfolio");
-$("cfg-portfolio-weights").onclick = () => showConfigSection("weights");
-
 function reloadActiveTab() {
   const active = document.querySelector(".tab.active");
   const t = active && active.dataset.tab;
-  if (t === "weights" && $("tab-portfolio")?.classList.contains("active")) loadPortfolio(true);
-  else if (t === "weights") loadWeights();
+  if (t === "weights") loadWeights();
   else if (t === "backtest") loadBacktest(true);
   else if (t === "precompute") loadPrecompute(true);
   else if (t === "quant-watch") loadQuantWatch(true);
@@ -652,7 +664,8 @@ function drawQuant() {
     if (c.key === "__ticker") return `<td class="cell-ticker quant-ticker-col"><b>${r.name || "-"}</b><span>${r.code || ""}</span></td>`;
     let v = r[c.key], cls = c.key === "score" ? "quant-score-col" : "";
     if (typeof v === "number") {
-      if (c.pct || c.key === "score") cls += ` ${v >= 0 ? "pos" : "neg"}`;
+      if (c.pct) cls += ` ${v > 0 ? "pos" : (v < 0 ? "neg" : "flat")}`;
+      else if (c.key === "score") cls += ` ${v >= 0 ? "pos" : "neg"}`;
       if (c.key === "last") v = v.toFixed(2);
       else v = c.pct ? (v >= 0 ? "+" : "") + v.toFixed(2) + "%" : (Number.isInteger(v) ? v : v.toFixed(3));
     }
@@ -862,13 +875,13 @@ function industryTrendLine(points) {
   let grid = "", axis = "";
   for (let value = 0; value <= 100; value += 20) {
     const y = yAt(value);
-    grid += `<line x1="0" y1="${y.toFixed(1)}" x2="${plotWidth}" y2="${y.toFixed(1)}" stroke="#eef1f7"/>`;
+    grid += `<line x1="0" y1="${y.toFixed(1)}" x2="${plotWidth}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.07)"/>`;
     axis += `<span style="top:${y.toFixed(1)}px">${value}</span>`;
   }
   const path = points.map((point, index) => `${index ? "L" : "M"}${xAt(index).toFixed(1)} ${yAt(point.value).toFixed(1)}`).join(" ");
   const area = `${path} L${xAt(points.length - 1).toFixed(1)} ${yAt(0).toFixed(1)} L${xAt(0).toFixed(1)} ${yAt(0).toFixed(1)} Z`;
-  const dots = points.map((point, index) => `<g><circle cx="${xAt(index).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="3.5" fill="#3b6cf6"><title>${esc(point.label)}：${Number(point.value).toFixed(1)}</title></circle><text x="${xAt(index).toFixed(1)}" y="${H - 13}" text-anchor="middle" class="ax">${esc(point.label.slice(5))}</text></g>`).join("");
-  return `<div class="industry-trend-layout"><div class="industry-trend-axis">${axis}</div><div class="industry-trend-scroll"><svg width="${plotWidth}" height="${H}" viewBox="0 0 ${plotWidth} ${H}" class="industry-trend-svg">${grid}<path d="${area}" fill="#3b6cf6" fill-opacity="0.08"/><path d="${path}" fill="none" stroke="#3b6cf6" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>${dots}</svg></div></div>`;
+  const dots = points.map((point, index) => `<g><circle cx="${xAt(index).toFixed(1)}" cy="${yAt(point.value).toFixed(1)}" r="3.5" fill="#5b8cff"><title>${esc(point.label)}：${Number(point.value).toFixed(1)}</title></circle><text x="${xAt(index).toFixed(1)}" y="${H - 13}" text-anchor="middle" class="ax">${esc(point.label.slice(5))}</text></g>`).join("");
+  return `<div class="industry-trend-layout"><div class="industry-trend-axis">${axis}</div><div class="industry-trend-scroll"><svg width="${plotWidth}" height="${H}" viewBox="0 0 ${plotWidth} ${H}" class="industry-trend-svg">${grid}<path d="${area}" fill="#5b8cff" fill-opacity="0.08"/><path d="${path}" fill="none" stroke="#5b8cff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>${dots}</svg></div></div>`;
 }
 
 function renderIndustryTrend() {
@@ -1202,8 +1215,10 @@ function sortedSelectionRows(rows, grouped = false) {
 function selectionCard(r) {
   const priority = selectionPriority(r);
   const priorityClass = priority === 0 ? "leader" : (priority === 1 ? "core" : "");
-  const sinceCls = r.since_selection_pct == null ? "" : (r.since_selection_pct >= 0 ? "pos" : "neg");
-  const chgCls = r.latest_chg_pct == null ? "" : (r.latest_chg_pct >= 0 ? "pos" : "neg");
+  const sinceCls = changeClass(r.since_selection_pct);
+  const chgCls = changeClass(r.latest_chg_pct);
+  // 最新价跟随当日涨幅配色，保证同一股票“最新价”与“涨幅”颜色一致。
+  const latestCls = chgCls;
   const amountYi = r.amount == null ? "—" : `${(Number(r.amount) / 100000).toFixed(2)} 亿`;
   const factorEntries = Object.entries(r.factors || {}).filter(([key]) => key !== "_meta");
   const factors = r.factor_error
@@ -1221,7 +1236,7 @@ function selectionCard(r) {
       <div class="selection-ticker"><b class="${priorityClass ? "core-name" : ""}">${esc(r.name || "-")}</b><span>${esc(r.code)}</span></div>
       <div class="selection-stat"><small>选股评分</small><b>${selectionScoreText(r)}</b></div>
       <div class="selection-stat"><small>选股后</small><b class="${sinceCls}">${pctText(r.since_selection_pct)}</b></div>
-      <div class="selection-stat selection-latest"><small>最新价</small><b>${fmtMaybe(r.latest_price)}</b></div>
+      <div class="selection-stat selection-latest"><small>最新价</small><b class="${latestCls}">${fmtMaybe(r.latest_price)}</b></div>
       <div class="selection-row-tags">${rowTags}</div>
       <div class="selection-date">${esc(r.date)}<small>${esc(CATEGORY_LABEL[r.category] || r.category)}</small></div>
       <span class="selection-expand" aria-hidden="true"></span>
@@ -1229,7 +1244,7 @@ function selectionCard(r) {
     <div class="selection-detail-body">
       <div class="selection-detail-grid">
         <div><small>选股价</small><b>${fmtMaybe(r.selected_price)}</b></div>
-        <div><small>最新价</small><b>${fmtMaybe(r.latest_price)}</b></div>
+        <div><small>最新价</small><b class="${latestCls}">${fmtMaybe(r.latest_price)}</b></div>
         <div><small>最近涨幅</small><b class="${chgCls}">${pctText(r.latest_chg_pct)}</b></div>
         <div><small>换手率</small><b>${pctText(r.turnover_rate)}</b></div>
         <div><small>最近成交额</small><b>${amountYi}</b></div>
@@ -1655,7 +1670,7 @@ setPortfolioTypeFields();
 function svgLine(points, opts = {}) {
   if (!points || !points.length) return '<div class="empty">无数据</div>';
   const W = 640, H = 220, padL = 42, padR = 16, padT = 16, padB = 36;
-  const color = opts.color || "#3b6cf6";
+  const color = opts.color || "#5b8cff";
   const unit = opts.unit || "";
   const vals = points.map((p) => p.value);
   let min = opts.min != null ? opts.min : Math.min(...vals);
@@ -1670,7 +1685,7 @@ function svgLine(points, opts = {}) {
   for (let g = 0; g <= 4; g++) {
     const v = min + (span * g) / 4;
     const y = yAt(v);
-    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#eef1f7" stroke-width="1"/>`;
+    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
     yTicks += `<text x="${padL - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="ax">${v.toFixed(0)}</text>`;
   }
   const dPath = points.map((p, i) => `${i ? "L" : "M"}${xAt(i).toFixed(1)} ${yAt(p.value).toFixed(1)}`).join(" ");
@@ -1712,14 +1727,14 @@ function sentimentTemperatureLine(points) {
   let grid = "", yAxis = "";
   for (let value = 0; value <= 100; value += 20) {
     const y = yAt(value);
-    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#eef1f7"/>`;
+    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.07)"/>`;
     yAxis += `<span style="top:${y.toFixed(1)}px">${value}</span>`;
   }
   const path = points.map((point, index) => `${index ? "L" : "M"}${xAt(index).toFixed(1)} ${yAt(point.value).toFixed(1)}`).join(" ");
   const nodes = points.map((point, index) => {
     const x = xAt(index), y = yAt(point.value), color = temperatureColor(point.value);
     return `<g class="sentiment-point ${point.selected ? "selected" : ""}" data-sentiment-date="${esc(point.date)}" tabindex="0" role="button" aria-label="切换到 ${esc(point.label)}，温度 ${esc(point.value)}">
-      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="${color}" stroke="#fff" stroke-width="2"><title>${esc(point.label)}：${esc(point.value)}${point.isFinal === false ? "（盘中）" : ""}</title></circle>
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="${color}" stroke="#171e2b" stroke-width="2"><title>${esc(point.label)}：${esc(point.value)}${point.isFinal === false ? "（盘中）" : ""}</title></circle>
       <text x="${x.toFixed(1)}" y="${(y - 11).toFixed(1)}" text-anchor="middle" class="sentiment-value" fill="${color}">${esc(point.value)}</text>
       <text x="${x.toFixed(1)}" y="${(y + 19).toFixed(1)}" text-anchor="middle" class="sentiment-date">${esc(point.label)}</text>
     </g>`;
@@ -1730,7 +1745,7 @@ function sentimentTemperatureLine(points) {
     <div class="sentiment-y-axis" aria-hidden="true">${yAxis}</div>
     <div class="sentiment-line-scroll" data-sentiment-scroll>
       <svg viewBox="0 0 ${W} ${H}" class="chart-svg sentiment-line-svg" style="min-width:${W}px" preserveAspectRatio="xMidYMid meet">
-        ${grid}<path d="${path}" fill="none" stroke="#9aa8bd" stroke-width="2" stroke-linejoin="round"/>${nodes}
+        ${grid}<path d="${path}" fill="none" stroke="#586a82" stroke-width="2" stroke-linejoin="round"/>${nodes}
       </svg>
     </div>
   </div>
@@ -1781,7 +1796,7 @@ function svgBars(items, opts = {}) {
   for (let g = 0; g <= 4; g++) {
     const v = min + (span * g) / 4;
     const y = yAt(v);
-    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#eef1f7" stroke-width="1"/>`;
+    grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
     yTicks += `<text x="${padL - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="ax">${v.toFixed(1)}</text>`;
   }
   const bars = items.map((d, i) => {
@@ -1795,7 +1810,7 @@ function svgBars(items, opts = {}) {
   }).join("");
   return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" preserveAspectRatio="xMidYMid meet">
     ${grid}${yTicks}
-    <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" stroke="#c9d2e3" stroke-width="1"/>
+    <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" stroke="#3a465a" stroke-width="1"/>
     ${bars}
   </svg>`;
 }
@@ -2252,7 +2267,7 @@ function backtestReturnValue(row, horizon) {
 function returnChip(row, horizon) {
   const status = row.return_status?.[horizon] || "missing";
   const value = backtestReturnValue(row, horizon);
-  const cls = value == null ? "pending" : (value >= 0 ? "pos" : "neg");
+  const cls = value == null ? "pending" : (value > 0 ? "pos" : (value < 0 ? "neg" : "flat"));
   const exitDate = row.return_exit_dates?.[horizon];
   const error = row.return_errors?.[horizon];
   const mode = $("b-return-mode").value === "excess" ? "超额" : "涨幅";
@@ -2352,7 +2367,7 @@ function renderBacktestSummary(rows) {
   const winRate = since.length ? since.filter((value) => value > 0).length / since.length * 100 : null;
   const mature = rows.filter((row) => row.return_status?.["30c"] === "success").length;
   const matureRate = rows.length ? mature / rows.length * 100 : null;
-  const signClass = average == null ? "" : average >= 0 ? "bt-up" : "bt-down";
+  const signClass = changeClassBt(average);
   $("b-detail-summary").innerHTML = `
     <div><small>筛选记录</small><b>${rows.length}</b></div>
     <div><small>至今平均</small><b class="${signClass}">${pctText(average)}</b></div>
@@ -2379,16 +2394,16 @@ function renderBacktestDetails() {
   $("b-detail").innerHTML = pageRows.map((row) => {
     const percentile = row.score_percentile == null ? "—" : `${(Number(row.score_percentile) * 100).toFixed(1)}%`;
     const since = finiteNumber(row.since_selection_pct);
-    const sinceClass = since == null ? "" : since >= 0 ? "bt-up" : "bt-down";
+    const sinceClass = changeClassBt(since);
     const latestChange = finiteNumber(row.latest_chg_pct);
-    const latestClass = latestChange == null ? "" : latestChange >= 0 ? "bt-up" : "bt-down";
+    const latestClass = changeClassBt(latestChange);
     return `<article class="backtest-detail-item">
       <div class="backtest-detail-main">
         <div class="backtest-detail-ticker"><b>${esc(row.name || "-")}</b><code>${esc(row.code)}</code></div>
         <div><small>选股日期</small><b>${esc(row.date || "—")}</b></div>
         <div><small>来源 / 驱动</small><b>${esc(CATEGORY_LABEL[row.category] || row.category)} · ${esc(row.driver || "未标注")}</b></div>
         <div><small>评分 / 分位</small><b>${fmtMaybe(row.score)} / ${percentile}</b></div>
-        <div class="backtest-since"><small>选股至今</small><b class="${sinceClass}">${pctText(since)}</b><span>现价 ${fmtMaybe(row.latest_price)} · 当日 <i class="${latestClass}">${pctText(latestChange)}</i></span></div>
+        <div class="backtest-since"><small>选股至今</small><b class="${sinceClass}">${pctText(since)}</b><span>现价 <i class="${latestClass}">${fmtMaybe(row.latest_price)}</i> · 当日 <i class="${latestClass}">${pctText(latestChange)}</i></span></div>
         <span class="controlled-badge ${row.controlled_auto ? "yes" : "no"}">${row.controlled_auto ? "受控样本" : "非调参样本"}</span>
       </div>
       <div class="return-chip-row">${HZ_ORDER.map((horizon) => returnChip(row, horizon)).join("")}</div>
@@ -3208,6 +3223,25 @@ document.addEventListener("visibilitychange", () => {
   if (quantWatchShouldConnect()) loadQuantWatch(true);
 });
 window.addEventListener("beforeunload", stopQuantWatchSocket);
+
+/* ---------- 按钮点击波纹效果（统一交互） ---------- */
+// 对所有按钮类控件注入水波纹：按下时在点击点生成扩散圆，动画结束后自动移除。
+const RIPPLE_SELECTOR = ".btn-primary,.btn-ghost,.btn-accent,.icon-btn,.tab,.selection-delete,.portfolio-remove,.selection-tag,.board-chip,.backtest-quick-range button,.backtest-pagination button,.config-subnav button,.sentiment-date-step,.industry-date-picker button";
+document.addEventListener("pointerdown", (event) => {
+  const target = event.target.closest(RIPPLE_SELECTOR);
+  if (!target || target.disabled) return;
+  if (getComputedStyle(target).position === "static") target.style.position = "relative";
+  if (getComputedStyle(target).overflow !== "hidden") target.style.overflow = "hidden";
+  const rect = target.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height);
+  const ripple = document.createElement("span");
+  ripple.className = "ripple";
+  ripple.style.width = ripple.style.height = `${size}px`;
+  ripple.style.left = `${event.clientX - rect.left - size / 2}px`;
+  ripple.style.top = `${event.clientY - rect.top - size / 2}px`;
+  target.appendChild(ripple);
+  ripple.addEventListener("animationend", () => ripple.remove());
+}, { passive: true });
 
 /* 首屏：没有本地 Key 时必须先登录；已有 Key 仍需重新向服务端验证 */
 applyRoleUI();

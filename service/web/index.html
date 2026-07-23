@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>盯盘 · 量化面板</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css?v=20260723-1" />
+  <link rel="stylesheet" href="style.css?v=20260723-3" />
   <meta name="theme-color" content="#0d1117" />
   <meta name="color-scheme" content="dark" />
 </head>
@@ -51,6 +51,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       选股看板
     </button>
+    <button class="tab admin-only" data-tab="portfolio">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      自选管理
+    </button>
     <button class="tab" data-tab="backtest">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16M8 16l3-4 3 2 4-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       回测分析
@@ -58,10 +62,6 @@
     <button class="tab admin-only" data-tab="precompute">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16M8 4v16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       预计算
-    </button>
-    <button class="tab admin-only" data-tab="portfolio">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
-      自选管理
     </button>
     <button class="tab" data-tab="weights">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h6M4 18h13M18 4v6m-6 0v8m10-14v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -245,7 +245,7 @@
     <section id="tab-selections" class="panel">
       <div class="card selection-hero">
         <div class="card-title">量化选股看板 <span id="sl-meta" class="meta"></span></div>
-        <p class="hint">首次进入默认展示目标交易日及之前三个交易日。“查询选股记录”会按条件重新加载；“刷新行情”只更新当前列表的价格、行情标签和缺失选股价，不改变筛选、排序或展开状态。</p>
+        <p class="hint">首次进入默认展示目标交易日及之前三个交易日。“查询选股记录”会按条件重新加载；“刷新行情”只更新当前列表的价格、行情标签和缺失选股价，不改变筛选、排序或展开状态。管理员查看“关注/持仓”或全部类别时，会实时并入当前自选（标注“当前自选”，青色，不受日期限制、不计入回测）。</p>
         <div class="filter-grid">
           <div class="form-row"><label for="sl-from">起始日期</label><input id="sl-from" type="date" /></div>
           <div class="form-row"><label for="sl-to">结束日期</label><input id="sl-to" type="date" /></div>
@@ -697,6 +697,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script src="market-state.js?v=20260721-3"></script>
-  <script src="app.js?v=20260723-1"></script>
+  <script src="app.js?v=20260723-3"></script>
 </body>
 </html>

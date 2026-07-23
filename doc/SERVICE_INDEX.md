@@ -85,7 +85,7 @@
 
 ### research / review
 `research_build`（投研数据包）→ industry-analysis / stock-research。
-`selection_tag_catalog`（版本化固定标签及说明）→ 正式选股上传前读取；`log_selection`（同日筛选运行、精炼事件/理由/标签）`selection_dashboard`（默认四个交易日、实时行情、题材/日期智能聚合）`log_prediction` `selection_backtest` `predictions_backtest`（回测闭环，仅正式候选/预判登记）→ review-learning。`/health.selection_tag_version` 变化时必须刷新标签目录。
+`selection_tag_catalog`（版本化固定标签及说明）→ 正式选股上传前读取；`log_selection`（同日筛选运行、精炼事件/理由/标签）`selection_dashboard`（默认四个交易日、实时行情、题材/日期智能聚合；管理员查看关注/持仓或全部类别时实时并入当前自选 `portfolio_items`，标注「当前自选」，不计入回测）`log_prediction` `selection_backtest` `predictions_backtest`（回测闭环，仅正式候选/预判登记）→ review-learning。`/health.selection_tag_version` 变化时必须刷新标签目录。
 
 > **资讯类不在数据服务**（新闻/时政/公告/美股外盘，token 无权限）：由 agent 从各财经平台多源获取，≥2 来源交叉，见 `agent/skills/data-service/SKILL.md`「资讯类外部获取」。
 

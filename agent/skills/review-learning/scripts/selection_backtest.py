@@ -908,7 +908,9 @@ def selection_backtest(p: dict) -> dict:
 
 @register("selection_dashboard", "review",
           "规范化选股看板：默认展示最近目标交易日及之前三个交易日；按日期/题材/类别查询，"
-          "刷新实时行情、涨跌停标签并保留评分、因子契约与历史回测字段",
+          "刷新实时行情、涨跌停标签并保留评分、因子契约与历史回测字段；"
+          "管理员查看 watch/holding（或不限类别）时实时合并当前自选 portfolio_items，"
+          "标注 live_portfolio 与「当前自选」标签，不受日期范围限制、不写入 selections、不参与回测",
           params=[{"name": "date_from", "type": "string", "required": False, "desc": "起始日期 YYYYMMDD；起止均省略时自动取最近四个交易日"},
                   {"name": "date_to", "type": "string", "required": False, "desc": "结束日期 YYYYMMDD"},
                   {"name": "hotspot", "type": "string", "required": False, "desc": "题材、板块、事件或标签关键词"},
@@ -955,7 +957,33 @@ def selection_dashboard(p: dict) -> dict:
         backfilled_prices += int(changed)
     records = refreshed_records
 
-    market = _market_snapshot([str(record.get("code") or "") for record in records])
+    # 方案 A：管理员查看关注/持仓（或不限类别）时，实时合并当前自选（portfolio_items），
+    # 标注为「当前自选」与历史快照区分；这些行只用于看板展示，不写入 selections、不参与回测。
+    live_portfolio_items: list[dict[str, Any]] = []
+    if db.can_read_sensitive_selections():
+        wanted_types = {"watch", "holding"} if not category else (
+            {category} if category in {"watch", "holding"} else set())
+        if wanted_types:
+            try:
+                portfolio = db.fetch_portfolio_items()
+            except Exception:
+                portfolio = {"rows": []}
+            for item in (portfolio.get("rows") or []):
+                if str(item.get("type") or "") not in wanted_types:
+                    continue
+                if keyword:
+                    haystack = " ".join([
+                        str(item.get("name") or ""), str(item.get("code") or ""),
+                        str(item.get("note") or ""), "当前自选",
+                        "持仓" if item.get("type") == "holding" else "关注",
+                    ]).casefold()
+                    if keyword not in haystack:
+                        continue
+                live_portfolio_items.append(item)
+
+    snapshot_codes = [str(record.get("code") or "") for record in records]
+    snapshot_codes += [str(item.get("code") or "") for item in live_portfolio_items]
+    market = _market_snapshot(snapshot_codes)
     quote_map = market.get("quotes") or {}
     rows: list[dict[str, Any]] = []
     theme_counts: dict[str, int] = defaultdict(int)
@@ -1020,6 +1048,54 @@ def selection_dashboard(p: dict) -> dict:
             "factor_error": extra.get("factor_error", ""),
             "trigger": extra.get("trigger", ""),
         })
+    # 追加「当前自选」实时行：始终展示，不受日期范围限制；持仓以真实成本作为“选股后”基准。
+    live_theme = "当前自选"
+    live_date = str(market.get("quote_date") or common.now_str()[:10].replace("-", ""))
+    for item in live_portfolio_items:
+        code = str(item.get("code") or "").upper()
+        quote = quote_map.get(code, {})
+        is_holding = str(item.get("type")) == "holding"
+        cost_price = _valid_price(item.get("cost_price")) if is_holding else None
+        current_price = _valid_price(quote.get("latest_price"))
+        since_return = (round((current_price / cost_price - 1) * 100, 2)
+                        if cost_price is not None and current_price is not None else None)
+        role_tag = "持仓" if is_holding else "关注"
+        tags = [live_theme, role_tag]
+        market_tags = [tag for tag in (quote.get("market_tags") or []) if tag not in tags]
+        tags = tags[:max(0, 24 - len(market_tags))] + market_tags
+        theme_counts[live_theme] += 1
+        rows.append({
+            "id": f"pf-{code}", "live_portfolio": True,
+            "date": live_date,
+            "selected_at": str(item.get("updated_at") or "") or None,
+            "logged_at": str(item.get("updated_at") or "") or None,
+            "code": code, "name": str(item.get("name") or ""),
+            "category": str(item.get("type") or ""), "score": 0.0,
+            "score_raw": None, "score_percentile": None, "screening_rank": None,
+            "driver": "自选", "tags": tags, "primary_theme": live_theme,
+            "hotspot": live_theme, "core_event": "", "event": "",
+            "market_role": role_tag,
+            "reason": str(item.get("note") or ("持仓成本 " + str(item.get("cost_price")) if is_holding else "")),
+            "selected_price": cost_price,
+            "selected_price_date": None,
+            "selected_price_source": "portfolio_cost" if is_holding else None,
+            "price_backfilled_at": None,
+            "latest_price": current_price,
+            "latest_chg_pct": quote.get("latest_chg_pct"),
+            "latest_quote_time": quote.get("latest_quote_time"),
+            "quote_source": quote.get("quote_source"),
+            "market_tags": quote.get("market_tags") or [],
+            "since_selection_pct": since_return,
+            "turnover_rate": quote.get("turnover_rate"),
+            "turnover_trade_date": quote.get("turnover_trade_date"),
+            "amount": quote.get("amount"),
+            "amount_trade_date": quote.get("amount_trade_date"),
+            "factors": {}, "factor_contract": {}, "factor_metadata": {},
+            "screening_run_id": None, "screening_function": None,
+            "factor_error": "", "trigger": "portfolio_live",
+            "lots": item.get("lots"), "shares": item.get("shares"),
+        })
+
     hotspots = [{"name": name, "count": count} for name, count in sorted(
         theme_counts.items(), key=lambda item: (-item[1], item[0]))]
     return {"source": "selection_dashboard", "fetched_at": common.now_str(),

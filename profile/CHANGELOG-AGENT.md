@@ -31,6 +31,12 @@
 
 ## 版本记录（最新在上）
 
+### v2.8.0 — 2026-07-23（选股看板实时并入当前自选；前端深色主题改版与自选管理独立页签）
+
+- **摘要**：① **数据链路打通**：`selection_dashboard` 在管理员查看 `watch/holding` 或不限类别时，实时合并当前自选 `portfolio_items`；合并行标注 `live_portfolio=true`、`id="pf-<代码>"`、带「当前自选」标签、`primary_theme=当前自选`，始终展示、不受 `date_from/date_to` 限制，**不写入 `selections`、不参与回测**；持仓以真实成本 `cost_price` 作为“选股后”涨跌基准；访客范围沿用 `selection_read_scope` 不返回这些行。解决“自选新增后选股看板不可见”。当前自选事实源仍是 `portfolio_upload`/`portfolio_get`，与选股记录是各自独立的表与版本。② **前端深色主题改版**（`service/web/**`，非 Agent 行为）：仿 PC 交易软件夜间样式；涨跌统一稍深红/绿、平盘白偏灰、最新价与涨幅同色；统一圆角与卡片模块化、隐藏大卡片 eyebrow；顶部页签横向滚动且内容不足时居中、按钮样式独立配色；按钮统一按压回弹 + 点击波纹并按功能分色；访问凭据缓存到 `localStorage` 便于移动端免登录。③ **自选管理独立页签**：从「配置管理」二级入口拆为顶部独立页签（`data-tab="portfolio"`，管理员权限），位于「选股看板」右侧。
+- **变更文件**：`agent/init.md`（AGENT_DOC_VERSION → v2.8.0）、`agent/skills/review-learning/SKILL.md`（看板并入当前自选说明）、`doc/AGENT_SERVICE_GUIDE.md`（selection_dashboard 契约 + DB 说明）、`doc/SERVICE_INDEX.md`、`doc/03-前端业务与全时段规则.md`、`agent/skills/review-learning/scripts/selection_backtest.py`（合并逻辑，服务端 `data_version` 自动变化）、`service/db.py`（`can_read_sensitive_selections` 助手）、`service/web/{index.html,app.js,style.css}`、`tests/test_frontend_contracts.py`。
+- **Agent 动作**：查看关注/持仓相关看板结论时，识别 `live_portfolio` 行为“当前自选实时视图”，不要把它当作历史选股/回测样本；当前自选的增删仍走 `portfolio_stock_search` + `portfolio_upload`，并按 `portfolio_version` 变化刷新 `关注与持仓.md` 镜像。
+
 ### v2.7.0 — 2026-07-21（交易日定时任务精简为 T1 08:30 + T3 22:00，取消 T2 17:30 当日总结；日报目录重编号；服务端修复 NaN 序列化 500）
 
 - **摘要**：① **取消 T2（17:30 当日总结）**，交易日盘后只保留 T3（22:00 综合复盘），当天市场复盘、板块强度、次日倾向统一并入 T3；周期任务 W1/M1/P1 不变。② 日报目录路径同步重编号：`盯盘/yyyy年MM月dd日/` 固定只含 `01-盘前汇总.md`（T1）与 `02-综合复盘.md`（T3），取消 `04-当日总结.md`，原 `05-综合复盘.md` 重编号为 `02-综合复盘.md`。③ 全量文档把「T1/T2/T3」枚举更新为「T1/T3」，并在 init.md 增加权威覆盖块统一旧编号解释。④ **服务端配套修复**（非 Agent 文档）：`macro_*`、`fundamental_*`、`hot_ths`、`market_limit` 等接口因响应含 pandas `NaN/Inf`、在 Starlette `JSONResponse`（`allow_nan=False`）渲染时抛 `ValueError` 返回 HTTP 500；已在 `service/app.py` 的 `_versioned` 增加 `_json_safe` 递归清洗为合法 JSON `null`，全量接口测试从 11 个 500 降为 0。

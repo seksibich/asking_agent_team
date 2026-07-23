@@ -24,7 +24,7 @@
 
 ## 文档版本与同步（AGENT_DOC_VERSION，与 git 版本对齐）★
 
-- **AGENT_DOC_VERSION：`v2.7.0`**（交易日定时任务精简为 T1 08:30 与 T3 22:00，取消 T2 17:30 当日总结；日报目录重编号，2026-07-21）
+- **AGENT_DOC_VERSION：`v2.8.0`**（选股看板 `selection_dashboard` 在管理员查看关注/持仓或不限类别时实时并入当前自选 `portfolio_items`，标注「当前自选」/`live_portfolio`，不写库、不计入回测；2026-07-23）
 - 变更日志：`profile/CHANGELOG-AGENT.md`（每条版本记录含摘要 + **对应 git commit** + 变更文件清单 + Agent 动作）。
 - 仓库（公开）：`https://github.com/seksibich/asking_agent_team`
 

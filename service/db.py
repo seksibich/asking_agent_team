@@ -57,6 +57,11 @@ def selection_read_scope(include_sensitive: bool) -> Iterator[None]:
         _selection_allowed_categories.reset(token)
 
 
+def can_read_sensitive_selections() -> bool:
+    """当前调用链是否可读关注/持仓等敏感类别（管理员范围）。"""
+    return _selection_allowed_categories.get() is None
+
+
 selections = Table(
     "selections", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),

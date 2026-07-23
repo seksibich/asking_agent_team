@@ -49,7 +49,7 @@ disable-model-invocation: false
 - 选股价、评分、因子版本、结构哈希、权重版本、上游依赖和回测字段维持既有服务端口径。普通研究及业绩增长参考池保持 ephemeral，不调用 `log_selection`。
 
 ### 回测与看板（定期）
-调 `selection_backtest` 分别展示 auto/manual/watch/holding；仅合格 auto 样本进入自动优化门禁。`selection_dashboard` 首次默认展示目标交易日及之前三个交易日，每次调用刷新实时行情：仅日期筛选按题材聚合，传题材/标签筛选时按日期聚合；聚合内龙头、核心优先，其余按评分排序，选择全局排序时取消聚合。
+调 `selection_backtest` 分别展示 auto/manual/watch/holding；仅合格 auto 样本进入自动优化门禁。`selection_dashboard` 首次默认展示目标交易日及之前三个交易日，每次调用刷新实时行情：仅日期筛选按题材聚合，传题材/标签筛选时按日期聚合；聚合内龙头、核心优先，其余按评分排序，选择全局排序时取消聚合。管理员查看 `watch/holding` 或不限类别时，看板会实时并入当前自选 `portfolio_items`（标注 `live_portfolio`、「当前自选」标签、`id=pf-<代码>`），始终展示、不受日期限制、不写入 `selections`、不计入回测；这是展示层合并，当前自选事实源仍是 `portfolio_upload`/`portfolio_get`。
 
 ### 据回测自主微调（每晚，署名 + 留痕）★
 每晚回测后，允许 Agent（回测分析师产出建议 → 主 Agent 复核）**自主微调量化选股中权重不为 0 的因子**，并落库生效：

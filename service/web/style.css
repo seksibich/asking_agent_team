@@ -65,7 +65,7 @@ button:disabled,input:disabled{opacity:.55;cursor:not-allowed}
 
 /* 顶部页签：横向滚动，按钮样式，独立配色 */
 .tabs{display:flex;gap:8px;padding:14px 22px 2px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
-  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;justify-content:safe center}
 .tabs::-webkit-scrollbar{display:none}
 .tab{display:inline-flex;align-items:center;gap:7px;flex:none;white-space:nowrap;border:1px solid var(--line);
   background:var(--surface);color:var(--sub);padding:9px 15px;border-radius:var(--radius-sm);cursor:pointer;
@@ -402,6 +402,12 @@ details.selection-item[open] .selection-expand::after{content:"收起"}details.s
 .selection-tag.unclassified{border-style:dashed;color:var(--sub);background:var(--surface)}
 .selection-row-tag.leader{color:var(--bad);background:var(--bad-soft);font-weight:800}.selection-row-tag.unclassified{color:var(--sub);background:var(--surface)}
 details.selection-item.leader{border-left:4px solid var(--bad);background:linear-gradient(90deg,var(--bad-soft) 0,var(--surface) 24%)}
+/* 「当前自选」实时行：青色强调，与历史选股/快照区分 */
+.selection-tag.live{border-color:var(--accent);color:var(--accent);background:rgba(45,212,191,.12);font-weight:700}
+.selection-tag.live.active{background:rgba(45,212,191,.22);box-shadow:0 0 0 2px rgba(45,212,191,.18)}
+.selection-row-tag.live{color:var(--accent);background:rgba(45,212,191,.15);font-weight:700}
+details.selection-item.live-portfolio{border-left:4px solid var(--accent);background:linear-gradient(90deg,rgba(45,212,191,.08) 0,var(--card) 24%)}
+details.selection-item.live-portfolio[open]{border-color:var(--accent)}
 .selection-group{border:1px solid var(--line);border-radius:13px;background:var(--surface);overflow:hidden}.selection-group+.selection-group{margin-top:11px}
 .selection-group-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,var(--brand-soft),var(--surface))}
 .selection-group-head b{font-size:14px;color:var(--ink)}.selection-group-head span{font-size:11px;color:var(--sub);background:var(--card);border:1px solid var(--line);padding:2px 7px;border-radius:999px}

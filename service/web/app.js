@@ -1154,6 +1154,7 @@ function selectionTagsFor(row) {
     label,
     leader: label === "龙头",
     core: label === "核心",
+    live: label === "当前自选",
     unclassified: label === "未分类",
   }));
 }
@@ -1181,7 +1182,7 @@ function renderSelectionTags() {
     || b.count - a.count
     || a.label.localeCompare(b.label, "zh-CN"));
   $("sl-tags").innerHTML = tags.length ? tags.map((tag) =>
-    `<button type="button" class="selection-tag ${tag.leader ? "leader" : ""} ${tag.core ? "core" : ""} ${tag.unclassified ? "unclassified" : ""} ${_selectionTag === tag.key ? "active" : ""}" data-selection-tag="${esc(tag.key)}">${esc(tag.label)} <b>${tag.count}</b></button>`
+    `<button type="button" class="selection-tag ${tag.leader ? "leader" : ""} ${tag.core ? "core" : ""} ${tag.live ? "live" : ""} ${tag.unclassified ? "unclassified" : ""} ${_selectionTag === tag.key ? "active" : ""}" data-selection-tag="${esc(tag.key)}">${esc(tag.label)} <b>${tag.count}</b></button>`
   ).join("") : '<span class="selection-tag-empty">当前结果没有可统计标签</span>';
   const active = counts.get(_selectionTag);
   $("sl-tag-meta").textContent = active ? `已选：${active.label}` : `${_selectionRows.length} 只股票`;
@@ -1227,14 +1228,17 @@ function selectionCard(r) {
       ? factorEntries.map(([key, value]) => `${esc(factorLabel(key))}：${typeof value === "number" ? value.toFixed(4) : esc(typeof value === "object" ? JSON.stringify(value) : value)}`).join(" ｜ ")
       : "未保存量化因子快照");
   const rowTags = selectionTagsFor(r).slice(0, 4).map((tag) =>
-    `<span class="selection-row-tag ${tag.leader ? "leader" : ""} ${tag.core ? "core" : ""} ${tag.unclassified ? "unclassified" : ""}">${esc(tag.label)}</span>`).join("");
+    `<span class="selection-row-tag ${tag.leader ? "leader" : ""} ${tag.core ? "core" : ""} ${tag.live ? "live" : ""} ${tag.unclassified ? "unclassified" : ""}">${esc(tag.label)}</span>`).join("");
   const rank = r.screening_rank == null ? "—" : `#${esc(r.screening_rank)}`;
-  const deleteButton = isAdmin()
+  // 「当前自选」实时行不是选股记录，不提供永久删除入口（应在“自选管理”页维护）。
+  const deleteButton = isAdmin() && !r.live_portfolio
     ? `<button type="button" class="selection-delete" data-selection-delete="${esc(r.id)}">永久删除</button>` : "";
-  return `<details class="selection-item ${priorityClass}" data-selection-id="${esc(r.id)}">
+  const itemClass = `selection-item ${priorityClass}${r.live_portfolio ? " live-portfolio" : ""}`;
+  const scoreText = r.live_portfolio ? "—" : selectionScoreText(r);
+  return `<details class="${itemClass}" data-selection-id="${esc(r.id)}">
     <summary class="selection-summary">
       <div class="selection-ticker"><b class="${priorityClass ? "core-name" : ""}">${esc(r.name || "-")}</b><span>${esc(r.code)}</span></div>
-      <div class="selection-stat"><small>选股评分</small><b>${selectionScoreText(r)}</b></div>
+      <div class="selection-stat"><small>${r.live_portfolio ? "自选类型" : "选股评分"}</small><b>${r.live_portfolio ? (r.category === "holding" ? "持仓" : "关注") : scoreText}</b></div>
       <div class="selection-stat"><small>选股后</small><b class="${sinceCls}">${pctText(r.since_selection_pct)}</b></div>
       <div class="selection-stat selection-latest"><small>最新价</small><b class="${latestCls}">${fmtMaybe(r.latest_price)}</b></div>
       <div class="selection-row-tags">${rowTags}</div>
